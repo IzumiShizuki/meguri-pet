@@ -95,7 +95,15 @@ class TurnCreateResponse(BaseModel):
     turn_id: str
     session_id: str
     build_id: str
-    status: Literal["completed", "failed", "cancelled"]
+    status: Literal["accepted", "running", "completed", "failed", "cancelled"]
+
+
+class TurnStatusResponse(BaseModel):
+    turn_id: str
+    session_id: str
+    status: Literal["accepted", "running", "completed", "failed", "cancelled"]
+    build_id: str
+    error: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -114,7 +122,20 @@ class RuntimeOverride(BaseModel):
     outfit_code: str | None = None
     expires_at: datetime | None = None
 
+    @field_validator("outfit_code")
+    @classmethod
+    def validate_outfit_code(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"01", "02", "03", "04", "05", "06"}:
+            raise ValueError("outfit_code must be one of 01-06; 07 and 08 are disabled")
+        return value
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expiry_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("expires_at must include a timezone offset")
+        return value
+
 
 def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:16]}"
-

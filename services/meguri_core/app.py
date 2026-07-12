@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import BUILD_ID
 from .runtime import TurnOrchestrator
-from .schemas import ChatResponse, RuntimeOverride, TurnCreateResponse, TurnRequest
+from .schemas import ChatResponse, RuntimeOverride, TurnCreateResponse, TurnRequest, TurnStatusResponse
 
 
 app = FastAPI(title="Meguri Core", version="0.1.0")
@@ -22,31 +21,63 @@ def health() -> dict:
 
 
 @app.post("/v1/chat/respond", response_model=ChatResponse)
-def chat_respond(request: TurnRequest) -> ChatResponse:
-    return orchestrator.run(request)
+async def chat_respond(request: TurnRequest) -> ChatResponse:
+    return await orchestrator.run_inline(request)
 
 
-@app.post("/v1/turns", response_model=TurnCreateResponse)
-def create_turn(request: TurnRequest) -> TurnCreateResponse:
-    result = orchestrator.run(request)
-    return TurnCreateResponse(turn_id=result.turn_id, session_id=result.session_id, build_id=BUILD_ID, status="completed")
+@app.post("/v1/turns", response_model=TurnCreateResponse, status_code=202)
+async def create_turn(request: TurnRequest, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> TurnCreateResponse:
+    record = await orchestrator.start(request, idempotency_key=idempotency_key)
+    return TurnCreateResponse(turn_id=record.turn_id, session_id=request.session_id, build_id=BUILD_ID, status=record.status)
+
+
+@app.get("/v1/turns/{turn_id}", response_model=TurnStatusResponse)
+def get_turn(turn_id: str) -> TurnStatusResponse:
+    record = orchestrator.turns.get(turn_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="turn not found")
+    return TurnStatusResponse(turn_id=record.turn_id, session_id=record.request.session_id, status=record.status, build_id=BUILD_ID, error=record.error)
 
 
 @app.get("/v1/sessions/{session_id}/events")
-async def session_events(session_id: str) -> StreamingResponse:
-    events = orchestrator.events.get(session_id, [])
+async def session_events(
+    session_id: str,
+    request: Request,
+    after_sequence: int = Query(default=0, ge=0),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    if last_event_id and last_event_id.isdigit():
+        after_sequence = max(after_sequence, int(last_event_id))
+
     async def stream() -> AsyncIterator[str]:
-        for event in events:
-            yield f"id: {event.sequence}\nevent: {event.type}\ndata: {event.model_dump_json()}\n\n"
-            await asyncio.sleep(0)
-    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Meguri-Build": BUILD_ID})
+        cursor = after_sequence
+        heartbeat_seconds = 1.0
+        while True:
+            if await request.is_disconnected():
+                return
+            available = [event for event in orchestrator.events.get(session_id, []) if event.sequence > cursor]
+            for event in available:
+                cursor = event.sequence
+                yield f"id: {event.sequence}\nevent: {event.type}\ndata: {event.model_dump_json()}\n\n"
+            if not orchestrator.session_is_active(session_id):
+                return
+            condition = orchestrator.conditions.setdefault(session_id, asyncio.Condition())
+            try:
+                async with condition:
+                    await asyncio.wait_for(condition.wait(), timeout=heartbeat_seconds)
+            except TimeoutError:
+                yield ": heartbeat\n\n"
+
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Meguri-Build": BUILD_ID})
 
 
 @app.post("/v1/turns/{turn_id}/cancel")
 def cancel_turn(turn_id: str) -> dict:
-    if not orchestrator.cancel(turn_id):
+    record = orchestrator.cancel(turn_id)
+    if record is None:
         raise HTTPException(status_code=404, detail="turn not found")
-    return {"turn_id": turn_id, "status": "cancel_requested"}
+    status = record.status if record.status in orchestrator.terminal_statuses else "cancel_requested"
+    return {"turn_id": turn_id, "status": status}
 
 
 @app.get("/v1/runtime/state")

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import asyncio
+from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 import yaml
@@ -12,6 +15,21 @@ from .schemas import (
     ChatResponse, EventEnvelope, EventMetadata, LlmResponse, ResolvedExpression, RuntimeOverride,
     RuntimeState, TurnRequest, new_id,
 )
+
+
+TurnStatus = Literal["accepted", "running", "completed", "failed", "cancelled"]
+
+
+@dataclass
+class TurnRecord:
+    turn_id: str
+    trace_id: str
+    request: TurnRequest
+    status: TurnStatus = "accepted"
+    result: ChatResponse | None = None
+    error: str | None = None
+    cancel_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    done: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class RuntimeStateMachine:
@@ -108,45 +126,117 @@ class ExpressionResolver:
 
 
 class TurnOrchestrator:
-    def __init__(self):
+    terminal_statuses = {"completed", "failed", "cancelled"}
+
+    def __init__(self, stream_interval: float = 0.01):
         self.state_machine = RuntimeStateMachine()
         self.rag = MockRagProvider(DATA_ROOT)
         self.memory = FakeMemoryProvider()
         self.llm = MockLLMProvider()
         self.resolver = ExpressionResolver(DATA_ROOT)
         self.events: dict[str, list[EventEnvelope]] = {}
-        self.cancelled: set[str] = set()
+        self.turns: dict[str, TurnRecord] = {}
+        self.idempotency: dict[tuple[str, str, str, str], str] = {}
+        self.conditions: dict[str, asyncio.Condition] = {}
+        self.tasks: set[asyncio.Task] = set()
+        self.stream_interval = stream_interval
 
-    def _event(self, turn_id: str, request: TurnRequest, kind: str, data: dict, trace_id: str) -> EventEnvelope:
+    async def _event(self, turn_id: str, request: TurnRequest, kind: str, data: dict, trace_id: str) -> EventEnvelope:
         stream = self.events.setdefault(request.session_id, [])
         event = EventEnvelope(type=kind, turn_id=turn_id, session_id=request.session_id, sequence=len(stream) + 1, data=data, metadata=EventMetadata(trace_id=trace_id, build_id=BUILD_ID))
         stream.append(event)
+        condition = self.conditions.setdefault(request.session_id, asyncio.Condition())
+        async with condition:
+            condition.notify_all()
         return event
 
-    def run(self, request: TurnRequest) -> ChatResponse:
-        turn_id, trace_id = new_id("turn"), new_id("trace")
-        state = self.state_machine.state_for(request)
-        self._event(turn_id, request, "turn.started", {"runtime_state": state.model_dump(mode="json")}, trace_id)
-        canon = self.rag.search(request.message, state)
-        memories = self.memory.search(request.user_id, request.message)
-        response = self.llm.respond(request, state, canon, memories)
-        expression = self.resolver.resolve(response, state)
-        for index, delta in enumerate(_chunks(response.reply), start=1):
-            if turn_id in self.cancelled:
-                self._event(turn_id, request, "turn.cancelled", {}, trace_id)
-                return ChatResponse(turn_id=turn_id, session_id=request.session_id, response=response, runtime_state=state, expression=expression, memory_status="unavailable", build_id=BUILD_ID)
-            self._event(turn_id, request, "text.delta", {"delta": delta, "index": index}, trace_id)
-        self._event(turn_id, request, "text.completed", {"text": response.reply}, trace_id)
-        self._event(turn_id, request, "expression.cue", expression.model_dump(mode="json"), trace_id)
-        memory_status = self.memory.review_and_store(request.user_id, response.memory_candidates)
-        for candidate in response.memory_candidates:
-            self._event(turn_id, request, "memory.candidate.created", candidate.model_dump(), trace_id)
-        self._event(turn_id, request, "turn.completed", {"reply": response.reply}, trace_id)
-        return ChatResponse(turn_id=turn_id, session_id=request.session_id, response=response, runtime_state=state, expression=expression, memory_status=memory_status, build_id=BUILD_ID)
+    async def start(self, request: TurnRequest, idempotency_key: str | None = None) -> TurnRecord:
+        if idempotency_key:
+            key = (request.user_id, request.client_id, request.session_id, idempotency_key)
+            existing_id = self.idempotency.get(key)
+            if existing_id:
+                return self.turns[existing_id]
+        record = TurnRecord(turn_id=new_id("turn"), trace_id=new_id("trace"), request=request)
+        self.turns[record.turn_id] = record
+        if idempotency_key:
+            self.idempotency[(request.user_id, request.client_id, request.session_id, idempotency_key)] = record.turn_id
+        task = asyncio.create_task(self._run_record(record), name=f"meguri-{record.turn_id}")
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return record
 
-    def cancel(self, turn_id: str) -> bool:
-        self.cancelled.add(turn_id)
-        return True
+    async def run_inline(self, request: TurnRequest) -> ChatResponse:
+        record = TurnRecord(turn_id=new_id("turn"), trace_id=new_id("trace"), request=request)
+        self.turns[record.turn_id] = record
+        await self._run_record(record)
+        if record.result is None:
+            raise RuntimeError(record.error or f"turn ended with status {record.status}")
+        return record.result
+
+    async def _run_record(self, record: TurnRecord) -> None:
+        request = record.request
+        turn_id, trace_id = record.turn_id, record.trace_id
+        record.status = "running"
+        state = self.state_machine.state_for(request)
+        try:
+            await self._event(turn_id, request, "turn.started", {"runtime_state": state.model_dump(mode="json")}, trace_id)
+            canon = self.rag.search(request.message, state)
+            memories = self.memory.search(request.user_id, request.message)
+            response = self.llm.respond(request, state, canon, memories)
+            expression = self.resolver.resolve(response, state)
+            await self._event(turn_id, request, "semantic.completed", response.model_dump(mode="json"), trace_id)
+            for index, delta in enumerate(_chunks(response.reply), start=1):
+                if record.cancel_requested.is_set():
+                    record.status = "cancelled"
+                    await self._event(turn_id, request, "turn.cancelled", {"reason": "client_requested"}, trace_id)
+                    return
+                await self._event(turn_id, request, "text.delta", {"delta": delta, "index": index}, trace_id)
+                await asyncio.sleep(self.stream_interval)
+            await self._event(turn_id, request, "text.completed", {"text": response.reply}, trace_id)
+            await self._event(turn_id, request, "expression.cue", expression.model_dump(mode="json"), trace_id)
+            await self._event(turn_id, request, "sprite.resolved", expression.model_dump(mode="json"), trace_id)
+            memory_status = self.memory.review_and_store(request.user_id, response.memory_candidates)
+            for candidate in response.memory_candidates:
+                await self._event(turn_id, request, "memory.candidate.created", candidate.model_dump(), trace_id)
+            await self._event(turn_id, request, "memory.write.completed", {"status": memory_status}, trace_id)
+            record.result = ChatResponse(turn_id=turn_id, session_id=request.session_id, response=response, runtime_state=state, expression=expression, memory_status=memory_status, build_id=BUILD_ID)
+            record.status = "completed"
+            await self._event(turn_id, request, "turn.completed", {"reply": response.reply}, trace_id)
+        except asyncio.CancelledError:
+            record.status = "cancelled"
+            await self._event(turn_id, request, "turn.cancelled", {"reason": "runtime_shutdown"}, trace_id)
+            raise
+        except Exception as exc:
+            record.status = "failed"
+            record.error = str(exc)
+            await self._event(turn_id, request, "turn.failed", {"error": str(exc)}, trace_id)
+        finally:
+            record.done.set()
+            condition = self.conditions.setdefault(request.session_id, asyncio.Condition())
+            async with condition:
+                condition.notify_all()
+
+    def cancel(self, turn_id: str) -> TurnRecord | None:
+        record = self.turns.get(turn_id)
+        if record is None:
+            return None
+        if record.status not in self.terminal_statuses:
+            record.cancel_requested.set()
+        return record
+
+    def session_is_active(self, session_id: str) -> bool:
+        return any(record.request.session_id == session_id and record.status not in self.terminal_statuses for record in self.turns.values())
+
+    def reset(self) -> None:
+        for task in tuple(self.tasks):
+            task.cancel()
+        self.tasks.clear()
+        self.events.clear()
+        self.turns.clear()
+        self.idempotency.clear()
+        self.conditions.clear()
+        self.memory.records.clear()
+        self.state_machine.overrides.clear()
 
 
 def _chunks(text: str, size: int = 18):

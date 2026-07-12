@@ -8,7 +8,9 @@ This repository now contains the phase 0/1 local runtime skeleton described by t
 D:\environment\anaconda3\envs\py314\python.exe -m uvicorn services.meguri_core.app:app --host 127.0.0.1 --port 8000
 ```
 
-The service exposes `POST /v1/chat/respond`, `POST /v1/turns`, SSE replay at `GET /v1/sessions/{session_id}/events`, cancellation, runtime state/override, and an in-memory memory inspection endpoint. The build id is read from `datasets/meguri/build_report.json` and propagated through every event.
+The service exposes `POST /v1/chat/respond`, asynchronous `POST /v1/turns`, turn status, cancellation, runtime state/override, and an in-memory memory inspection endpoint. `POST /v1/turns` accepts an optional `Idempotency-Key` header. SSE at `GET /v1/sessions/{session_id}/events` supports live delivery and reconnect replay through `after_sequence` or `Last-Event-ID`.
+
+The canonical build id is read from `datasets/meguri/build_report.json`, validated against RAG and expression exports, and propagated through every event envelope.
 
 ## Verify
 
