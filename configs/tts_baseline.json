@@ -1,0 +1,35 @@
+{
+  "build_id": "meguri_v2_02c3db0c507d7c2d",
+  "framework": "GPT-SoVITS",
+  "framework_root": "D:\\environment\\projects\\GPT-SoVITS",
+  "framework_version": "v2Pro",
+  "python": "D:\\environment\\miniconda3\\envs\\GPTSoVits\\python.exe",
+  "output_root": "D:\\AI\\models\\meguri\\gpt-sovits\\meguri_v2_02c3db0c507d7c2d\\baseline_001",
+  "training_policy": {
+    "mode": "single_stable_voice",
+    "use_test_for_training": false,
+    "use_test_for_reference_selection": false,
+    "use_test_for_hyperparameters": false,
+    "random_seed": 3407,
+    "fp16": true,
+    "sovits_epochs": 4,
+    "gpt_epochs": 4,
+    "save_every_epoch": 1,
+    "initial_batch_size": 4,
+    "gradient_accumulation": 1,
+    "stop_on_nan": true
+  },
+  "pretrained": {
+    "sovits_generator": "GPT_SoVITS/pretrained_models/v2Pro/s2Gv2Pro.pth",
+    "sovits_discriminator": "GPT_SoVITS/pretrained_models/v2Pro/s2Dv2Pro.pth",
+    "gpt": "GPT_SoVITS/pretrained_models/s1v3.ckpt",
+    "ssl": "GPT_SoVITS/pretrained_models/chinese-hubert-base",
+    "bert": "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large"
+  },
+  "execution_gate": {
+    "requires_input_verification_go": true,
+    "requires_acoustic_gate_go_or_conditional_go": true,
+    "requires_manual_review_count": 100,
+    "full_training_requires_new_user_approval": true
+  }
+}

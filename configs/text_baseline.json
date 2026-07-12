@@ -1,0 +1,18 @@
+{
+  "build_id": "meguri_v2_02c3db0c507d7c2d",
+  "provider": "mock",
+  "temperature": 0.2,
+  "max_output_tokens": 500,
+  "retrieval_top_k": 3,
+  "variants": {
+    "A": {"rag": false, "runtime_state": false, "memory_mock": false},
+    "B": {"rag": true, "runtime_state": false, "memory_mock": false},
+    "C": {"rag": true, "runtime_state": true, "memory_mock": false},
+    "D": {"rag": true, "runtime_state": true, "memory_mock": true}
+  },
+  "openai_compatible_env": {
+    "base_url": "MEGURI_LLM_BASE_URL",
+    "api_key": "MEGURI_LLM_API_KEY",
+    "model": "MEGURI_LLM_MODEL"
+  }
+}

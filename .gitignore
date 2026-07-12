@@ -1,0 +1,38 @@
+# Python and local tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Local datasets and source-derived assets. These stay outside Git.
+/data/
+/datasets/
+/configs/tts_split_manifest.tsv
+/reports/tts_acoustic_inventory.csv
+/reports/tts_quality_review.csv
+
+# Local generated reports and model/training artifacts
+/reports/software_inventory.json
+/reports/model_dependency_checksums.sha256
+/reports/training_input_verification.json
+/reports/training_input_verification.md
+/reports/tts_*.json
+/reports/tts_*.md
+/baselines/
+/training/runs/
+
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,50 @@
+{
+  "contract_version": "1.0.0",
+  "scope": "local_desktop_pet_only",
+  "transport": {
+    "protocol": "HTTP",
+    "base_url": "http://127.0.0.1:9880",
+    "health_path": "/health",
+    "synthesize_path": "/tts/synthesize",
+    "public_network_allowed": false
+  },
+  "request": {
+    "method": "POST",
+    "content_type": "application/json",
+    "required_fields": ["text", "voice_style", "expression_intensity", "request_id"],
+    "fields": {
+      "text": {"type": "string", "min_length": 1, "max_length": 1000},
+      "voice_style": {
+        "type": "string",
+        "enum": ["neutral", "soft", "cheerful", "restrained", "sleepy", "teasing", "affectionate", "worried"]
+      },
+      "expression_intensity": {"type": "string", "enum": ["low", "medium", "high"]},
+      "request_id": {"type": "string"}
+    }
+  },
+  "response": {
+    "audio_format": "wav",
+    "sample_rate_hz": 48000,
+    "channels": 1,
+    "content_type": "audio/wav",
+    "model_version_header": "X-Meguri-TTS-Model-Version"
+  },
+  "timeouts": {"connect_ms": 1000, "synthesis_ms": 30000},
+  "cancellation": {"supported": true, "method": "DELETE", "path": "/tts/requests/{request_id}"},
+  "health": {
+    "method": "GET",
+    "success_status": 200,
+    "required_fields": ["status", "model_version", "ready"]
+  },
+  "model": {
+    "family": "GPT-SoVITS",
+    "dataset_build_id": "meguri_v2_02c3db0c507d7c2d",
+    "version_source": "local model card"
+  },
+  "clients": {
+    "desktop_pet": {"enabled": true},
+    "astrbot": {"enabled": false},
+    "website": {"enabled": false},
+    "cloud_server": {"enabled": false}
+  }
+}
