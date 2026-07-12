@@ -21,6 +21,9 @@ venv/
 /reports/training_input_verification.md
 /reports/tts_*.json
 /reports/tts_*.md
+/reports/text_prompt_rag_baseline.json
+/reports/text_prompt_rag_baseline.md
+/reports/text_lora_decision.md
 /baselines/
 /training/runs/
 
