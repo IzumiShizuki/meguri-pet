@@ -16,10 +16,13 @@ The phase-1 memory layer now exposes a replaceable `MemoryProvider`, provider-in
 
 `adapters/astrbot/astrbot_plugin_meguri_gateway` contains the offline AstrBot gateway skeleton. It hashes platform identifiers, separates private/group sessions, disables TTS and screen context, supports `/meguri` runtime commands, and only accepts a loopback core URL by default. It is not installed into the production `/opt/astrbot/data` directory.
 
+The AIRI spike is split into `packages/protocol`, `adapters/airi`, `packages/renderer-contracts`, `apps/desktop-airi`, and `local-services/tts-adapter`. It uses Node 24's native erasable TypeScript support, so the protocol/reconnect/PNG/TTS tests run without installing AIRI or changing its upstream checkout. See `docs/airi-upstream-inventory.md` for the pinned read-only reference.
+
 ## Verify
 
 ```powershell
 D:\environment\anaconda3\envs\py314\python.exe -m unittest discover -v
+D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe --test tests-ts\protocol.test.ts tests-ts\renderer.test.ts tests-ts\airi-adapter.test.ts tests-ts\tts-adapter.test.ts
 ```
 
 The provider interfaces are intentionally replaceable. `MockLLMProvider`, `MockRagProvider`, and `FakeMemoryProvider` are the only phase-1 implementations; production MemoryOS, pgvector, Mem0, AstrBot, OpenResty, and AIRI adapters remain separate follow-up stages.

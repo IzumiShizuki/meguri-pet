@@ -1,0 +1,13 @@
+{
+  "name": "meguri-pet-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test:ts": "node --test tests-ts/protocol.test.ts tests-ts/renderer.test.ts tests-ts/airi-adapter.test.ts tests-ts/tts-adapter.test.ts"
+  }
+}
