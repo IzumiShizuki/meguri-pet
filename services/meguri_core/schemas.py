@@ -52,6 +52,8 @@ class RuntimeState(BaseModel):
 
 
 class MemoryCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["preference", "identity", "project", "commitment", "relationship", "routine", "event"]
     summary: str = Field(min_length=1, max_length=500)
     confidence: float = Field(ge=0, le=1)
@@ -60,6 +62,8 @@ class MemoryCandidate(BaseModel):
 
 
 class LlmResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reply: str = Field(min_length=1)
     expression_tag: ExpressionTag = "neutral"
     expression_intensity: Intensity = "low"

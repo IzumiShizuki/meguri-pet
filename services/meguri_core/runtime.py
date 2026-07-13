@@ -19,7 +19,7 @@ from .memory import (
     SessionContextStore,
     SessionMessage,
 )
-from .providers import MockLLMProvider, MockRagProvider
+from .providers import LlmProvider, MockRagProvider, create_llm_provider_from_env
 from .schemas import (
     ChatResponse, EventEnvelope, EventMetadata, LlmResponse, ResolvedExpression, RuntimeOverride,
     RuntimeState, TurnRequest, new_id,
@@ -137,13 +137,18 @@ class ExpressionResolver:
 class TurnOrchestrator:
     terminal_statuses = {"completed", "failed", "cancelled"}
 
-    def __init__(self, stream_interval: float = 0.01, memory_provider: MemoryProvider | None = None):
+    def __init__(
+        self,
+        stream_interval: float = 0.01,
+        memory_provider: MemoryProvider | None = None,
+        llm_provider: LlmProvider | None = None,
+    ):
         self.state_machine = RuntimeStateMachine()
         self.rag = MockRagProvider(DATA_ROOT)
         self.memory: MemoryProvider = memory_provider or FakeMemoryProvider()
         self.memory_policy = CompanionMemoryPolicy()
         self.sessions = SessionContextStore()
-        self.llm = MockLLMProvider()
+        self.llm = llm_provider or create_llm_provider_from_env()
         self.resolver = ExpressionResolver(DATA_ROOT)
         self.events: dict[str, list[EventEnvelope]] = {}
         self.turns: dict[str, TurnRecord] = {}
@@ -199,7 +204,7 @@ class TurnOrchestrator:
                 memory_hits = []
                 memory_available = False
             recent_messages = self.sessions.recent(request.user_id, request.client_id, request.session_id)
-            response = self.llm.respond(
+            response = await self.llm.respond(
                 request,
                 state,
                 canon,

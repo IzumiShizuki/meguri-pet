@@ -30,7 +30,15 @@ orchestrator = TurnOrchestrator()
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "service": "meguri-core", "build_id": BUILD_ID, "mode": "local-mock", "rag_chunks": len(orchestrator.rag.rows)}
+    provider_name = getattr(orchestrator.llm, "provider_name", "unknown")
+    return {
+        "status": "ok",
+        "service": "meguri-core",
+        "build_id": BUILD_ID,
+        "mode": "local-mock" if provider_name == "mock" else "configured-provider",
+        "llm_provider": provider_name,
+        "rag_chunks": len(orchestrator.rag.rows),
+    }
 
 
 @app.post("/v1/chat/respond", response_model=ChatResponse)

@@ -6,8 +6,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+CONFIG_ROOT = ROOT / "configs"
 DATA_ROOT = Path(os.getenv("MEGURI_DATA_ROOT", ROOT / "datasets" / "meguri"))
 BUILD_REPORT = DATA_ROOT / "build_report.json"
+SYSTEM_PROMPT_PATH = CONFIG_ROOT / "meguri_system_prompt.txt"
+RESPONSE_SCHEMA_PATH = CONFIG_ROOT / "meguri_response.schema.json"
 
 
 def load_build_id() -> str:
@@ -20,4 +23,3 @@ def load_build_id() -> str:
 BUILD_ID = load_build_id()
 CHARACTER_ID = "meguri"
 DEFAULT_TIMEZONE = "Asia/Shanghai"
-

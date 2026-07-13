@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
-from typing import Protocol
+from typing import Mapping, Protocol
 
-from .config import BUILD_ID
+import httpx
+from pydantic import ValidationError
+
+from .config import BUILD_ID, RESPONSE_SCHEMA_PATH, SYSTEM_PROMPT_PATH
 from .schemas import LlmResponse, MemoryCandidate, RuntimeState, TurnRequest
 
 
 class LlmProvider(Protocol):
-    def respond(
+    async def respond(
         self,
         request: TurnRequest,
         state: RuntimeState,
@@ -27,7 +31,9 @@ class RagProvider(Protocol):
 class MockLLMProvider:
     """Deterministic provider used by local development and offline tests."""
 
-    def respond(
+    provider_name = "mock"
+
+    async def respond(
         self,
         request: TurnRequest,
         state: RuntimeState,
@@ -52,6 +58,161 @@ class MockLLMProvider:
         if re.search(r"我喜欢|我不喜欢|我的项目|我叫", message):
             candidates.append(MemoryCandidate(type="preference", summary=message, confidence=0.8))
         return LlmResponse(reply=reply, expression_tag=tag, expression_intensity=intensity, voice_style=voice, memory_candidates=candidates)
+
+
+class LlmProviderError(RuntimeError):
+    """A sanitized provider failure safe to expose in a turn.failed event."""
+
+
+class LlmConfigurationError(LlmProviderError):
+    pass
+
+
+class OpenAICompatibleLlmProvider:
+    provider_name = "openai-compatible"
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        api_key: str | None = None,
+        timeout_seconds: float = 30.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+        system_prompt_path: Path = SYSTEM_PROMPT_PATH,
+        response_schema_path: Path = RESPONSE_SCHEMA_PATH,
+    ) -> None:
+        parsed = httpx.URL(base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.host:
+            raise LlmConfigurationError("MEGURI_LLM_BASE_URL must be an HTTP(S) URL")
+        is_loopback = parsed.host in {"127.0.0.1", "localhost", "::1"}
+        if parsed.scheme != "https" and not is_loopback:
+            raise LlmConfigurationError("non-loopback LLM endpoints must use HTTPS")
+        if not model.strip():
+            raise LlmConfigurationError("MEGURI_LLM_MODEL must not be empty")
+        if not is_loopback and not api_key:
+            raise LlmConfigurationError("remote LLM endpoints require MEGURI_LLM_API_KEY")
+        if timeout_seconds <= 0:
+            raise LlmConfigurationError("MEGURI_LLM_TIMEOUT_SECONDS must be positive")
+        self.base_url = base_url.rstrip("/") + "/"
+        self.model = model
+        self.api_key = api_key
+        self.timeout = httpx.Timeout(timeout_seconds)
+        self.transport = transport
+        try:
+            self.system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
+            self.response_schema = json.loads(response_schema_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise LlmConfigurationError("Meguri LLM contract files are unavailable") from exc
+        self._validate_contract()
+
+    async def respond(
+        self,
+        request: TurnRequest,
+        state: RuntimeState,
+        canon: list[str],
+        memories: list[str],
+        recent_context: list[str] | None = None,
+    ) -> LlmResponse:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        schema = dict(self.response_schema)
+        schema.pop("$schema", None)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": self._context_json(request, state, canon, memories, recent_context)},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "meguri_response", "strict": True, "schema": schema},
+            },
+            "stream": False,
+        }
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.base_url,
+                timeout=self.timeout,
+                transport=self.transport,
+                headers=headers,
+            ) as client:
+                response = await client.post("chat/completions", json=payload)
+                response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise LlmProviderError("LLM provider timed out") from exc
+        except httpx.HTTPError as exc:
+            status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+            suffix = f" (HTTP {status})" if status is not None else ""
+            raise LlmProviderError(f"LLM provider request failed{suffix}") from exc
+        try:
+            body = response.json()
+            content = body["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise TypeError("content is not a string")
+            decoded = json.loads(content)
+            return LlmResponse.model_validate(decoded)
+        except (ValueError, TypeError, KeyError, IndexError, ValidationError) as exc:
+            raise LlmProviderError("LLM provider returned an invalid Meguri response") from exc
+
+    def _context_json(
+        self,
+        request: TurnRequest,
+        state: RuntimeState,
+        canon: list[str],
+        memories: list[str],
+        recent_context: list[str] | None,
+    ) -> str:
+        context = {
+            "runtime_state": state.model_dump(mode="json"),
+            "user_message": _bounded(request.message, 8000),
+            "canon_examples": [_bounded(item, 2000) for item in canon[:3]],
+            "long_term_memories": [_bounded(item, 2000) for item in memories[:5]],
+            "recent_context": [_bounded(item, 2000) for item in (recent_context or [])[-20:]],
+        }
+        return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
+
+    def _validate_contract(self) -> None:
+        if not self.system_prompt:
+            raise LlmConfigurationError("Meguri system prompt must not be empty")
+        if not isinstance(self.response_schema, dict):
+            raise LlmConfigurationError("Meguri response schema must be an object")
+        required = self.response_schema.get("required")
+        if set(required or []) != set(LlmResponse.model_fields):
+            raise LlmConfigurationError("Meguri response schema fields do not match LlmResponse")
+        if self.response_schema.get("additionalProperties") is not False:
+            raise LlmConfigurationError("Meguri response schema must reject additional properties")
+
+
+def create_llm_provider_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> LlmProvider:
+    values = os.environ if env is None else env
+    provider = values.get("MEGURI_LLM_PROVIDER", "mock").strip().lower()
+    if provider == "mock":
+        return MockLLMProvider()
+    if provider != "openai-compatible":
+        raise LlmConfigurationError(f"unsupported MEGURI_LLM_PROVIDER: {provider}")
+    base_url = values.get("MEGURI_LLM_BASE_URL", "").strip()
+    model = values.get("MEGURI_LLM_MODEL", "").strip()
+    try:
+        timeout = float(values.get("MEGURI_LLM_TIMEOUT_SECONDS", "30"))
+    except ValueError as exc:
+        raise LlmConfigurationError("MEGURI_LLM_TIMEOUT_SECONDS must be a number") from exc
+    return OpenAICompatibleLlmProvider(
+        base_url=base_url,
+        model=model,
+        api_key=values.get("MEGURI_LLM_API_KEY") or None,
+        timeout_seconds=timeout,
+        transport=transport,
+    )
+
+
+def _bounded(value: str, limit: int) -> str:
+    return value if len(value) <= limit else value[:limit]
 
 
 class MockRagProvider:
