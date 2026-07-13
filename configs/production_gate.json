@@ -1,0 +1,18 @@
+{
+  "status": "blocked",
+  "scope": "meguri-framework-phase-1",
+  "mutation_allowed": false,
+  "checks": {
+    "dependency_mapping": false,
+    "backup_and_restore_rehearsal": false,
+    "rollback_artifact_and_drill": false,
+    "authentication_and_identity_boundary": false,
+    "public_infrastructure_ports_remediated": false,
+    "postgres_pgvector_decision_and_migration": false,
+    "memoryos_owner_and_consumer_confirmation": false,
+    "health_logging_and_monitoring": false,
+    "astrbot_immutability_boundary": true,
+    "phase1_local_only_boundary": true
+  },
+  "reason": "Production writes are prohibited until every false gate has evidence and explicit approval."
+}
