@@ -17,25 +17,12 @@ coverage/
 # Local datasets and source-derived assets. These stay outside Git.
 /data/
 /datasets/
-/configs/tts_split_manifest.tsv
-/configs/tts_extended_ja_manifest.tsv
-/configs/tts_extended_ja_manifest.json
-/reports/tts_acoustic_inventory.csv
-/reports/tts_quality_review.csv
+/configs/*
 
 # Local generated reports and model/training artifacts
-/reports/software_inventory.json
-/reports/model_dependency_checksums.sha256
-/reports/training_input_verification.json
-/reports/training_input_verification.md
-/reports/tts_*.json
-/reports/tts_*.md
-/reports/text_prompt_rag_baseline.json
-/reports/text_prompt_rag_baseline.md
-/reports/text_lora_decision.md
+/reports/*
 /baselines/
-/training/runs/
-/training/tts_work/
+/training/*
 
 # Secrets and local environment files
 .env
