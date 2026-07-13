@@ -1,28 +1,25 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { MeguriDesktopRuntime } from '../../../adapters/airi/src/index.ts'
 import { MeguriApiAdapter } from '../../../adapters/airi/src/meguri-api-adapter.ts'
-import { PngRenderer } from '../../../packages/renderer-contracts/src/index.ts'
+import { PngRenderer, pngCatalogFromExpressionMap } from '../../../packages/renderer-contracts/src/index.ts'
 import { MockLocalTtsAdapter } from '../../../local-services/tts-adapter/src/index.ts'
 
 const coreUrl = process.env.MEGURI_CORE_URL ?? 'http://127.0.0.1:8000'
 const sessionId = `airi-demo-${Date.now()}`
-const renderer = new PngRenderer(
-  ['01', '02', '03', '04'].flatMap(outfitCode => [
-    {
-      characterId: 'meguri',
-      outfitCode,
-      expressionTag: 'neutral',
-      intensity: 'low' as const,
-      spriteFile: 'placeholder-neutral.png',
-    },
-    {
-      characterId: 'meguri',
-      outfitCode,
-      expressionTag: 'happy',
-      intensity: 'medium' as const,
-      spriteFile: 'placeholder-happy.png',
-    },
-  ]),
-)
+const root = fileURLToPath(new URL('../../../', import.meta.url))
+const buildReport = JSON.parse(readFileSync(resolve(root, 'datasets/meguri/build_report.json'), 'utf8'))
+const expressionMap = JSON.parse(readFileSync(
+  resolve(root, 'datasets/meguri/exports/expression_map/expression_map.json'),
+  'utf8',
+))
+const renderer = new PngRenderer(pngCatalogFromExpressionMap(expressionMap, {
+  expectedBuildId: buildReport.build_id,
+  resolveSpritePath: projectPath => resolve(root, projectPath),
+  assetExists: existsSync,
+}))
 await renderer.loadCharacter('meguri')
 const runtime = new MeguriDesktopRuntime(
   new MeguriApiAdapter(coreUrl),

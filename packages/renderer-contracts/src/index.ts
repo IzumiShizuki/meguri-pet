@@ -23,6 +23,58 @@ export interface PngAssetEntry {
   spriteFile: string
 }
 
+export interface CanonicalExpressionRow {
+  outfit_code?: unknown
+  expression_tag?: unknown
+  expression_intensity?: unknown
+  project_path?: unknown
+  size?: unknown
+  excluded_default?: unknown
+  build_id?: unknown
+}
+
+export interface CanonicalCatalogOptions {
+  expectedBuildId: string
+  resolveSpritePath?: (projectPath: string) => string
+  assetExists?: (spritePath: string) => boolean
+}
+
+export function pngCatalogFromExpressionMap(
+  value: unknown,
+  options: CanonicalCatalogOptions,
+): PngAssetEntry[] {
+  if (!Array.isArray(value))
+    throw new TypeError('canonical expression map must be an array')
+  const catalog: PngAssetEntry[] = []
+  for (const item of value) {
+    if (!isExpressionRow(item) || item.excluded_default === true || item.size !== 'l')
+      continue
+    if (item.build_id !== options.expectedBuildId)
+      throw new Error(`expression map build_id mismatch: ${String(item.build_id)}`)
+    if (!['01', '02', '03', '04', '05', '06'].includes(item.outfit_code))
+      continue
+    if (!isExpressionIntensity(item.expression_intensity))
+      continue
+    const spritePath = options.resolveSpritePath?.(item.project_path) ?? item.project_path
+    if (options.assetExists && !options.assetExists(spritePath))
+      throw new Error(`canonical PNG asset is missing: ${spritePath}`)
+    catalog.push({
+      characterId: 'meguri',
+      outfitCode: item.outfit_code,
+      expressionTag: item.expression_tag,
+      intensity: item.expression_intensity,
+      spriteFile: spritePath,
+    })
+  }
+  if (catalog.length === 0)
+    throw new Error('canonical expression map contains no enabled large PNG assets')
+  for (const outfitCode of ['01', '02', '03', '04']) {
+    if (!catalog.some(entry => entry.outfitCode === outfitCode && entry.expressionTag === 'neutral'))
+      throw new Error(`canonical expression map has no neutral fallback for outfit ${outfitCode}`)
+  }
+  return catalog
+}
+
 export interface PngRenderSnapshot {
   characterId?: string
   outfitCode?: string
@@ -136,4 +188,23 @@ export class PngRenderer implements CharacterRenderer {
  */
 export interface AiriLive2DRenderer extends CharacterRenderer {
   readonly rendererKind: 'airi-live2d'
+}
+
+function isExpressionRow(value: unknown): value is Required<Pick<
+  CanonicalExpressionRow,
+  'outfit_code' | 'expression_tag' | 'expression_intensity' | 'project_path' | 'size' | 'build_id'
+>> & CanonicalExpressionRow {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const row = value as Record<string, unknown>
+  return typeof row.outfit_code === 'string'
+    && typeof row.expression_tag === 'string'
+    && typeof row.expression_intensity === 'string'
+    && typeof row.project_path === 'string'
+    && typeof row.size === 'string'
+    && typeof row.build_id === 'string'
+}
+
+function isExpressionIntensity(value: unknown): value is ExpressionIntensity {
+  return value === 'low' || value === 'medium' || value === 'high'
 }

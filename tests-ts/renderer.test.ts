@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import test from 'node:test'
 
 import {
   PngRenderer,
+  pngCatalogFromExpressionMap,
   type PngAssetEntry,
 } from '../packages/renderer-contracts/src/index.ts'
 
@@ -55,4 +58,23 @@ test('PNG renderer rejects disabled outfit and resets idle state', async () => {
   await renderer.resetToIdle()
   assert.equal(renderer.snapshot().speaking, false)
   assert.equal(renderer.snapshot().motionTag, undefined)
+})
+
+test('canonical expression export resolves only real build-matched PNG assets', () => {
+  const root = resolve(import.meta.dirname, '..')
+  const buildReport = JSON.parse(readFileSync(resolve(root, 'datasets/meguri/build_report.json'), 'utf8'))
+  const expressionMap = JSON.parse(readFileSync(
+    resolve(root, 'datasets/meguri/exports/expression_map/expression_map.json'),
+    'utf8',
+  ))
+  const canonical = pngCatalogFromExpressionMap(expressionMap, {
+    expectedBuildId: buildReport.build_id,
+    resolveSpritePath: projectPath => resolve(root, projectPath),
+    assetExists: existsSync,
+  })
+  assert.ok(canonical.length > 100)
+  const neutralSleep = canonical.find(entry => entry.spriteFile.endsWith('ce04003l.png'))
+  assert.equal(neutralSleep?.outfitCode, '04')
+  assert.equal(neutralSleep?.expressionTag, 'neutral')
+  assert.ok(neutralSleep && existsSync(neutralSleep.spriteFile))
 })

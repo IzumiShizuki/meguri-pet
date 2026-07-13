@@ -1,6 +1,6 @@
 # Desktop AIRI spike
 
-This is a small integration spike, not a fork of AIRI Stage Tamagotchi. It demonstrates the stable Meguri turn protocol, streaming reducer and renderer boundary in isolation before wiring them into AIRI's existing Vue/Pinia stores.
+This is a small integration spike, not a fork of AIRI Stage Tamagotchi. It demonstrates the stable Meguri turn protocol, streaming reducer and renderer boundary in isolation before wiring them into AIRI's existing Vue/Pinia stores. The demo loads the canonical expression export and rejects a build ID mismatch or missing PNG before starting a turn.
 
 Run `meguri-core` locally, then execute the demo with Node 24:
 
