@@ -35,6 +35,8 @@ export interface TurnRequest {
   message: string
   attachments?: Array<Record<string, unknown>>
   client_capabilities: ClientCapabilities
+  optional_screen_context_id?: string
+  relationship_profile?: 'sibling' | 'pursuit' | 'lover'
 }
 
 export interface TurnCreateResponse {

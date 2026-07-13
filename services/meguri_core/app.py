@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import BUILD_ID
@@ -13,6 +14,17 @@ from .schemas import ChatResponse, RuntimeOverride, TurnCreateResponse, TurnRequ
 
 
 app = FastAPI(title="Meguri Core", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:4173",
+        "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://localhost:5173",
+    ],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Idempotency-Key", "Last-Event-ID"],
+)
 orchestrator = TurnOrchestrator()
 
 

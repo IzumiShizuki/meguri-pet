@@ -18,11 +18,13 @@ The phase-1 memory layer now exposes a replaceable `MemoryProvider`, provider-in
 
 The AIRI spike is split into `packages/protocol`, `adapters/airi`, `packages/renderer-contracts`, `apps/desktop-airi`, and `local-services/tts-adapter`. It uses Node 24's native erasable TypeScript support, so the protocol/reconnect/PNG/TTS tests run without installing AIRI or changing its upstream checkout. See `docs/airi-upstream-inventory.md` for the pinned read-only reference.
 
+The browser-facing path is split into the shared `packages/client-sdk`, `adapters/website`, and `apps/website-client` demo. It injects a host-bound user identity, persists only session recovery metadata, reconnects SSE turns after interruption, exposes cancellation, and allows only loopback core URLs by default. The core CORS policy is restricted to local Vite preview/development origins in phase 1.
+
 ## Verify
 
 ```powershell
 D:\environment\anaconda3\envs\py314\python.exe -m unittest discover -v
-D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe --test tests-ts\protocol.test.ts tests-ts\renderer.test.ts tests-ts\airi-adapter.test.ts tests-ts\tts-adapter.test.ts
+D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe --test tests-ts\protocol.test.ts tests-ts\renderer.test.ts tests-ts\airi-adapter.test.ts tests-ts\tts-adapter.test.ts tests-ts\website-adapter.test.ts
 ```
 
-The provider interfaces are intentionally replaceable. `MockLLMProvider`, `MockRagProvider`, and `FakeMemoryProvider` are the only phase-1 implementations; production MemoryOS, pgvector, Mem0, AstrBot, OpenResty, and AIRI adapters remain separate follow-up stages.
+The provider interfaces are intentionally replaceable. `MockLLMProvider`, `MockRagProvider`, and `FakeMemoryProvider` remain the enabled local defaults. Production provider selection, pgvector, Mem0, OpenResty, authentication, backup/restore validation, and deployment remain separate follow-up stages.

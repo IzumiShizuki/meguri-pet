@@ -50,6 +50,26 @@ class MeguriCoreTests(unittest.TestCase):
         self.assertIsNotNone(body["expression"]["sprite_file"])
         self.assertGreater(self.client.get("/health").json()["rag_chunks"], 0)
 
+    def test_local_website_cors_is_allowlisted(self):
+        response = self.client.options(
+            "/v1/turns",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Content-Type,Idempotency-Key",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["access-control-allow-origin"], "http://localhost:5173")
+        denied = self.client.options(
+            "/v1/turns",
+            headers={
+                "Origin": "https://untrusted.example",
+                "Access-Control-Request-Method": "POST",
+            },
+        )
+        self.assertNotIn("access-control-allow-origin", denied.headers)
+
     def test_event_order_and_sse_replay(self):
         created_response = self.client.post("/v1/turns", json=request_payload())
         self.assertEqual(created_response.status_code, 202)

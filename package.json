@@ -8,6 +8,6 @@
     "node": ">=24"
   },
   "scripts": {
-    "test:ts": "node --test tests-ts/protocol.test.ts tests-ts/renderer.test.ts tests-ts/airi-adapter.test.ts tests-ts/tts-adapter.test.ts"
+    "test:ts": "node --test tests-ts/protocol.test.ts tests-ts/renderer.test.ts tests-ts/airi-adapter.test.ts tests-ts/tts-adapter.test.ts tests-ts/website-adapter.test.ts"
   }
 }
