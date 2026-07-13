@@ -18,6 +18,8 @@ coverage/
 /data/
 /datasets/
 /configs/tts_split_manifest.tsv
+/configs/tts_extended_ja_manifest.tsv
+/configs/tts_extended_ja_manifest.json
 /reports/tts_acoustic_inventory.csv
 /reports/tts_quality_review.csv
 
@@ -33,6 +35,7 @@ coverage/
 /reports/text_lora_decision.md
 /baselines/
 /training/runs/
+/training/tts_work/
 
 # Secrets and local environment files
 .env

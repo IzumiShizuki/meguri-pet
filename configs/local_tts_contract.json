@@ -24,7 +24,7 @@
   },
   "response": {
     "audio_format": "wav",
-    "sample_rate_hz": 48000,
+    "sample_rate_hz": 32000,
     "channels": 1,
     "content_type": "audio/wav",
     "model_version_header": "X-Meguri-TTS-Model-Version"

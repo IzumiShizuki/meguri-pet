@@ -80,7 +80,8 @@ def collect_inventory() -> dict[str, Any]:
                 "'cuda_runtime':torch.version.cuda,'cuda_available':torch.cuda.is_available(),"
                 "'gpu':torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,"
                 "'capability':torch.cuda.get_device_capability(0) if torch.cuda.is_available() else None,"
-                "'vram_bytes':torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0}))"
+                "'vram_bytes':torch.cuda.get_device_properties(0).total_memory if torch.cuda.is_available() else 0,"
+                "'smoke_sum':float(torch.ones((1024,1024),device='cuda').sum().item()) if torch.cuda.is_available() else None}))"
             ),
         ],
         timeout=120,
@@ -97,6 +98,22 @@ def collect_inventory() -> dict[str, Any]:
             "--format=csv,noheader,nounits",
         ],
         timeout=120,
+    )
+    ffmpeg_smoke = run_command(
+        [
+            FFMPEG,
+            "-hide_banner",
+            "-nostdin",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(PROJECT_ROOT / "data" / "meguri" / "assets" / "voice_safe" / "MGR050498.ogg"),
+            "-f",
+            "null",
+            "NUL",
+        ],
+        timeout=60,
     )
     git_commit = command_version(GIT, "-C", str(GPT_SOVITS_ROOT), "rev-parse", "HEAD")
     git_describe = command_version(GIT, "-C", str(GPT_SOVITS_ROOT), "describe", "--tags", "--always", "--dirty")
@@ -132,6 +149,7 @@ def collect_inventory() -> dict[str, Any]:
         "gpu": {
             "nvidia_smi_query": nvidia_query,
             "torch": torch_info,
+            "torch_cuda_smoke_passed": torch_info.get("smoke_sum") == 1048576.0,
         },
         "software": {
             "git": git_version,
@@ -140,6 +158,7 @@ def collect_inventory() -> dict[str, Any]:
             "conda": conda_version,
             "python_inventory": python_314,
             "gpt_sovits_python": str(GPT_SOVITS_PYTHON),
+            "ffmpeg_decode_smoke": ffmpeg_smoke,
         },
         "gpt_sovits": {
             "root": str(GPT_SOVITS_ROOT),
@@ -205,6 +224,8 @@ def write_reports(inventory: dict[str, Any]) -> None:
         f"- PyTorch: `{torch.get('torch')}`",
         f"- CUDA runtime: `{torch.get('cuda_runtime')}`",
         f"- CUDA available: `{torch.get('cuda_available')}`",
+        f"- CUDA tensor smoke test: `{inventory['gpu'].get('torch_cuda_smoke_passed')}`",
+        f"- FFmpeg decode smoke test: `{inventory['software']['ffmpeg_decode_smoke'].get('returncode') == 0}`",
         f"- GPT-SoVITS commit: `{framework['commit']}`",
         f"- GPT-SoVITS worktree dirty: `{framework['dirty']}`",
         f"- Selected framework version: `{framework['selected_version']}`",
@@ -244,8 +265,13 @@ def main() -> int:
     write_reports(inventory)
     missing = inventory["model_dependencies"]["missing"]
     cuda_ok = bool(inventory["gpu"]["torch"].get("cuda_available"))
-    print(f"environment inventory: cuda={cuda_ok} missing_dependencies={len(missing)}")
-    return 0 if cuda_ok and not missing else 2
+    cuda_smoke_ok = bool(inventory["gpu"].get("torch_cuda_smoke_passed"))
+    ffmpeg_smoke_ok = inventory["software"]["ffmpeg_decode_smoke"].get("returncode") == 0
+    print(
+        f"environment inventory: cuda={cuda_ok} cuda_smoke={cuda_smoke_ok} "
+        f"ffmpeg_smoke={ffmpeg_smoke_ok} missing_dependencies={len(missing)}"
+    )
+    return 0 if cuda_ok and cuda_smoke_ok and ffmpeg_smoke_ok and not missing else 2
 
 
 if __name__ == "__main__":

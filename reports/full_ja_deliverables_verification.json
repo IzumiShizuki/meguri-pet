@@ -1,0 +1,130 @@
+{
+  "build_id": "meguri_v2_02c3db0c507d7c2d",
+  "run_id": "full_ja_001",
+  "status": "FULL_TRAINING_PASS_RELEASE_LISTENING_PENDING",
+  "training_goal_complete": true,
+  "failed": [],
+  "checks": [
+    {
+      "name": "model_directory_contract",
+      "passed": true,
+      "evidence": {
+        "missing": []
+      }
+    },
+    {
+      "name": "japanese_only_config",
+      "passed": true,
+      "evidence": {
+        "scope": [
+          "ja"
+        ],
+        "sentences": 10
+      }
+    },
+    {
+      "name": "epoch_policy",
+      "passed": true,
+      "evidence": {
+        "mode": "full_japanese_voice",
+        "experiment_name": "meguri_full_ja_001",
+        "full_training": true,
+        "use_test_for_training": false,
+        "use_test_for_reference_selection": false,
+        "use_test_for_hyperparameters": false,
+        "random_seed": 3407,
+        "fp16": true,
+        "sovits_epochs": 20,
+        "gpt_epochs": 20,
+        "save_every_epoch": 1,
+        "initial_batch_size": 4,
+        "gradient_accumulation": 1,
+        "stop_on_nan": true
+      }
+    },
+    {
+      "name": "checkpoint_counts",
+      "passed": true,
+      "evidence": {
+        "gpt_deploy": 20,
+        "sovits_deploy": 20,
+        "sovits_G": 20,
+        "sovits_D": 20
+      }
+    },
+    {
+      "name": "final_weight_hashes",
+      "passed": true,
+      "evidence": {
+        "gpt": "5b2448a964de5c3eb3119752038a41e1e490d3360f5f42c838af5c26aa63ef35",
+        "sovits": "55911e156a9b67e7af649acc737fe9cb991dae6811cefa14683e7049832ad501"
+      }
+    },
+    {
+      "name": "japanese_fixed_inference",
+      "passed": true,
+      "evidence": {
+        "wav_count": 10,
+        "languages": [
+          "ja"
+        ]
+      }
+    },
+    {
+      "name": "model_manifest",
+      "passed": true,
+      "evidence": {
+        "verified": 23,
+        "errors": []
+      }
+    },
+    {
+      "name": "training_process_exit",
+      "passed": true,
+      "evidence": {
+        "gpt_returncode_0": true,
+        "sovits_returncode_0": true
+      }
+    },
+    {
+      "name": "test_isolation",
+      "passed": true,
+      "evidence": {
+        "train_rows": 1306,
+        "test_overlap": [],
+        "language_marker": "JP"
+      }
+    },
+    {
+      "name": "formal_dataset_integrity",
+      "passed": true,
+      "evidence": {
+        "decision": "GO",
+        "checksum_entries": 115
+      }
+    },
+    {
+      "name": "runtime_boundary",
+      "passed": true,
+      "evidence": {
+        "desktop_pet": {
+          "enabled": true
+        },
+        "astrbot": {
+          "enabled": false
+        },
+        "website": {
+          "enabled": false
+        },
+        "cloud_server": {
+          "enabled": false
+        }
+      }
+    },
+    {
+      "name": "text_lora_not_started",
+      "passed": true,
+      "evidence": "closed LLM + Prompt + RAG remains active"
+    }
+  ]
+}

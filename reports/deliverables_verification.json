@@ -1,0 +1,153 @@
+{
+  "build_id": "meguri_v2_02c3db0c507d7c2d",
+  "status": "AUTOMATED_DELIVERABLES_PASS_USER_APPROVAL_PENDING",
+  "checks": [
+    {
+      "name": "required_reports",
+      "passed": true,
+      "evidence": {
+        "required": 15,
+        "missing": []
+      }
+    },
+    {
+      "name": "model_directory_contract",
+      "passed": true,
+      "evidence": {
+        "required": [
+          "model_card.md",
+          "training_config.yaml",
+          "dataset_build_id.txt",
+          "dataset_checksums.txt",
+          "framework_commit.txt",
+          "environment.json",
+          "metrics.json",
+          "checksums.sha256",
+          "checkpoints",
+          "samples",
+          "logs"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "name": "build_id",
+      "passed": true,
+      "evidence": {
+        "file": "meguri_v2_02c3db0c507d7c2d",
+        "metrics": "meguri_v2_02c3db0c507d7c2d"
+      }
+    },
+    {
+      "name": "model_checksums",
+      "passed": true,
+      "evidence": {
+        "verified": 26,
+        "errors": []
+      }
+    },
+    {
+      "name": "dependency_manifest_hashes",
+      "passed": true,
+      "evidence": {
+        "formal_dataset": {
+          "path": "D:\\program\\meguri-pet\\datasets\\meguri\\checksums.sha256",
+          "sha256": "5978c7f7fd34334ccba59b4d6b10c1edd9d65bbd26802b6d3f3d91ebcb25a18e"
+        },
+        "pretrained_models": {
+          "path": "D:\\program\\meguri-pet\\reports\\model_dependency_checksums.sha256",
+          "sha256": "1a2efefe62a0c01973e6df576cc293e2a32e893b59777a04788b85e55abe66ae"
+        }
+      }
+    },
+    {
+      "name": "acoustic_gate",
+      "passed": true,
+      "evidence": {
+        "decision": "CONDITIONAL_GO",
+        "manual_review_count": 100,
+        "manual_review_passed": true
+      }
+    },
+    {
+      "name": "test_isolation",
+      "passed": true,
+      "evidence": {
+        "trained": 1306,
+        "test_ids": 92,
+        "overlap": []
+      }
+    },
+    {
+      "name": "fixed_inference_samples",
+      "passed": true,
+      "evidence": {
+        "zero_shot_ja": 10,
+        "fine_tuned_ja": 10,
+        "active_languages": [
+          "ja"
+        ]
+      }
+    },
+    {
+      "name": "blind_ab_package",
+      "passed": true,
+      "evidence": {
+        "pairs": 10,
+        "A_zero_shot": 6,
+        "A_finetuned": 4,
+        "max_pair_rms_delta_db": 7e-06
+      }
+    },
+    {
+      "name": "text_prompt_rag_and_lora_policy",
+      "passed": true,
+      "evidence": {
+        "provider": "mock",
+        "variants": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "cases_each_language": 92
+      }
+    },
+    {
+      "name": "local_tts_contract",
+      "passed": true,
+      "evidence": {
+        "scope": "local_desktop_pet_only",
+        "clients": {
+          "desktop_pet": {
+            "enabled": true
+          },
+          "astrbot": {
+            "enabled": false
+          },
+          "website": {
+            "enabled": false
+          },
+          "cloud_server": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    {
+      "name": "approval_boundaries",
+      "passed": true,
+      "evidence": {
+        "release": false,
+        "full_training": false,
+        "human_review": "COMPLETE",
+        "evaluated_languages": [
+          "ja"
+        ]
+      }
+    }
+  ],
+  "failed": [],
+  "goal_complete": false,
+  "remaining_gate": "explicit user approval for Japanese-only full training"
+}

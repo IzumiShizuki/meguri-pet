@@ -1,0 +1,15 @@
+{
+  "build_id": "meguri_v2_02c3db0c507d7c2d",
+  "run_id": "full_ja_001",
+  "training_complete": true,
+  "release_status": "PENDING_FINAL_JA_LISTENING",
+  "active_language_scope": [
+    "ja"
+  ],
+  "excluded_languages": [
+    "zh"
+  ],
+  "deployment_approved": false,
+  "final_weights_verified": true,
+  "next_action": "Listen to the 10 final Japanese samples before local desktop-pet release."
+}

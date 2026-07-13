@@ -314,7 +314,10 @@ def finalize(rows: list[dict[str, Any]], review_rows: list[dict[str, str]]) -> d
                 **row,
                 "manual_status": review.get("manual_status", ""),
                 "manual_issue": review.get("manual_issue", ""),
-                "training_eligible": str(row.get("utterance_id")) not in excluded_ids,
+                "training_eligible": (
+                    str(row.get("split")) in {"train", "validation"}
+                    and str(row.get("utterance_id")) not in excluded_ids
+                ),
             }
         )
     write_delimited(SPLIT_MANIFEST, split_rows, split_fields, delimiter="\t")

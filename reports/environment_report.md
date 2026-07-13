@@ -1,17 +1,19 @@
 # Environment Report
 
 - Build ID: `meguri_v2_02c3db0c507d7c2d`
-- Generated UTC: `2026-07-12T18:24:05+00:00`
+- Generated UTC: `2026-07-12T18:29:19+00:00`
 - GPU: `NVIDIA GeForce RTX 5060 Ti`
 - VRAM: `15.93 GiB`
 - PyTorch: `2.7.0+cu128`
 - CUDA runtime: `12.8`
 - CUDA available: `True`
+- CUDA tensor smoke test: `True`
+- FFmpeg decode smoke test: `True`
 - GPT-SoVITS commit: `551918539c8e3a496a504a4d9aa2cd7d591097bf`
 - GPT-SoVITS worktree dirty: `True`
 - Selected framework version: `v2Pro`
 - Missing selected dependencies: `0`
-- D drive free: `759.475 GiB`
+- D drive free: `759.472 GiB`
 
 ## Compatibility
 
