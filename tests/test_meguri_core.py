@@ -106,6 +106,50 @@ class MeguriCoreTests(unittest.TestCase):
         self.client.post("/v1/chat/respond", json=request_payload(session_id="other-session", message="还记得我吗"))
         self.assertNotIn("other-session", [e.session_id for e in orchestrator.events["s-test"]])
 
+    def test_short_context_isolated_by_client_and_session(self):
+        self.client.post("/v1/chat/respond", json=request_payload(message="website context"))
+        self.client.post(
+            "/v1/chat/respond",
+            json=request_payload(
+                client_id="astrbot",
+                session_id="astrbot-session",
+                message="astrbot context",
+            ),
+        )
+        website = orchestrator.sessions.recent("u-test", "website", "s-test")
+        astrbot = orchestrator.sessions.recent("u-test", "astrbot", "astrbot-session")
+        self.assertEqual(website[0].content, "website context")
+        self.assertEqual(astrbot[0].content, "astrbot context")
+        self.assertEqual(orchestrator.sessions.recent("u-test", "website", "astrbot-session"), [])
+
+    def test_manual_memory_review_and_delete(self):
+        reviewed = self.client.post(
+            "/v1/memories/review",
+            json={
+                "user_id": "u-test",
+                "candidate": {
+                    "type": "project",
+                    "summary": "Meguri framework milestone",
+                    "confidence": 0.6,
+                    "sensitivity": "private",
+                    "source_scope": "current_message",
+                },
+                "decision": "accept",
+                "source_client": "website",
+                "source_session": "s-test",
+            },
+        )
+        self.assertEqual(reviewed.status_code, 200)
+        record = reviewed.json()["record"]
+        self.assertEqual(reviewed.json()["status"], "accepted")
+        exported = self.client.get("/v1/memories/export", params={"user_id": "u-test"}).json()
+        self.assertEqual(exported["items"][0]["memory_id"], record["memory_id"])
+        deleted = self.client.delete(
+            f"/v1/memories/{record['memory_id']}",
+            params={"user_id": "u-test"},
+        )
+        self.assertEqual(deleted.status_code, 200)
+
     def test_runtime_override_rejects_disabled_outfits_and_naive_expiry(self):
         disabled = self.client.post("/v1/runtime/override", params={"user_id": "u-test"}, json={"outfit_code": "07"})
         self.assertEqual(disabled.status_code, 422)

@@ -10,7 +10,16 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from .config import BUILD_ID, DATA_ROOT, DEFAULT_TIMEZONE
-from .providers import FakeMemoryProvider, MockLLMProvider, MockRagProvider
+from .memory import (
+    CompanionMemoryPolicy,
+    FakeMemoryProvider,
+    MemoryExtractionInput,
+    MemoryProvider,
+    MemorySearchInput,
+    SessionContextStore,
+    SessionMessage,
+)
+from .providers import MockLLMProvider, MockRagProvider
 from .schemas import (
     ChatResponse, EventEnvelope, EventMetadata, LlmResponse, ResolvedExpression, RuntimeOverride,
     RuntimeState, TurnRequest, new_id,
@@ -128,10 +137,12 @@ class ExpressionResolver:
 class TurnOrchestrator:
     terminal_statuses = {"completed", "failed", "cancelled"}
 
-    def __init__(self, stream_interval: float = 0.01):
+    def __init__(self, stream_interval: float = 0.01, memory_provider: MemoryProvider | None = None):
         self.state_machine = RuntimeStateMachine()
         self.rag = MockRagProvider(DATA_ROOT)
-        self.memory = FakeMemoryProvider()
+        self.memory: MemoryProvider = memory_provider or FakeMemoryProvider()
+        self.memory_policy = CompanionMemoryPolicy()
+        self.sessions = SessionContextStore()
         self.llm = MockLLMProvider()
         self.resolver = ExpressionResolver(DATA_ROOT)
         self.events: dict[str, list[EventEnvelope]] = {}
@@ -181,9 +192,34 @@ class TurnOrchestrator:
         try:
             await self._event(turn_id, request, "turn.started", {"runtime_state": state.model_dump(mode="json")}, trace_id)
             canon = self.rag.search(request.message, state)
-            memories = self.memory.search(request.user_id, request.message)
-            response = self.llm.respond(request, state, canon, memories)
-            expression = self.resolver.resolve(response, state)
+            memory_available = True
+            try:
+                memory_hits = await self.memory.search(MemorySearchInput(user_id=request.user_id, query=request.message))
+            except Exception:
+                memory_hits = []
+                memory_available = False
+            recent_messages = self.sessions.recent(request.user_id, request.client_id, request.session_id)
+            response = self.llm.respond(
+                request,
+                state,
+                canon,
+                [hit.record.canonical_text for hit in memory_hits],
+                [f"{message.role}: {message.content}" for message in recent_messages],
+            )
+            self.sessions.append(
+                request.user_id,
+                request.client_id,
+                request.session_id,
+                SessionMessage(role="user", content=request.message),
+            )
+            try:
+                expression = self.resolver.resolve(response, state)
+            except Exception:
+                expression = ResolvedExpression(
+                    expression_tag="neutral",
+                    expression_intensity="low",
+                    outfit_code=state.outfit_code,
+                )
             await self._event(turn_id, request, "semantic.completed", response.model_dump(mode="json"), trace_id)
             for index, delta in enumerate(_chunks(response.reply), start=1):
                 if record.cancel_requested.is_set():
@@ -193,12 +229,59 @@ class TurnOrchestrator:
                 await self._event(turn_id, request, "text.delta", {"delta": delta, "index": index}, trace_id)
                 await asyncio.sleep(self.stream_interval)
             await self._event(turn_id, request, "text.completed", {"text": response.reply}, trace_id)
+            self.sessions.append(
+                request.user_id,
+                request.client_id,
+                request.session_id,
+                SessionMessage(role="assistant", content=response.reply),
+            )
             await self._event(turn_id, request, "expression.cue", expression.model_dump(mode="json"), trace_id)
             await self._event(turn_id, request, "sprite.resolved", expression.model_dump(mode="json"), trace_id)
-            memory_status = self.memory.review_and_store(request.user_id, response.memory_candidates)
-            for candidate in response.memory_candidates:
-                await self._event(turn_id, request, "memory.candidate.created", candidate.model_dump(), trace_id)
-            await self._event(turn_id, request, "memory.write.completed", {"status": memory_status}, trace_id)
+            memory_status = "unavailable" if not memory_available else "written"
+            memory_write_data: dict = {"status": memory_status, "written_ids": [], "decisions": []}
+            if memory_available:
+                try:
+                    candidates = list(response.memory_candidates)
+                    if not candidates:
+                        candidates = await self.memory.extract_candidates(
+                            MemoryExtractionInput(
+                                user_id=request.user_id,
+                                content=request.message,
+                                source_client=request.client_id,
+                                source_session=request.session_id,
+                            )
+                        )
+                    existing = await self.memory.list_records(request.user_id)
+                    decisions = self.memory_policy.review(
+                        user_id=request.user_id,
+                        source_client=request.client_id,
+                        source_session=request.session_id,
+                        candidates=candidates,
+                        existing=existing,
+                    )
+                    for decision in decisions:
+                        await self._event(
+                            turn_id,
+                            request,
+                            "memory.candidate.created",
+                            {
+                                "candidate": decision.candidate.model_dump(mode="json"),
+                                "review_status": decision.status,
+                                "reason": decision.reason,
+                            },
+                            trace_id,
+                        )
+                        if decision.status == "accepted" and decision.upsert is not None:
+                            written = await self.memory.upsert(decision.upsert)
+                            memory_write_data["written_ids"].append(written.memory_id)
+                    memory_write_data["decisions"] = [decision.status for decision in decisions]
+                    if any(decision.status == "pending_review" for decision in decisions):
+                        memory_status = "pending"
+                    memory_write_data["status"] = memory_status
+                except Exception as exc:
+                    memory_status = "unavailable"
+                    memory_write_data = {"status": memory_status, "error": type(exc).__name__}
+            await self._event(turn_id, request, "memory.write.completed", memory_write_data, trace_id)
             record.result = ChatResponse(turn_id=turn_id, session_id=request.session_id, response=response, runtime_state=state, expression=expression, memory_status=memory_status, build_id=BUILD_ID)
             record.status = "completed"
             await self._event(turn_id, request, "turn.completed", {"reply": response.reply}, trace_id)
@@ -235,7 +318,10 @@ class TurnOrchestrator:
         self.turns.clear()
         self.idempotency.clear()
         self.conditions.clear()
-        self.memory.records.clear()
+        reset_memory = getattr(self.memory, "reset", None)
+        if callable(reset_memory):
+            reset_memory()
+        self.sessions.clear()
         self.state_machine.overrides.clear()
 
 

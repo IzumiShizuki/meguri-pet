@@ -1,0 +1,17 @@
+{
+  "core_url": {
+    "description": "Loopback-only meguri-core URL",
+    "type": "string",
+    "default": "http://127.0.0.1:8100"
+  },
+  "timeout_seconds": {
+    "description": "Fail-fast request timeout",
+    "type": "float",
+    "default": 8.0
+  },
+  "identity_salt_env": {
+    "description": "Environment variable containing the identity HMAC salt",
+    "type": "string",
+    "default": "MEGURI_IDENTITY_SALT"
+  }
+}

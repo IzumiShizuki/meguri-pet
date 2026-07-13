@@ -10,22 +10,31 @@ from .schemas import LlmResponse, MemoryCandidate, RuntimeState, TurnRequest
 
 
 class LlmProvider(Protocol):
-    def respond(self, request: TurnRequest, state: RuntimeState, canon: list[str], memories: list[str]) -> LlmResponse: ...
+    def respond(
+        self,
+        request: TurnRequest,
+        state: RuntimeState,
+        canon: list[str],
+        memories: list[str],
+        recent_context: list[str] | None = None,
+    ) -> LlmResponse: ...
 
 
 class RagProvider(Protocol):
     def search(self, query: str, state: RuntimeState, limit: int = 3) -> list[str]: ...
 
 
-class MemoryProvider(Protocol):
-    def search(self, user_id: str, query: str, limit: int = 5) -> list[str]: ...
-    def review_and_store(self, user_id: str, candidates: list[MemoryCandidate]) -> str: ...
-
-
 class MockLLMProvider:
     """Deterministic provider used by local development and offline tests."""
 
-    def respond(self, request: TurnRequest, state: RuntimeState, canon: list[str], memories: list[str]) -> LlmResponse:
+    def respond(
+        self,
+        request: TurnRequest,
+        state: RuntimeState,
+        canon: list[str],
+        memories: list[str],
+        recent_context: list[str] | None = None,
+    ) -> LlmResponse:
         message = request.message.strip()
         if state.mode == "sleep":
             reply = f"辛苦了。先慢慢休息一下吧：{message}"
@@ -78,18 +87,3 @@ class MockRagProvider:
             scored.append((score, text))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [text for _, text in scored[:limit]]
-
-
-class FakeMemoryProvider:
-    def __init__(self):
-        self.records: dict[str, list[str]] = {}
-
-    def search(self, user_id: str, query: str, limit: int = 5) -> list[str]:
-        return self.records.get(user_id, [])[:limit]
-
-    def review_and_store(self, user_id: str, candidates: list[MemoryCandidate]) -> str:
-        accepted = [c.summary for c in candidates if c.sensitivity != "sensitive" and c.confidence >= 0.7]
-        if accepted:
-            self.records.setdefault(user_id, []).extend(accepted)
-            return "written"
-        return "pending" if candidates else "written"

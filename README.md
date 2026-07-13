@@ -12,6 +12,10 @@ The service exposes `POST /v1/chat/respond`, asynchronous `POST /v1/turns`, turn
 
 The canonical build id is read from `datasets/meguri/build_report.json`, validated against RAG and expression exports, and propagated through every event envelope.
 
+The phase-1 memory layer now exposes a replaceable `MemoryProvider`, provider-independent companion policy, explicit review/export/delete APIs, and bounded short-term context isolated by `user_id + client_id + session_id`. `FakeMemoryProvider` is still the only enabled implementation; no production MemoryOS or PostgreSQL connection is made.
+
+`adapters/astrbot/astrbot_plugin_meguri_gateway` contains the offline AstrBot gateway skeleton. It hashes platform identifiers, separates private/group sessions, disables TTS and screen context, supports `/meguri` runtime commands, and only accepts a loopback core URL by default. It is not installed into the production `/opt/astrbot/data` directory.
+
 ## Verify
 
 ```powershell

@@ -7,6 +7,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import BUILD_ID
+from .memory import ManualMemoryReviewRequest
 from .runtime import TurnOrchestrator
 from .schemas import ChatResponse, RuntimeOverride, TurnCreateResponse, TurnRequest, TurnStatusResponse
 
@@ -99,8 +100,45 @@ def delete_runtime_override(scope: str) -> dict:
 
 
 @app.get("/v1/memories")
-def list_memories(user_id: str) -> dict:
-    return {"user_id": user_id, "items": orchestrator.memory.records.get(user_id, [])}
+async def list_memories(user_id: str, include_deleted: bool = False) -> dict:
+    records = await orchestrator.memory.list_records(user_id, include_deleted=include_deleted)
+    return {"user_id": user_id, "items": [record.model_dump(mode="json") for record in records]}
+
+
+@app.get("/v1/memories/export")
+async def export_memories(user_id: str) -> dict:
+    records = await orchestrator.memory.list_records(user_id, include_deleted=True)
+    return {
+        "user_id": user_id,
+        "build_id": BUILD_ID,
+        "items": [record.model_dump(mode="json") for record in records],
+    }
+
+
+@app.post("/v1/memories/review")
+async def review_memory(request: ManualMemoryReviewRequest) -> dict:
+    existing = await orchestrator.memory.list_records(request.user_id)
+    decision = orchestrator.memory_policy.manual_review(request, existing)
+    record = None
+    if decision.status == "accepted" and decision.upsert is not None:
+        record = await orchestrator.memory.upsert(decision.upsert)
+    return {
+        "status": decision.status,
+        "reason": decision.reason,
+        "record": record.model_dump(mode="json") if record else None,
+    }
+
+
+@app.delete("/v1/memories/{memory_id}")
+async def delete_memory(memory_id: str, user_id: str) -> dict:
+    records = await orchestrator.memory.list_records(user_id, include_deleted=True)
+    if not any(record.memory_id == memory_id for record in records):
+        raise HTTPException(status_code=404, detail="memory not found")
+    try:
+        await orchestrator.memory.delete(memory_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="memory not found") from None
+    return {"memory_id": memory_id, "status": "deleted"}
 
 
 @app.exception_handler(ValueError)

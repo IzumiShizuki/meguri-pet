@@ -1,0 +1,6 @@
+name: astrbot_plugin_meguri_gateway
+display_name: Meguri Gateway
+desc: Routes AstrBot messages to the shared meguri-core runtime.
+version: 0.1.0
+author: IzumiShizuki
+repo: https://github.com/IzumiShizuki/meguri-pet
