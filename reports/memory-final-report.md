@@ -1,7 +1,7 @@
 # Authoritative memory service delivery report
 
 Date: 2026-07-14  
-Branch: `codex/feat/native-pgvector-memory`  
+Integrated branch: `feat/environment-isolation`
 Schema revision: `20260714_0004`  
 Embedding: `BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`, 1024 dimensions  
 Data build: `meguri_v2_02c3db0c507d7c2d`
@@ -37,7 +37,7 @@ M-001 through M-011 are implemented and locally verified. M-012 code, tests, ben
 - Retrieval applies tenant/user/status/current-version/expiry filters before deterministic exact/keyword/hybrid ranking and token budgeting.
 - Verified Website, AstrBot and AIRI identities share unified-user memory; unbound and cross-environment identities remain isolated. Session summaries remain client/session scoped.
 - API scope is derived from the authenticated principal; writes require request ID; errors are stable and sanitized; metrics have no user/content/session labels.
-- Dev selects native pgvector by default when a database is configured; unconfigured local development remains bootable with fake memory. Memory-provider failures continue to produce text with an unavailable/degraded memory status.
+- Dev selects native pgvector by default when a database secret file is configured; unconfigured local development remains bootable with fake memory. Staging and production require native pgvector, and inline database URLs are rejected. Memory-provider failures continue to produce text with an unavailable/degraded memory status.
 - Exports are NDJSON containing items, all immutable versions/provenance and audit events.
 
 ## Verification commands and results
@@ -50,10 +50,10 @@ python -m alembic downgrade head:base --sql
 python scripts/benchmark_memory_retrieval.py --corpus-size 500 --queries 40 --dimension 1024 --top-k 5 --seed 20260714
 ```
 
-- Full Python suite: 111 collected, 105 passed and 6 database-dependent cases skipped because `MEGURI_TEST_DATABASE_URL` is absent.
+- Dedicated Memory suite: 64 collected, 58 passed and 6 database-dependent cases skipped because `MEGURI_TEST_DATABASE_URL` is absent. The final integrated repository suite is recorded in `reports/environment-final.md`.
 - Offline Alembic upgrade: base → `20260714_0004`, passed.
 - Offline Alembic downgrade: `20260714_0004` → base, passed.
-- Synthetic exact baseline: p50 15.873 ms, p95 18.219 ms, p99 19.290 ms, error rate 0%, recall@5 100% on 500 deterministic 1024-dimensional vectors.
+- Latest synthetic exact baseline: p50 18.177 ms, p95 22.637 ms, p99 22.978 ms, error rate 0%, recall@5 100% on 500 deterministic 1024-dimensional vectors. This is not PostgreSQL/network latency.
 - ANN/HNSW: not enabled and not measured.
 
 ## Staging decision
@@ -76,7 +76,7 @@ python scripts/benchmark_memory_retrieval.py --corpus-size 500 --queries 40 --di
 
 ## Rollback
 
-Set `MEGURI_MEMORY_PROVIDER=fake` to remove native memory from runtime without changing authoritative data. Stop embedding workers before application rollback; pending outbox rows remain recoverable. Roll back application commits independently from schema. Schema downgrade is destructive and requires a verified backup, stopped writers and an explicit database change window; never use `downgrade base` as a routine application rollback.
+For local development only, `MEGURI_MEMORY_PROVIDER=fake` can remove native memory without changing authoritative data. Staging and production must roll back to an approved native-pgvector last-good release; fake memory never counts as a successful managed-environment fallback. Stop embedding workers before application rollback so pending outbox rows remain recoverable. Roll back application commits independently from schema. Schema downgrade is destructive and requires a verified backup, stopped writers and an explicit database change window; never use `downgrade base` as a routine application rollback.
 
 ## Sources
 

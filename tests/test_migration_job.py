@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -59,6 +61,23 @@ class MigrationComposeContractTests(unittest.TestCase):
                 "20260714_0004_add_memory_outbox",
             ],
         )
+
+    def test_alembic_rejects_inline_migration_database_url(self) -> None:
+        environment = os.environ.copy()
+        environment["MEGURI_MIGRATION_DATABASE_URL"] = (
+            "postgresql+asyncpg://owner:forbidden@localhost/meguri"
+        )
+        environment.pop("MEGURI_MIGRATION_DATABASE_URL_FILE", None)
+        completed = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head", "--sql"],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("must not be supplied inline", completed.stderr)
 
 
 class MigrationEntrypointTests(unittest.TestCase):

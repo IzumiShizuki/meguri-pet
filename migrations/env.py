@@ -21,11 +21,11 @@ target_metadata = Base.metadata
 def database_url() -> str:
     direct = os.getenv("MEGURI_MIGRATION_DATABASE_URL")
     file_name = os.getenv("MEGURI_MIGRATION_DATABASE_URL_FILE")
-    environment = os.getenv("MEGURI_ENV", "dev")
-    if direct and file_name:
-        raise RuntimeError("set only one of MEGURI_MIGRATION_DATABASE_URL or MEGURI_MIGRATION_DATABASE_URL_FILE")
-    if environment in {"staging", "production"} and direct:
-        raise RuntimeError("staging and production migrations require MEGURI_MIGRATION_DATABASE_URL_FILE")
+    if direct:
+        raise RuntimeError(
+            "MEGURI_MIGRATION_DATABASE_URL must not be supplied inline; use "
+            "MEGURI_MIGRATION_DATABASE_URL_FILE"
+        )
     if file_name:
         secret_path = Path(file_name)
         if not secret_path.is_absolute():

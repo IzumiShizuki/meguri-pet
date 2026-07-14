@@ -1,7 +1,7 @@
 # Authoritative memory implementation progress
 
 Updated: 2026-07-14  
-Branch: `codex/feat/native-pgvector-memory`
+Integrated branch: `feat/environment-isolation`
 
 ## Milestones
 
@@ -13,15 +13,15 @@ Branch: `codex/feat/native-pgvector-memory`
 | M-004 | Complete | `9d9af9f` | Deterministic candidate policy, sensitive/transient/inference rejection, explicit approval and conflict rules | Policy/conflict tests; auto-approval remains disabled |
 | M-005 | Complete | `256f92d` | BGE-M3 adapter contract, immutable revision/dimension checks and retry/dead-letter embedding outbox worker | Worker tests; stop worker and retain pending outbox rows for rollback |
 | M-006 | Complete | `e861dbe` | Tenant-scoped structured, keyword and exact-vector retrieval with deterministic hybrid ranking and token budget | Retrieval/budget tests; HNSW remains absent by design |
-| M-007 | Complete | `d229995` | Native PostgreSQL provider and opt-in runtime factory with compatibility facade | Provider tests and legacy suite; default provider remains fake unless explicitly enabled |
+| M-007 | Complete | `d229995` | Native PostgreSQL provider and runtime factory with compatibility facade | Provider tests and legacy suite; unconfigured dev may use fake, while staging/production require native pgvector |
 | M-008 | Complete | `ba69b02` | Verified identity bindings, HMAC opaque fallback identity, cross-client sharing and session isolation rules | Identity resolver tests; unverified identities cannot write formal memory |
-| M-009 | Complete | `5ca5912` | Authenticated authoritative API, admin-only review/binding, server-derived tenant/user scope, stable sanitized errors, unlabelled metrics | API boundary tests plus full regression suite; disable with `MEGURI_MEMORY_PROVIDER=fake` |
+| M-009 | Complete | `5ca5912` | Authenticated authoritative API, admin-only review/binding, server-derived tenant/user scope, stable sanitized errors, unlabelled metrics | API boundary tests plus full regression suite; fake provider remains development-only |
 | M-010 | Complete | `c8ccad4` | JSONL export with every immutable version, provenance and audit events; audited soft delete/restore; feature-flagged admin hard delete after mandatory soft delete and typed confirmation | Export/lifecycle/API tests; hard delete retains append-only audit evidence and is disabled unless `MEGURI_ALLOW_HARD_DELETE=true` |
 | M-011 | Complete | `3cea9ce` | Existing MemoryOS read-only importer and Mem0 aggregate-only shadow evaluator | Offline adapter/import/shadow tests; no live third-party instance was mutated and shadow results have no runtime prompt path |
-| M-012 | Implemented; staging evidence blocked | this commit | Read-only recovery validator, native workflow integration suite, deterministic exact/ANN harness, secret-file environment contract, pinned release metadata and delivery reports | Offline migration/recovery/benchmark tests pass. Live database, backup restore and fixed-corpus validation skip because no test/staging connection or restored target was handed off |
+| M-012 | Implemented; staging evidence blocked | `9127f2d` | Read-only recovery validator, native workflow integration suite, deterministic exact/ANN harness, secret-file environment contract, pinned release metadata and delivery reports | Offline migration/recovery/benchmark tests pass. Live database, backup restore and fixed-corpus validation skip because no test/staging connection or restored target was handed off |
 
 ## Current gates
 
-- No `memory-environment-handoff.md` or `MEGURI_TEST_DATABASE_URL` is available. A machine-readable environment contract was observed in the parallel environment worktree, but it is still marked `implementation-required-before-staging`; native PostgreSQL and recovery tests therefore skip and staging evidence is not claimed.
-- No production data has been mutated. Native authority is opt-in; the application continues to use the fake compatibility provider by default.
+- The Memory environment contract is now integrated and marked implementation-complete/runtime-evidence-required. No isolated `MEGURI_TEST_DATABASE_URL`, backup archive or restored target is available, so six native PostgreSQL/recovery cases skip and staging evidence is not claimed.
+- No production data has been mutated. Unconfigured development remains bootable with fake memory; staging and production fail closed unless native pgvector and its file secrets are configured.
 - Exact vector search is the supported baseline. ANN/HNSW will not be enabled without benchmark evidence and a separately reviewed migration.

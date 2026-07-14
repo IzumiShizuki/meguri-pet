@@ -1,7 +1,7 @@
 {
   "contract_version": 1,
   "agent": "memory",
-  "status": "implementation-required-before-staging",
+  "status": "implementation-complete-runtime-evidence-required",
   "authority": ["page-15", "page-16", "release-manifest"],
   "runtime_provider_name": "native_pgvector",
   "database": {
@@ -11,7 +11,11 @@
     "app_role_variable": "MEGURI_POSTGRES_APP_USER",
     "migration_job": "migration upgrade head",
     "revision_variable": "MEGURI_DATABASE_REVISION",
-    "embedding_revision_variable": "MEGURI_EMBEDDING_MODEL_REVISION"
+    "schema_head": "20260714_0004",
+    "embedding_revision_variable": "MEGURI_EMBEDDING_MODEL_REVISION",
+    "embedding_model": "BAAI/bge-m3",
+    "embedding_model_revision": "5617a9f61b028005a4858fdac845db406aefb181",
+    "embedding_dimension": 1024
   },
   "environments": {
     "dev": {"project": "meguri-dev", "internal_network": "meguri-dev-internal", "database": "meguri_dev"},
@@ -32,9 +36,9 @@
   },
   "forbidden_dependencies": ["infra-postgres", "infra-postgres-data", "shizuki-memoryos", "shizuki-memoryos_memoryos-data"],
   "handoff_gates": [
-    "implement and wire native_pgvector provider",
-    "add schema migrations after 20260714_0001",
+    "run native provider and recovery contracts against an empty isolated PostgreSQL plus pgvector database",
     "prove user and environment data isolation on empty staging database",
-    "register embedding worker profile without public database ports"
+    "run the embedding worker against the pinned BGE-M3 revision without public database ports",
+    "record live exact-search latency recall RPO and RTO evidence"
   ]
 }

@@ -32,4 +32,4 @@ The hard-delete body requires `user_id`, `reason` and `confirmation="HARD_DELETE
 
 ## Compatibility boundary
 
-The pre-existing fake-provider routes remain for local framework compatibility. They are not production-authoritative. With no explicit provider, a configured dev database selects native pgvector; an unconfigured local checkout stays fake so it can boot. Production legacy mutation is denied, and the provider factory never promotes MemoryOS or Mem0 to authority.
+The pre-existing fake-provider routes remain for local framework compatibility. They are not staging/production-authoritative. With no explicit provider, a dev database configured through `MEGURI_DATABASE_URL_FILE` selects native pgvector; an unconfigured local checkout stays fake so it can boot. Staging and production require native pgvector, production legacy mutation is denied, inline database URLs are rejected, and the provider factory never promotes MemoryOS or Mem0 to authority.

@@ -20,7 +20,7 @@ DIGESTS = {
 }
 
 
-def manifest(release_id: str, database_revision: str = "20260714_0001") -> dict:
+def manifest(release_id: str, database_revision: str = "20260714_0004") -> dict:
     return {
         "manifest_schema_version": 1,
         "release_id": release_id,
@@ -42,7 +42,7 @@ def manifest(release_id: str, database_revision: str = "20260714_0001") -> dict:
     }
 
 
-def write_release(root: Path, release_id: str, database_revision: str = "20260714_0001") -> dict:
+def write_release(root: Path, release_id: str, database_revision: str = "20260714_0004") -> dict:
     release_root = root / release_id
     release_root.mkdir()
     manifest_path = (release_root / "release-manifest.json").resolve()
@@ -56,6 +56,7 @@ def write_release(root: Path, release_id: str, database_revision: str = "2026071
         "MEGURI_MUTATION_ALLOWED": "false",
         "MEGURI_CORE_PORT": "18080",
         "MEGURI_DATABASE_REVISION": database_revision,
+        "MEGURI_MODEL_REGISTRY_ID": "meguri-text-staging-r1",
         "MEGURI_CORE_IMAGE": f"registry.example/meguri-core@{DIGESTS['core']}",
         "MEGURI_MIGRATION_IMAGE": f"registry.example/meguri-migration@{DIGESTS['migration']}",
         "MEGURI_POSTGRES_IMAGE": f"pgvector/pgvector@{DIGESTS['postgres']}",
@@ -69,7 +70,7 @@ class StagingDeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             state = write_release(root, "meguri-staging-r001")
-            self.assertEqual(state["database_revision"], "20260714_0001")
+            self.assertEqual(state["database_revision"], "20260714_0004")
             env_path = Path(state["env_file"])
             content = env_path.read_text(encoding="utf-8").replace(
                 f"registry.example/meguri-core@{DIGESTS['core']}",
@@ -121,7 +122,7 @@ class StagingDeploymentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             previous = write_release(root, "meguri-staging-r001")
-            candidate = write_release(root, "meguri-staging-r002", "20260714_0002")
+            candidate = write_release(root, "meguri-staging-r002", "20260714_0005")
             commands: list[list[str]] = []
             controller = DeploymentController(root / "state", runner=commands.append, probe=lambda *_: None)
             controller.deploy(previous)

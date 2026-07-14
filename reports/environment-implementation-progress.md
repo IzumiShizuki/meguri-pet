@@ -88,9 +88,10 @@
   - `python -m alembic -c alembic.ini heads`
   - the E-001 Compose `config --quiet` command for all three environments
 - Result: the isolation checker passed; all seven committed fault fixtures
-  failed with their expected diagnostic; 8 checker/migration tests passed;
-  Alembic reported the single `20260714_0001` head; all three Compose projects
-  rendered successfully.
+  failed with their expected diagnostic. After integrating the authoritative
+  Memory service, Alembic reports the single `20260714_0004` head across the
+  pgvector, memory-table, exact-index and outbox revisions; all three Compose
+  projects render successfully.
 - Safety: repository-only so far; no existing database, server container,
   volume, network, route, or credential was changed.
 
@@ -220,10 +221,12 @@
 - Status: repository and protected-server invariant acceptance completed;
   runtime staging acceptance remains blocked with explicit machine-readable
   evidence.
-- Handoff contracts: Memory receives isolated PostgreSQL/app-role/migration/
-  embedding/backup boundaries; LLM receives authenticated endpoint, timeout,
-  concurrency, candidate/last-good, model registry, adapter revision/digest,
-  Prompt/Schema, and rollback boundaries.
+- Handoff contracts: the native pgvector Memory implementation through M-012
+  is integrated at schema head `20260714_0004`, with file-only app credentials,
+  pinned BGE-M3 metadata, recovery validation and exact-search benchmarks. The
+  LLM training/evaluation pipeline through L-011 is integrated with locked
+  safety/comparison gates, adapter digest selection, an evaluated model
+  registry and an enforced runtime concurrency limit.
 - Manifest hardening: `model_registry_id` and `llm_adapter_sha256` are required;
   staging/production readiness rejects an unregistered model or an adapter
   revision without a digest.
@@ -231,17 +234,18 @@
   empty-database migration, migration failure, backup/restore, two rollback
   fault injections, and protected-service invariants to be true with evidence
   digests. The committed blocked artifact intentionally returns 1.
-- Live read-only recheck (2026-07-14 22:01 +08:00): Docker Engine 29.2.1, all
+- Live read-only recheck (latest: 2026-07-14 22:27:23 +08:00): Docker Engine 29.2.1, all
   22 protected containers running, all required networks/named volumes present,
   and no Meguri environment object. No mutation was issued.
-- Final regression:
-  - Python: 95 passed;
+- Final regression (before the final integrated rerun recorded in
+  `reports/environment-final.md`):
+  - Python environment suite: 95 passed;
   - TypeScript: 20 passed;
   - Compose: dev/staging/production config passed;
   - isolation, Agent contracts, and live protected-server invariants passed;
   - staging acceptance and production approval/exposure gates returned nonzero
     as required by the current evidence state.
 - Blockers: no immutable core/migration image digests, server release directory
-  and secret provisioning access, native pgvector Memory provider, registered
-  LLM candidate/last-good artifacts, or real staging evidence. Production
-  remains blocked.
+  and independent secret provisioning/deployment access, trained registered
+  LLM candidate/last-good artifacts, real isolated PostgreSQL contract run, or
+  real staging evidence. Production remains blocked.

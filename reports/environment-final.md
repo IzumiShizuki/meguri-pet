@@ -14,8 +14,11 @@ The repository now contains an isolated, fail-closed environment and deployment
 framework for dev, staging, and production. E-001 through E-009 are implemented
 and locally verified. E-010 repository acceptance plus a second read-only
 protected-server check passed, but runtime staging acceptance is intentionally
-not claimed because the required release artifacts, server-side secret access,
-native Memory provider, and registered LLM candidate/last-good do not exist yet.
+not claimed. The native pgvector Memory implementation and recovery tooling are
+now integrated through M-012, and the reproducible LLM training/evaluation and
+registry pipeline is integrated through L-011. The remaining blockers are live
+database/staging evidence, immutable pushed images, a trained and registered
+LLM candidate/last-good pair, and independent server deployment/secrets access.
 
 This implementation follows the authority order from
 [15｜开发、Staging 与生产隔离实施计划](https://app.notion.com/p/39da363659638157a494e897cedef86f),
@@ -31,13 +34,13 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 | E-001 | Complete | Three explicit Compose projects; unique edge/internal networks, database volumes, logs, backups, and secret paths |
 | E-002 | Complete | Static isolation checker plus seven committed fault fixtures |
 | E-003 | Complete | Release Manifest schema/generator/readiness checker with image, data, Prompt, Schema, expression, DB, embedding, model registry and adapter identities |
-| E-004 | Local implementation complete | Isolated pgvector PostgreSQL, one-shot Alembic migration, separate migration owner/app role, core startup gate |
+| E-004 | Local implementation complete | Isolated pgvector PostgreSQL, linear Alembic schema through `20260714_0004`, native provider, separate migration owner/app role, core startup gate |
 | E-005 | Local implementation complete | `/health/live`, fail-closed `/health/ready`, file-only secrets, runtime identity and live DB revision check |
 | E-006 | Complete | All 29 observed reachable ports registered; ten unresolved existing exposure groups block production |
 | E-007 | Local implementation complete | Digest-only staging preflight, ordered migration/start, atomic last-good state, automatic same-revision rollback |
 | E-008 | Local implementation complete | Checksummed custom backup and isolated restore-rehearsal workflow; runtime RPO/RTO not yet measured |
 | E-009 | Complete | CI validation, manual serialized staging CD, validation-only production approval workflow |
-| E-010 | Repository/live invariant complete; staging blocked | Agent contracts, protected-server invariants, machine-readable all-or-nothing staging acceptance evidence |
+| E-010 | Repository/live invariant complete; staging blocked | Integrated Memory M-001-M-012 and LLM L-001-L-011 contracts, protected-server invariants, machine-readable all-or-nothing staging acceptance evidence |
 
 ## Isolation and security properties
 
@@ -51,6 +54,12 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 - Migration failure prevents core startup. Release readiness fails on Manifest,
   mounted data, artifact hash, provider, model, adapter, secret, or live DB
   revision drift.
+- Native Memory loads its app URL from a secret file only, pins tenant/schema/
+  embedding identities, keeps MemoryOS read-only and Mem0 shadow-only, and
+  fails health on Alembic revision drift.
+- The LLM runtime enforces the configured request concurrency cap. A staging or
+  production release must match a non-placeholder evaluated model registry ID,
+  adapter revision/digest, Prompt hash and Response Schema hash.
 - Staging deployment accepts only Manifest-matching `@sha256` images. Candidate
   readiness failure restores same-revision last-good. Cross-revision deployment
   remains blocked until a verified active recovery workflow exists.
@@ -62,21 +71,26 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 
 Final local results:
 
-- `python -m unittest discover -v`: **95 passed**;
+- `python -m pytest -o addopts='' -q`: **169 passed, 6 skipped**; all
+  skips are explicitly gated on the absent isolated PostgreSQL test URL;
 - `pnpm test:ts`: **20 passed**;
+- Python compile-all and Alembic offline upgrade/downgrade through
+  `20260714_0004`: **passed**;
+- deterministic exact-vector baseline: **p50 18.177 ms, p95 22.637 ms,
+  p99 22.978 ms, 0% errors, recall@5 100%** on 500 synthetic vectors (not a
+  PostgreSQL/network benchmark); HNSW remains disabled;
 - dev/staging/production `docker compose ... config --quiet`: **passed**;
 - environment isolation checker: **passed**;
 - Memory/LLM Agent contract checker: **passed**;
 - blocked staging acceptance checker: **returned 1 as expected**;
-- production exposure/approval gates: **returned nonzero as expected**.
+- production exposure and approval gates: **returned 1 as expected**.
 
-The pnpm command printed a non-fatal registry metadata/update-check failure, but
-the workspace was already up to date and all 20 Node tests completed with zero
-failures.
+The Python run emitted one upstream Starlette/httpx deprecation warning; it did
+not affect test outcomes.
 
 ## Protected server recheck
 
-At 2026-07-14 22:01 +08:00, a read-only Docker TLS query confirmed:
+At 2026-07-14 22:27:23 +08:00, a read-only Docker TLS query confirmed:
 
 - Docker Engine remains `29.2.1`;
 - all 22 baseline containers remain running;
@@ -96,10 +110,11 @@ The following evidence is still absent and cannot be safely inferred:
    image digest;
 2. `/opt/meguri/staging` release/data/log/backup/secret directories and a
    deployment identity able to provision them without exposing secret values;
-3. a wired `native_pgvector` Memory provider and its real schema migrations;
-4. registered LLM candidate and last-good identifiers, adapter revision/digest,
-   authenticated endpoint and enforced concurrency;
-5. real empty-database migration, user/account/data/volume isolation, backup,
+3. a real empty-database run of the integrated native pgvector schema/provider,
+   embedding worker and recovery validator;
+4. a trained, evaluated and registered LLM candidate/last-good pair, immutable
+   adapter revision/digest and authenticated endpoint;
+5. real user/account/data/volume isolation, backup,
    restore, migration-failure and image/readiness rollback evidence;
 6. measured staging RPO/RTO and checksummed before/after server inventories.
 
@@ -109,7 +124,9 @@ accepted and production cannot be promoted.
 
 ## Next safe sequence
 
-1. Memory and LLM owners satisfy the contracts under `ops/contracts/`.
+1. Run the integrated Memory contract/recovery suite against an approved empty
+   isolated PostgreSQL + pgvector database; train/evaluate/register the LLM
+   candidate and identify its last-good rollback target.
 2. CI builds/pushes immutable images and generates a non-placeholder staging
    Release Manifest with registered model/adapter evidence.
 3. Provision only `/opt/meguri/staging` directories and independent mode-0600
@@ -134,5 +151,9 @@ accepted and production cannot be promoted.
 - `ce809f0` staging deploy/last-good rollback
 - `b05566c` backup/restore rehearsal
 - `ebc7003` CI/CD and production approval
+- `877aa6a` native pgvector Memory integration and environment adaptation
+- `8925618` Memory recovery/release evidence integration
+- `04c58af` evaluated LLM registry integration
 
-The E-010 acceptance/contracts/final-report commit follows these entries.
+The original E-010 evidence commit is `0e65465`; a final synchronization commit
+records the post-integration contracts, tests and blocker state.
