@@ -1,0 +1,25 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  adapters/airi: {}
+
+  adapters/website: {}
+
+  apps/desktop-airi: {}
+
+  apps/website-client: {}
+
+  local-services/tts-adapter: {}
+
+  packages/client-sdk: {}
+
+  packages/protocol: {}
+
+  packages/renderer-contracts: {}

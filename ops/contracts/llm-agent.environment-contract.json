@@ -1,0 +1,49 @@
+{
+  "contract_version": 1,
+  "agent": "llm",
+  "status": "model-artifacts-required-before-staging",
+  "authority": ["page-15", "page-17", "release-manifest"],
+  "runtime_provider_name": "openai-compatible",
+  "endpoint": {
+    "base_url_variable": "MEGURI_LLM_BASE_URL",
+    "model_variable": "MEGURI_LLM_MODEL",
+    "api_key_file": "/run/secrets/llm_api_key",
+    "timeout_variable": "MEGURI_LLM_TIMEOUT_SECONDS",
+    "max_concurrency_variable": "MEGURI_LLM_MAX_CONCURRENCY",
+    "non_loopback_tls_required": true,
+    "unauthenticated_public_endpoint_allowed": false,
+    "cloud_model_weight_mount_allowed": false
+  },
+  "release_channels": {
+    "dev": "mock",
+    "staging": "candidate",
+    "production": "last-good"
+  },
+  "required_manifest_fields": [
+    "llm_base_model",
+    "llm_adapter_revision",
+    "llm_adapter_sha256",
+    "model_registry_id",
+    "prompt_sha256",
+    "response_schema_sha256"
+  ],
+  "readiness_requirements": [
+    "provider name equals runtime configuration",
+    "candidate or last-good model ID is registered",
+    "adapter revision and SHA-256 agree with the Release Manifest",
+    "Prompt and Response Schema hashes agree with the Release Manifest",
+    "schema-invalid provider output remains fail closed"
+  ],
+  "rollback": {
+    "staging_candidate_failure_target": "last-good",
+    "rebuild_required": false,
+    "mock_fallback_counts_as_success": false
+  },
+  "forbidden_dependencies": ["unauthenticated-public-inference", "floating-latest-model", "cloud-mounted-private-weights"],
+  "handoff_gates": [
+    "supply immutable candidate and last-good image/model identifiers",
+    "supply adapter digest and model registry record",
+    "implement configured concurrency limit",
+    "prove authenticated staging endpoint and schema-valid response"
+  ]
+}

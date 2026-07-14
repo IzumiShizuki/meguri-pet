@@ -1,0 +1,27 @@
+{
+  "manifest_schema_version": 1,
+  "release_id": "meguri-dev-example-r001",
+  "environment": "dev",
+  "git_commit": "0000000000000000000000000000000000000000",
+  "image_digests": {
+    "core": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "migration": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "postgres": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "data_build_id": "meguri_v2_02c3db0c507d7c2d",
+  "prompt_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "response_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+  "expression_map_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+  "database_revision": "framework-bootstrap",
+  "embedding_model_revision": "not-configured-for-example",
+  "llm_base_model": "mock-v1",
+  "llm_adapter_revision": null,
+  "llm_adapter_sha256": null,
+  "model_registry_id": null,
+  "tests": {
+    "python": "passed",
+    "typescript": "passed",
+    "integration": "passed"
+  },
+  "generated_at": "2026-07-14T00:00:00Z"
+}

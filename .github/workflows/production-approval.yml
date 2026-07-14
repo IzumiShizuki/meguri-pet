@@ -1,0 +1,31 @@
+name: Validate production approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      approval_path:
+        description: Committed or runner-local approval artifact
+        required: true
+        type: string
+      manifest_path:
+        description: Immutable production Release Manifest
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: [self-hosted, meguri-production-approval]
+    environment: production-approval
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate approval without deploying
+        run: |
+          python ops/scripts/check_environment_isolation.py
+          python ops/scripts/check_production_approval.py \
+            --approval "${{ inputs.approval_path }}" \
+            --manifest "${{ inputs.manifest_path }}"
+      - name: Confirm no production mutation job exists
+        run: echo "Approval validation only; production deploy remains a separate blocked workflow."

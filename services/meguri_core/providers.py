@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from .config import BUILD_ID, RESPONSE_SCHEMA_PATH, SYSTEM_PROMPT_PATH
 from .schemas import LlmResponse, MemoryCandidate, RuntimeState, TurnRequest
+from .secrets import SecretConfigurationError, read_secret
 
 
 class LlmProvider(Protocol):
@@ -202,10 +203,14 @@ def create_llm_provider_from_env(
         timeout = float(values.get("MEGURI_LLM_TIMEOUT_SECONDS", "30"))
     except ValueError as exc:
         raise LlmConfigurationError("MEGURI_LLM_TIMEOUT_SECONDS must be a number") from exc
+    try:
+        api_key = read_secret(values, "MEGURI_LLM_API_KEY", required=True)
+    except SecretConfigurationError as exc:
+        raise LlmConfigurationError(str(exc)) from exc
     return OpenAICompatibleLlmProvider(
         base_url=base_url,
         model=model,
-        api_key=values.get("MEGURI_LLM_API_KEY") or None,
+        api_key=api_key,
         timeout_seconds=timeout,
         transport=transport,
     )

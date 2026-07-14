@@ -50,6 +50,14 @@ class MeguriCoreTests(unittest.TestCase):
         self.assertIsNotNone(body["expression"]["sprite_file"])
         self.assertGreater(self.client.get("/health").json()["rag_chunks"], 0)
 
+    def test_liveness_and_local_readiness_are_distinct(self):
+        live = self.client.get("/health/live")
+        self.assertEqual(live.status_code, 200)
+        self.assertEqual(live.json()["status"], "alive")
+        ready = self.client.get("/health/ready")
+        self.assertEqual(ready.status_code, 200)
+        self.assertEqual(ready.json()["checks"], {"local_unmanaged": "passed"})
+
     def test_local_website_cors_is_allowlisted(self):
         response = self.client.options(
             "/v1/turns",

@@ -3,11 +3,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .config import BUILD_ID
+from .deployment import ReadinessEvaluator
 from .memory import ManualMemoryReviewRequest
 from .runtime import TurnOrchestrator
 from .schemas import ChatResponse, RuntimeOverride, TurnCreateResponse, TurnRequest, TurnStatusResponse
@@ -26,6 +27,7 @@ app.add_middleware(
     allow_headers=["Content-Type", "Idempotency-Key", "Last-Event-ID"],
 )
 orchestrator = TurnOrchestrator()
+readiness = ReadinessEvaluator(orchestrator)
 
 
 @app.get("/health")
@@ -39,6 +41,19 @@ def health() -> dict:
         "llm_provider": provider_name,
         "rag_chunks": len(orchestrator.rag.rows),
     }
+
+
+@app.get("/health/live")
+def health_live() -> dict:
+    return {"status": "alive", "service": "meguri-core", "build_id": BUILD_ID}
+
+
+@app.get("/health/ready")
+async def health_ready(response: Response) -> dict:
+    result = await readiness.evaluate()
+    if result["status"] != "ready":
+        response.status_code = 503
+    return result
 
 
 @app.post("/v1/chat/respond", response_model=ChatResponse)

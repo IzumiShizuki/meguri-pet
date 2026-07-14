@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+*.egg-info/
 
 # Node.js workspaces
 node_modules/
@@ -21,6 +22,10 @@ coverage/
 
 # Local generated reports and model/training artifacts
 /reports/*
+!/reports/environment-baseline.md
+!/reports/environment-implementation-progress.md
+!/reports/staging-restore-rehearsal.md
+!/reports/environment-final.md
 /baselines/
 /training/*
 !/training/llm/
