@@ -26,7 +26,7 @@ from .common import (
 )
 
 
-CONVERTER_VERSION = "1.0.2"
+CONVERTER_VERSION = "1.0.3"
 EXPECTED_COUNTS = {
     "train": {"jp": 1313, "zh": 1313},
     "validation": {"jp": 283, "zh": 283},

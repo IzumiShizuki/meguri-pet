@@ -75,7 +75,11 @@ def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         raise PipelineError(f"refusing to overwrite existing artifact: {path}")
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
 
 
 def read_jsonl(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
