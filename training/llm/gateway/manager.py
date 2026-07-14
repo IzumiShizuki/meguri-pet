@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import threading
 from pathlib import Path
@@ -75,6 +76,17 @@ class RegistryModelManager:
                 raise PipelineError("active model registry entry is missing")
             if self._backend is not None and self._loaded_model_id == model_id:
                 return self._backend, entry
+            if self._backend is not None:
+                self._backend = None
+                self._loaded_model_id = None
+                gc.collect()
+                try:
+                    import torch
+
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
             artifact = Path(entry["artifact_path"])
             digest, _ = adapter_hash(artifact)
             if digest != entry["adapter_sha256"] or digest[:16] != entry["adapter_revision"]:
