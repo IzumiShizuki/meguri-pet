@@ -9,13 +9,27 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from services.meguri_core.memory_service.orm import Base
+from services.meguri_core.memory_service.database import load_secret_text
 
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.getenv("MEGURI_DATABASE_URL")
+environment = os.getenv("MEGURI_ENV", "dev")
+migration_url_file = os.getenv("MEGURI_MIGRATION_DATABASE_URL_FILE")
+if environment in {"staging", "production"} and not migration_url_file:
+    raise RuntimeError(
+        "staging and production migrations require MEGURI_MIGRATION_DATABASE_URL_FILE"
+    )
+database_url = (
+    load_secret_text(
+        migration_url_file,
+        variable="MEGURI_MIGRATION_DATABASE_URL_FILE",
+    )
+    if migration_url_file
+    else os.getenv("MEGURI_DATABASE_URL")
+)
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 

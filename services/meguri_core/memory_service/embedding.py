@@ -8,14 +8,15 @@ from uuid import UUID
 
 from .repository import MemoryUnitOfWorkFactory
 from .metrics import MemoryMetrics, memory_metrics
+from .release import EMBEDDING_DIMENSION, EMBEDDING_MODEL
 
 
 EmbedCallable = Callable[[Sequence[str]], list[list[float]] | Awaitable[list[list[float]]]]
 
 
 class BgeM3EmbeddingProvider:
-    model = "BAAI/bge-m3"
-    dimension = 1024
+    model = EMBEDDING_MODEL
+    dimension = EMBEDDING_DIMENSION
 
     def __init__(self, *, revision: str, embed_callable: EmbedCallable) -> None:
         if revision.casefold() in {"main", "master", "latest"} or not re.fullmatch(
