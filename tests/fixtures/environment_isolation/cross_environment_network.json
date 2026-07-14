@@ -1,0 +1,7 @@
+{
+  "environment": "dev",
+  "env_overrides": {
+    "MEGURI_INTERNAL_NETWORK": "meguri-production-internal"
+  },
+  "expected_error": "network_identity"
+}

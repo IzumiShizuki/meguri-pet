@@ -43,6 +43,11 @@ class RecoveryRecallCase(StrictModel):
     )
     modes: list[SearchMode] = Field(default_factory=lambda: [SearchMode.HYBRID])
     token_budget: int = Field(default=1200, ge=64, le=8192)
+    query_embedding: list[float] | None = Field(
+        default=None, min_length=1024, max_length=1024
+    )
+    embedding_model: str | None = Field(default=None, max_length=300)
+    embedding_revision: str | None = Field(default=None, max_length=300)
 
     @model_validator(mode="after")
     def validate_expectations(self) -> "RecoveryRecallCase":
@@ -52,6 +57,15 @@ class RecoveryRecallCase(StrictModel):
         if not set(self.expected_version_ids).issubset(expected):
             raise ValueError(
                 "expected_version_ids keys must also appear in expected_memory_ids"
+            )
+        embedding_identity = (self.embedding_model, self.embedding_revision)
+        if self.query_embedding is not None and not all(embedding_identity):
+            raise ValueError(
+                "precomputed query_embedding requires embedding_model and embedding_revision"
+            )
+        if self.query_embedding is None and any(embedding_identity):
+            raise ValueError(
+                "embedding_model and embedding_revision require query_embedding"
             )
         return self
 
@@ -139,6 +153,9 @@ async def validate_fixed_recall(
                     scopes=case.scopes,
                     modes=case.modes,
                     token_budget=case.token_budget,
+                    query_embedding=case.query_embedding,
+                    embedding_model=case.embedding_model,
+                    embedding_revision=case.embedding_revision,
                 )
             )
             returned = {hit.memory_id: hit.version_id for hit in hits}

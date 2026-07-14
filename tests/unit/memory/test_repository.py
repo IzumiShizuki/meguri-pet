@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from sqlalchemy.dialects import postgresql
 
@@ -17,13 +19,15 @@ class EmptyResult:
 class CapturingSession:
     def __init__(self):
         self.statement = None
+        self.parameters = None
 
     async def scalars(self, statement):
         self.statement = statement
         return EmptyResult()
 
-    async def execute(self, statement, *_args, **_kwargs):
+    async def execute(self, statement, *args, **_kwargs):
         self.statement = statement
+        self.parameters = args[0] if args else None
         return EmptyResult()
 
     async def flush(self):
@@ -51,6 +55,36 @@ def test_database_settings_require_postgresql_and_production_approval(monkeypatc
         )
 
 
+def test_database_settings_load_only_file_secret_and_pin_release(monkeypatch, tmp_path):
+    secret = tmp_path / "database-url.txt"
+    secret.write_text("postgresql+asyncpg://app:password@postgres/meguri\n", encoding="utf-8")
+    values = {
+        "MEGURI_ENV": "staging",
+        "MEGURI_TENANT_ID": "meguri-staging",
+        "MEGURI_DATABASE_URL_FILE": str(secret),
+        "MEGURI_DATABASE_REVISION": "20260714_0004",
+        "MEGURI_EMBEDDING_MODEL_REVISION": "bge-m3-test-revision",
+        "MEGURI_MUTATION_ALLOWED": "false",
+    }
+    with monkeypatch.context() as context:
+        for key in tuple(os.environ):
+            if key.startswith("MEGURI_"):
+                context.delenv(key, raising=False)
+        for key, value in values.items():
+            context.setenv(key, value)
+        settings = MemoryDatabaseSettings.from_env()
+
+    assert settings.database_url.get_secret_value().endswith("@postgres/meguri")
+    assert settings.expected_database_revision == "20260714_0004"
+    assert settings.expected_embedding_model_revision == "bge-m3-test-revision"
+
+    with monkeypatch.context() as context:
+        context.setenv("MEGURI_DATABASE_URL", "postgresql+asyncpg://inline/forbidden")
+        context.setenv("MEGURI_DATABASE_URL_FILE", str(secret))
+        with pytest.raises(RuntimeError, match="must not be supplied inline"):
+            MemoryDatabaseSettings.from_env()
+
+
 @pytest.mark.asyncio
 async def test_outbox_claim_uses_skip_locked():
     session = CapturingSession()
@@ -72,6 +106,10 @@ async def test_idempotency_uses_transaction_advisory_lock():
     )
     assert "PG_ADVISORY_XACT_LOCK" in str(session.statement).upper()
     assert "HASHTEXTEXTENDED" in str(session.statement).upper()
+    assert session.parameters == {
+        "key": '["tenant-a","candidate.create.scope","request-1"]'
+    }
+    assert "\0" not in session.parameters["key"]
 
 
 @pytest.mark.asyncio

@@ -1,14 +1,14 @@
 # Authoritative memory service delivery report
 
 Date: 2026-07-14  
-Branch: `codex/feat/native-pgvector-memory`  
+Integrated branch: `feat/environment-isolation`
 Schema revision: `20260714_0004`  
 Embedding: `BAAI/bge-m3@5617a9f61b028005a4858fdac845db406aefb181`, 1024 dimensions  
 Data build: `meguri_v2_02c3db0c507d7c2d`
 
 ## Outcome
 
-M-001 through M-011 are implemented and locally verified. M-012 code, tests, benchmark harness, release metadata, integrity validator and required fixed-recall gate are implemented, but its live acceptance evidence is blocked because no dev/staging PostgreSQL URL, backup archive or isolated restored target was handed off. The authoritative memory service must **not** be declared complete or admitted to Staging yet.
+M-001 through M-012 are implemented and locally verified. The resumed audit ran the native contract, workflow, recovery and required fixed-recall gates against an isolated loopback PostgreSQL + pgvector dev container. This proves the local native path and recovery validator, but it is not an approved staging backup/restore rehearsal or release acceptance run. The authoritative memory service must **not** be admitted to Staging yet.
 
 ## Milestone commits
 
@@ -41,7 +41,7 @@ M-001 through M-011 are implemented and locally verified. M-012 code, tests, ben
 - Verified Website, AstrBot and AIRI identities share unified-user memory; unbound and cross-environment identities remain isolated. Session summaries remain client/session scoped.
 - API and native chat scope are derived from the authenticated principal; tenant mismatch is denied and unverified principals cannot read or write formal memory. Writes require request ID, feedback is version-scoped, errors are stable and sanitized, and metrics have no user/content/session labels.
 - Idempotent mutations, exports and summaries use tenant/operation/request keys plus transaction-scoped PostgreSQL advisory locks; user-scoped operations prevent same-request cross-user replay leakage.
-- Dev selects native pgvector by default when a database is configured; unconfigured local development remains bootable with fake memory. Memory-provider failures continue to produce text with an unavailable/degraded memory status.
+- Dev selects native pgvector by default when a database secret file is configured; unconfigured local development remains bootable with fake memory. Staging and production require native pgvector, and inline database URLs are rejected. Memory-provider failures continue to produce text with an unavailable/degraded memory status.
 - Exports are NDJSON containing items, all immutable versions/provenance and audit events.
 
 ## Verification commands and results
@@ -54,23 +54,25 @@ python -m alembic downgrade head:base --sql
 python scripts/benchmark_memory_retrieval.py --corpus-size 500 --queries 40 --dimension 1024 --top-k 5 --seed 20260714
 ```
 
-- Full Python suite: 126 collected, 119 passed and 7 database-dependent cases skipped because `MEGURI_TEST_DATABASE_URL` is absent.
-- TypeScript protocol/renderer/AIRI/TTS/Website suite: 20 passed.
+- Integrated Python verification: 201 passed against the live loopback pgvector dev container with temporary read-only canonical data/asset junctions.
+- Focused live native verification: 8 passed across provider contract, native workflow and recovery validation suites.
+- Recovery validator: passed at 2026-07-15T00:07:44+08:00 with `database_revision=20260714_0004`, zero current-version, active-item, embedding-hash or audit-replay mismatches, and one required exact-vector fixed-recall case at recall@k 1.0.
+- TypeScript protocol/renderer/AIRI/TTS/Website verification: 20 passed with temporary read-only canonical data/asset junctions.
 - Offline Alembic upgrade: base to `20260714_0004`, passed.
 - Offline Alembic downgrade: `20260714_0004` to base, passed.
-- Synthetic exact snapshot: p50 16.233 ms, p95 18.533 ms, p99 21.858 ms, error rate 0%, recall@5 100% on 500 deterministic 1024-dimensional vectors.
+- Latest synthetic exact snapshot: p50 14.949 ms, p95 15.521 ms, p99 16.337 ms, error rate 0%, recall@5 100% on 500 deterministic 1024-dimensional vectors. This is not PostgreSQL/network latency.
+- Environment/release checks: Memory and LLM agent contracts, release manifest, environment isolation and exposure ledger passed. Blocked staging acceptance and production approval checks failed as designed.
 - ANN/HNSW: not enabled and not measured.
 
 ## Staging decision
 
 **NO-GO.** Required missing evidence:
 
-1. Run `alembic upgrade head` against an empty isolated PostgreSQL + pgvector test database, repeat upgrade, and execute a reviewed downgrade rehearsal.
-2. Run native provider contract and workflow tests with `MEGURI_TEST_DATABASE_URL`.
-3. Create a real staging backup, restore it into `meguri_staging_restore_*`, run `scripts/validate_memory_recovery.py --recall-corpus ... --require-fixed-recall`, record counts/checksums/RPO/RTO and prove cleanup.
-4. Preserve the validator's per-case/aggregate recall evidence and measure PostgreSQL p50/p95/p99 and error rate.
-5. Install the optional embedding dependency in the release image, stage the pinned BGE-M3 revision in the local cache, start the supervised worker and prove an exact-vector recall case; the current local `py314` environment has neither the package nor model cache.
-6. Merge the environment contract/release-manifest work and set both database and embedding revisions to the values in `memory-release-metadata.json`.
+1. Run the same schema/provider/recovery gates in an approved staging environment, not only the loopback dev container.
+2. Create a real staging backup, restore it into `meguri_staging_restore_*`, run `scripts/validate_memory_recovery.py --recall-corpus ... --require-fixed-recall`, record counts/checksums/RPO/RTO and prove cleanup.
+3. Preserve the validator's per-case/aggregate recall evidence and measure PostgreSQL p50/p95/p99 and error rate on staging data.
+4. Install the optional embedding dependency in the release image, stage the pinned BGE-M3 revision in the local cache, start the supervised worker and prove a real model-backed exact-vector recall case. The live-dev recall case used a precomputed vector to validate restored pgvector data and does not replace model runtime acceptance.
+5. Produce a non-placeholder staging Release Manifest with immutable image digests, approved server inventory evidence and a passing all-or-nothing staging acceptance artifact.
 
 ## Production operations still prohibited
 
@@ -82,7 +84,7 @@ python scripts/benchmark_memory_retrieval.py --corpus-size 500 --queries 40 --di
 
 ## Rollback
 
-Set `MEGURI_MEMORY_PROVIDER=fake` to remove native memory from runtime without changing authoritative data. Stop embedding workers before application rollback; pending outbox rows remain recoverable. Roll back application commits independently from schema. Schema downgrade is destructive and requires a verified backup, stopped writers and an explicit database change window; never use `downgrade base` as a routine application rollback.
+For local development only, `MEGURI_MEMORY_PROVIDER=fake` can remove native memory without changing authoritative data. Staging and production must roll back to an approved native-pgvector last-good release; fake memory never counts as a successful managed-environment fallback. Stop embedding workers before application rollback so pending outbox rows remain recoverable. Roll back application commits independently from schema. Schema downgrade is destructive and requires a verified backup, stopped writers and an explicit database change window; never use `downgrade base` as a routine application rollback.
 
 ## Sources
 

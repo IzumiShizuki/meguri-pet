@@ -1,0 +1,48 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      runtime_env_path:
+        description: Absolute path on the staging runner to immutable runtime.env
+        required: true
+        type: string
+      manifest_path:
+        description: Absolute path on the staging runner to release-manifest.json
+        required: true
+        type: string
+      confirmation:
+        description: Type DEPLOY_STAGING
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meguri-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: inputs.confirmation == 'DEPLOY_STAGING'
+    runs-on: [self-hosted, meguri-staging]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repository gates
+        run: |
+          python ops/scripts/check_environment_isolation.py
+          python ops/scripts/check_exposure_ledger.py
+      - name: Validate release without mutation
+        run: |
+          python ops/scripts/check_release_manifest.py "${{ inputs.manifest_path }}" --readiness
+          python ops/scripts/deploy_staging.py \
+            --env-file "${{ inputs.runtime_env_path }}" \
+            --manifest "${{ inputs.manifest_path }}" \
+            --dry-run
+      - name: Deploy and record last-good
+        run: |
+          python ops/scripts/deploy_staging.py \
+            --env-file "${{ inputs.runtime_env_path }}" \
+            --manifest "${{ inputs.manifest_path }}"

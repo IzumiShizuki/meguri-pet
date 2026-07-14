@@ -14,7 +14,7 @@ $env:MEGURI_EMBEDDING_MODEL_REVISION = '5617a9f61b028005a4858fdac845db406aefb181
 
 The validator emits JSON and exits non-zero on revision drift, invalid current-version pointers, active items without versions, ready-embedding hash mismatch, audit replay mismatch, missing required corpus or any failed recall case. It reports table counts for all nine required tables and never prints the database URL or memory content. Recall output contains case identifiers and aggregate counts only.
 
-The approved JSON corpus has this shape. IDs must come from the known staging fixture or pre-backup snapshot; optional `expected_version_ids` proves that the restored current-version pointer is the one recalled. By default the corpus must contain at least one `modes: ["exact_vector"]` case, so the staging gate cannot pass using keyword fallback alone.
+The approved JSON corpus has this shape. IDs must come from the known staging fixture or pre-backup snapshot; optional `expected_version_ids` proves that the restored current-version pointer is the one recalled. By default the corpus must contain at least one `modes: ["exact_vector"]` case, so the staging gate cannot pass using keyword fallback alone. A corpus may carry a precomputed 1024-dimensional query vector together with its immutable model/revision identity to validate restored pgvector data without loading the model during the recovery command; staging must still execute the real pinned embedding adapter as a separate acceptance check.
 
 ```json
 {

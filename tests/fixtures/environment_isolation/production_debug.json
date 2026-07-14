@@ -1,0 +1,7 @@
+{
+  "environment": "production",
+  "env_overrides": {
+    "MEGURI_ENABLE_DEBUG_ROUTES": "true"
+  },
+  "expected_error": "debug_routes"
+}

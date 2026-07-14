@@ -1,0 +1,26 @@
+{
+  "acceptance_schema_version": 1,
+  "environment": "staging",
+  "status": "blocked",
+  "release_id": "meguri-staging-not-deployed",
+  "release_manifest_sha256": null,
+  "restore_metadata_sha256": null,
+  "server_inventory_before_sha256": null,
+  "server_inventory_after_sha256": null,
+  "checks": {
+    "compose_project_identity": false,
+    "network_isolation": false,
+    "data_isolation": false,
+    "account_isolation": false,
+    "named_volume_isolation": false,
+    "empty_database_migration": false,
+    "failed_migration_blocks_core": false,
+    "backup_created": false,
+    "restore_rehearsal": false,
+    "image_fault_rollback": false,
+    "readiness_fault_rollback": false,
+    "protected_services_unchanged": true
+  },
+  "reason": "Repository Memory and LLM pipelines are integrated, but no isolated staging release, immutable image digests, trained registered LLM candidate, server release directory, deployment identity, or independent secret-file provisioning is available.",
+  "generated_at": "2026-07-14T22:37:12+08:00"
+}

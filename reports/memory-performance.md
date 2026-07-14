@@ -12,8 +12,8 @@ Measured in-process exact cosine snapshot over the deterministic corpus/query se
 
 | Corpus | Queries | Dimension | top-k | p50 | p95 | p99 | Error rate | Recall@5 |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 500 | 40 | 1024 | 5 | 16.233 ms | 18.533 ms | 21.858 ms | 0.0% | 100.0% |
+| 500 | 40 | 1024 | 5 | 14.949 ms | 15.521 ms | 16.337 ms | 0.0% | 100.0% |
 
-This measures the reproducible algorithm/corpus harness on the local machine; wall-clock latency naturally varies between runs and is not PostgreSQL network/database latency. No dev or staging database URL was available, so database p50/p95/p99 and concurrency throughput are unmeasured.
+This measures the reproducible algorithm/corpus harness on the local machine; wall-clock latency naturally varies between runs and is not PostgreSQL network/database latency. The resumed audit separately verified the native provider and recovery validator against a live loopback dev pgvector database, but staging database p50/p95/p99 and concurrency throughput remain unmeasured.
 
 HNSW status: **not enabled**. ANN latency, error rate and recall are intentionally null. Exact search remains the supported mode until a live corpus-size threshold and exact-vs-ANN recall comparison justify a separately reviewed migration.

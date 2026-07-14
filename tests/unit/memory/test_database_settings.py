@@ -19,7 +19,7 @@ def clear_database_environment(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
-def test_dev_may_use_direct_url_for_local_contract_tests(monkeypatch) -> None:
+def test_dev_rejects_direct_database_url(monkeypatch) -> None:
     clear_database_environment(monkeypatch)
     monkeypatch.setenv("MEGURI_ENV", "dev")
     monkeypatch.setenv(
@@ -27,10 +27,8 @@ def test_dev_may_use_direct_url_for_local_contract_tests(monkeypatch) -> None:
         "postgresql+asyncpg://memory_app@localhost/meguri_dev",
     )
 
-    settings = MemoryDatabaseSettings.from_env()
-
-    assert settings.environment == "dev"
-    assert settings.database_url.get_secret_value().endswith("/meguri_dev")
+    with pytest.raises(RuntimeError, match="must not be supplied inline"):
+        MemoryDatabaseSettings.from_env()
 
 
 def test_staging_requires_absolute_secret_file(monkeypatch, tmp_path: Path) -> None:
@@ -40,8 +38,10 @@ def test_staging_requires_absolute_secret_file(monkeypatch, tmp_path: Path) -> N
         "MEGURI_DATABASE_URL",
         "postgresql+asyncpg://must-not-be-used@localhost/meguri_staging",
     )
-    with pytest.raises(RuntimeError, match="MEGURI_DATABASE_URL_FILE"):
+    with pytest.raises(RuntimeError, match="must not be supplied inline"):
         MemoryDatabaseSettings.from_env()
+
+    monkeypatch.delenv("MEGURI_DATABASE_URL")
 
     secret = tmp_path / "database-url.txt"
     secret.write_text(

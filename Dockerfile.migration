@@ -1,0 +1,30 @@
+FROM python:3.14-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN addgroup --system --gid 10001 meguri \
+    && adduser --system --uid 10001 --ingroup meguri --home /app meguri
+
+COPY ops/migration/requirements.txt /tmp/requirements.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install -r /tmp/requirements.txt
+
+COPY alembic.ini ./alembic.ini
+COPY migrations ./migrations
+COPY ops/__init__.py ./ops/__init__.py
+COPY ops/migration ./ops/migration
+COPY services/__init__.py ./services/__init__.py
+COPY services/meguri_core/__init__.py ./services/meguri_core/__init__.py
+COPY services/meguri_core/memory_service ./services/meguri_core/memory_service
+
+RUN chown -R meguri:meguri /app
+
+USER 10001:10001
+
+ENTRYPOINT ["python", "-m", "ops.migration.entrypoint"]
+CMD ["upgrade", "head"]

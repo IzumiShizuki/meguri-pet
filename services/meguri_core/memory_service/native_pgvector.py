@@ -136,13 +136,10 @@ class NativePgvectorMemoryProvider:
         expected_revision = (
             self.settings.expected_database_revision if self.settings else None
         )
-        status = (
-            "revision_mismatch"
-            if expected_revision and str(revision) != expected_revision
-            else "ok"
-        )
+        if expected_revision and str(revision) != expected_revision:
+            raise RuntimeError("memory database revision does not match runtime configuration")
         return {
-            "status": status,
+            "status": "ok",
             "provider": self.provider_name,
             "database_revision": str(revision),
             "expected_database_revision": expected_revision or "not-configured",

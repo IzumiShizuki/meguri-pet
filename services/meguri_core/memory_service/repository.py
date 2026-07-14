@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -161,7 +162,14 @@ class SqlAlchemyMemoryRepository:
     async def lock_idempotency_key(
         self, tenant_id: str, operation: str, request_id: str
     ) -> None:
-        key = "\0".join((tenant_id, operation, request_id))
+        # PostgreSQL text values cannot contain NUL bytes.  A compact JSON array
+        # keeps the three lock-key components unambiguous while remaining valid
+        # UTF-8 text even when a component itself contains a separator character.
+        key = json.dumps(
+            (tenant_id, operation, request_id),
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
         await self.session.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": key},
