@@ -1,0 +1,8 @@
+{
+  "environment": "dev",
+  "env_overrides": {
+    "MEGURI_DATA_DIR": "/opt/meguri/production/config/data"
+  },
+  "expected_error": "cross_environment_reference"
+}
+

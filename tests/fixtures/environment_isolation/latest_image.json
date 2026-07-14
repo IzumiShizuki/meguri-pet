@@ -1,0 +1,8 @@
+{
+  "environment": "production",
+  "env_overrides": {
+    "MEGURI_CORE_IMAGE": "ghcr.io/izumishizuki/meguri-core:latest"
+  },
+  "expected_error": "latest_image"
+}
+
