@@ -165,6 +165,7 @@ accepted and production cannot be promoted.
 - `ed52a05` authenticated LLM staging gateway and last-good routing integration
 - `1871e7f` integrated runtime Release Manifest and handoff gates
 - `c6cb144` LLM human/safety Staging-gate integration
+- `3021d67` LLM dataset/source-build identity integration
 
 The original E-010 evidence commit is `0e65465`; a final synchronization commit
 records the post-integration contracts, tests and blocker state.

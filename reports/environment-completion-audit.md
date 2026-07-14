@@ -4,7 +4,7 @@ Audit time: 2026-07-14 22:37:12 +08:00
 
 Branch: `feat/environment-isolation`
 
-Audited commit: `c6cb144`
+Audited commit: `3021d67`
 
 Verdict: **goal not achieved; runtime Staging acceptance is blocked**
 
@@ -36,6 +36,8 @@ Verdict: **goal not achieved; runtime Staging acceptance is blocked**
 - Production exposure gate: exit `1`; Production approval gate: exit `1`.
 - LLM model registry: `models: []`.
 - LLM routing: `candidate_model_id: null`, `last_good_model_id: null`.
+- Immutable SFT dataset identity includes source build and split hashes; its
+  focused regression suite passes.
 - No model artifacts, checkpoints, release state or immutable candidate Manifest are present.
 
 ## Live protected-server evidence
