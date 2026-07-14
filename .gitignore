@@ -25,6 +25,8 @@ coverage/
 /training/*
 !/training/llm/
 !/training/llm/**
+/training/llm/**/__pycache__/
+/training/llm/**/*.py[cod]
 /training/llm/artifacts/
 /training/llm/checkpoints/
 /training/llm/reports/

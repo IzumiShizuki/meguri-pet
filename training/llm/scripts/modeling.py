@@ -29,12 +29,12 @@ def resolve_model_snapshot(config: dict[str, Any], *, allow_download: bool) -> P
     return Path(snapshot)
 
 
-def load_model_with_lora(
+def load_base_model(
     config: dict[str, Any],
     *,
     allow_download: bool,
 ) -> tuple[Any, Any, Any]:
-    """Load the exact pinned model and attach only the configured LoRA modules."""
+    """Load the exact pinned base model without attaching an adapter."""
 
     try:
         import torch
@@ -43,11 +43,9 @@ def load_model_with_lora(
 
     model_config = config["model"]
     training = config["training"]
-    lora = config["lora"]
     snapshot = resolve_model_snapshot(config, allow_download=allow_download)
     dtype = torch.bfloat16 if model_config.get("dtype") == "bfloat16" else torch.float16
     loader = model_config.get("loader")
-    target_modules = lora.get("target_modules")
 
     if loader == "unsloth_vision":
         try:
@@ -59,21 +57,6 @@ def load_model_with_lora(
             load_in_4bit=bool(model_config.get("load_in_4bit")),
             dtype=dtype,
             use_gradient_checkpointing=training.get("gradient_checkpointing", "unsloth"),
-        )
-        model = FastVisionModel.get_peft_model(
-            model,
-            finetune_vision_layers=False,
-            finetune_language_layers=True,
-            finetune_attention_modules=True,
-            finetune_mlp_modules=True,
-            r=int(lora["r"]),
-            lora_alpha=int(lora["alpha"]),
-            lora_dropout=float(lora["dropout"]),
-            bias=str(lora.get("bias", "none")),
-            target_modules=target_modules,
-            random_state=int(training["seed"]),
-            use_rslora=False,
-            loftq_config=None,
         )
         return model, processor, FastVisionModel
 
@@ -88,21 +71,52 @@ def load_model_with_lora(
             dtype=dtype,
             load_in_4bit=bool(model_config.get("load_in_4bit")),
         )
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=int(lora["r"]),
-            target_modules=target_modules,
-            lora_alpha=int(lora["alpha"]),
-            lora_dropout=float(lora["dropout"]),
-            bias=str(lora.get("bias", "none")),
-            use_gradient_checkpointing=training.get("gradient_checkpointing", "unsloth"),
-            random_state=int(training["seed"]),
-            use_rslora=False,
-            loftq_config=None,
-        )
         return model, tokenizer, FastLanguageModel
 
     raise PipelineError(f"unsupported model loader: {loader}")
+
+
+def attach_lora(config: dict[str, Any], model: Any, loader_class: Any) -> Any:
+    """Attach only the pinned text LoRA modules to an already loaded base."""
+
+    model_config = config["model"]
+    training = config["training"]
+    lora = config["lora"]
+    common = {
+        "r": int(lora["r"]),
+        "target_modules": lora.get("target_modules"),
+        "lora_alpha": int(lora["alpha"]),
+        "lora_dropout": float(lora["dropout"]),
+        "bias": str(lora.get("bias", "none")),
+        "random_state": int(training["seed"]),
+        "use_rslora": False,
+        "loftq_config": None,
+    }
+    if model_config.get("loader") == "unsloth_vision":
+        return loader_class.get_peft_model(
+            model,
+            finetune_vision_layers=False,
+            finetune_language_layers=True,
+            finetune_attention_modules=True,
+            finetune_mlp_modules=True,
+            **common,
+        )
+    return loader_class.get_peft_model(
+        model,
+        use_gradient_checkpointing=training.get("gradient_checkpointing", "unsloth"),
+        **common,
+    )
+
+
+def load_model_with_lora(
+    config: dict[str, Any],
+    *,
+    allow_download: bool,
+) -> tuple[Any, Any, Any]:
+    """Load the exact pinned model and attach only the configured LoRA modules."""
+
+    model, tokenizer, loader_class = load_base_model(config, allow_download=allow_download)
+    return attach_lora(config, model, loader_class), tokenizer, loader_class
 
 
 def assert_text_only_trainable_parameters(model: Any) -> dict[str, int]:
@@ -123,4 +137,3 @@ def assert_text_only_trainable_parameters(model: Any) -> dict[str, int]:
     if trainable <= 0:
         raise PipelineError("LoRA attachment produced no trainable parameters")
     return {"trainable_parameters": trainable, "total_parameters": total}
-
