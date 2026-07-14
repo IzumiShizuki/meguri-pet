@@ -43,3 +43,25 @@
 - Result: normal configuration returned 0; all six fault fixtures returned 1
   with their expected diagnostic code; 2 tests passed.
 - Safety: static repository inspection only; no Docker daemon or server access.
+
+## E-003 — Release Manifest schema, generator, and checker
+
+- Status: completed
+- Files: `ops/manifests/release-manifest.schema.json`, example manifest,
+  `generate_release_manifest.py`, `check_release_manifest.py`, and
+  `tests/test_release_manifest.py`.
+- Required contract: release/environment/Git identity, named image digests,
+  data build, Prompt/Response/expression hashes, database revision, embedding
+  revision, LLM base/adapter revision, test status, and generation timestamp.
+- Readiness behavior: staging/production checks fail on placeholders, non-passed
+  tests, or any explicitly supplied runtime mismatch; there is no warning-only
+  path.
+- Test commands:
+  - `python -m unittest -v tests.test_release_manifest`
+  - `python ops/scripts/check_release_manifest.py
+    ops/manifests/example.release-manifest.json`
+  - same command with `--readiness` (expected nonzero for example placeholders)
+  - `python ops/scripts/generate_release_manifest.py --help`
+- Result: 4 tests passed; schema-only example returned 0; readiness returned 1
+  and identified every placeholder; direct generator CLI loaded successfully.
+- Safety: repository-only; generated test artifacts were temporary.

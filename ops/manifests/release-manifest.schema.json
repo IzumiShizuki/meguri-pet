@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.invalid/schemas/release-manifest.schema.json",
+  "title": "Meguri Release Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_schema_version",
+    "release_id",
+    "environment",
+    "git_commit",
+    "image_digests",
+    "data_build_id",
+    "prompt_sha256",
+    "response_schema_sha256",
+    "expression_map_sha256",
+    "database_revision",
+    "embedding_model_revision",
+    "llm_base_model",
+    "llm_adapter_revision",
+    "tests",
+    "generated_at"
+  ],
+  "properties": {
+    "manifest_schema_version": {
+      "const": 1
+    },
+    "release_id": {
+      "type": "string",
+      "pattern": "^meguri-(dev|staging|production)-[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "environment": {
+      "type": "string",
+      "enum": [
+        "dev",
+        "staging",
+        "production"
+      ]
+    },
+    "git_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "image_digests": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9._-]*$"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    },
+    "data_build_id": {
+      "type": "string",
+      "pattern": "^meguri_[A-Za-z0-9._-]+$"
+    },
+    "prompt_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "response_schema_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "expression_map_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "database_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "embedding_model_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "llm_base_model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "llm_adapter_revision": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "model_registry_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python",
+        "typescript",
+        "integration"
+      ],
+      "properties": {
+        "python": {
+          "$ref": "#/$defs/testStatus"
+        },
+        "typescript": {
+          "$ref": "#/$defs/testStatus"
+        },
+        "integration": {
+          "$ref": "#/$defs/testStatus"
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "testStatus": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed",
+        "skipped"
+      ]
+    }
+  }
+}
+
