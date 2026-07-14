@@ -27,3 +27,7 @@ The production overlay is a deploy contract, not permission to deploy.
 Production mutation, migration, public traffic changes, and secret provisioning
 remain blocked until the production approval gate succeeds.
 
+Agent handoff contracts live under `ops/contracts/`. Runtime staging acceptance
+must replace `ops/acceptance/blocked.staging-acceptance.json` with checksummed,
+all-passed evidence before any promotion claim. The current blocked artifact is
+intentional and is validated by `check_staging_acceptance.py` returning nonzero.

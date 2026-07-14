@@ -34,6 +34,7 @@ def production_manifest() -> dict:
         "embedding_model_revision": "embedding-r1",
         "llm_base_model": "meguri-base-r1",
         "llm_adapter_revision": "meguri-adapter-r1",
+        "llm_adapter_sha256": "6789abcdef012345" * 4,
         "model_registry_id": "meguri-production-model-r1",
         "tests": {"python": "passed", "typescript": "passed", "integration": "passed"},
         "generated_at": "2026-07-14T08:00:00Z",

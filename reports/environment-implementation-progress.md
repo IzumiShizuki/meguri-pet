@@ -214,3 +214,34 @@
   current blocked artifact returned 1 with base-gate and exposure failures.
 - Safety: repository-only; no GitHub workflow was triggered and no image was
   pushed, deployed, or promoted.
+
+## E-010 - automated acceptance evidence and Agent handoff
+
+- Status: repository and protected-server invariant acceptance completed;
+  runtime staging acceptance remains blocked with explicit machine-readable
+  evidence.
+- Handoff contracts: Memory receives isolated PostgreSQL/app-role/migration/
+  embedding/backup boundaries; LLM receives authenticated endpoint, timeout,
+  concurrency, candidate/last-good, model registry, adapter revision/digest,
+  Prompt/Schema, and rollback boundaries.
+- Manifest hardening: `model_registry_id` and `llm_adapter_sha256` are required;
+  staging/production readiness rejects an unregistered model or an adapter
+  revision without a digest.
+- Runtime evidence contract: requires all data/account/volume isolation,
+  empty-database migration, migration failure, backup/restore, two rollback
+  fault injections, and protected-service invariants to be true with evidence
+  digests. The committed blocked artifact intentionally returns 1.
+- Live read-only recheck (2026-07-14 22:01 +08:00): Docker Engine 29.2.1, all
+  22 protected containers running, all required networks/named volumes present,
+  and no Meguri environment object. No mutation was issued.
+- Final regression:
+  - Python: 95 passed;
+  - TypeScript: 20 passed;
+  - Compose: dev/staging/production config passed;
+  - isolation, Agent contracts, and live protected-server invariants passed;
+  - staging acceptance and production approval/exposure gates returned nonzero
+    as required by the current evidence state.
+- Blockers: no immutable core/migration image digests, server release directory
+  and secret provisioning access, native pgvector Memory provider, registered
+  LLM candidate/last-good artifacts, or real staging evidence. Production
+  remains blocked.

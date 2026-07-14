@@ -52,7 +52,9 @@ jobs:
             tests.test_exposure_ledger \
             tests.test_staging_deployment \
             tests.test_postgres_backup \
-            tests.test_production_approval
+            tests.test_production_approval \
+            tests.test_environment_acceptance
+          python ops/scripts/check_agent_environment_contracts.py
       - name: Build core and migration images without publishing
         run: |
           docker build -t meguri-core:ci .

@@ -16,6 +16,7 @@
   "embedding_model_revision": "not-configured-for-example",
   "llm_base_model": "mock-v1",
   "llm_adapter_revision": null,
+  "llm_adapter_sha256": null,
   "model_registry_id": null,
   "tests": {
     "python": "passed",

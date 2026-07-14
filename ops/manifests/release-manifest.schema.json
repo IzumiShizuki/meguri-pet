@@ -18,6 +18,8 @@
     "embedding_model_revision",
     "llm_base_model",
     "llm_adapter_revision",
+    "llm_adapter_sha256",
+    "model_registry_id",
     "tests",
     "generated_at"
   ],
@@ -84,6 +86,10 @@
       ],
       "minLength": 1
     },
+    "llm_adapter_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "model_registry_id": {
       "type": [
         "string",
@@ -131,4 +137,3 @@
     }
   }
 }
-

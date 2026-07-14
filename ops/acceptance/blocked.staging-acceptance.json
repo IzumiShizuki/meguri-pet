@@ -1,0 +1,26 @@
+{
+  "acceptance_schema_version": 1,
+  "environment": "staging",
+  "status": "blocked",
+  "release_id": "meguri-staging-not-deployed",
+  "release_manifest_sha256": null,
+  "restore_metadata_sha256": null,
+  "server_inventory_before_sha256": null,
+  "server_inventory_after_sha256": null,
+  "checks": {
+    "compose_project_identity": false,
+    "network_isolation": false,
+    "data_isolation": false,
+    "account_isolation": false,
+    "named_volume_isolation": false,
+    "empty_database_migration": false,
+    "failed_migration_blocks_core": false,
+    "backup_created": false,
+    "restore_rehearsal": false,
+    "image_fault_rollback": false,
+    "readiness_fault_rollback": false,
+    "protected_services_unchanged": true
+  },
+  "reason": "No isolated staging release, immutable image digests, server release directory, or secret-file provisioning access is currently available.",
+  "generated_at": "2026-07-14T23:00:00+08:00"
+}

@@ -138,6 +138,7 @@ def check_readiness(manifest: dict[str, Any], args: argparse.Namespace) -> list[
         "embedding_model_revision": args.expected_embedding_model_revision,
         "llm_base_model": args.expected_llm_base_model,
         "llm_adapter_revision": args.expected_llm_adapter_revision,
+        "llm_adapter_sha256": args.expected_llm_adapter_sha256,
     }
     for field, expected_value in expected.items():
         if expected_value is not None and manifest.get(field) != expected_value:
@@ -162,6 +163,16 @@ def check_readiness(manifest: dict[str, Any], args: argparse.Namespace) -> list[
         for field in critical_fields:
             if placeholder(manifest.get(field)):
                 errors.append(f"{field}: placeholder value is not readiness-safe")
+        adapter_revision = manifest.get("llm_adapter_revision")
+        adapter_sha256 = manifest.get("llm_adapter_sha256")
+        if adapter_revision is not None and not adapter_sha256:
+            errors.append("llm_adapter_sha256: required when llm_adapter_revision is set")
+        if adapter_sha256 is not None and placeholder(adapter_sha256):
+            errors.append("llm_adapter_sha256: placeholder value is not readiness-safe")
+        if manifest.get("environment") in {"staging", "production"}:
+            registry_id = manifest.get("model_registry_id")
+            if not registry_id or placeholder(registry_id):
+                errors.append("model_registry_id: staging/production readiness requires a registered model")
         for name, digest in (manifest.get("image_digests") or {}).items():
             if placeholder(digest.removeprefix("sha256:")):
                 errors.append(f"image_digests.{name}: placeholder digest is not readiness-safe")
@@ -186,6 +197,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--expected-embedding-model-revision")
     result.add_argument("--expected-llm-base-model")
     result.add_argument("--expected-llm-adapter-revision")
+    result.add_argument("--expected-llm-adapter-sha256")
     result.add_argument("--expected-image-digest", action="append", type=parse_assignment, default=[])
     return result
 

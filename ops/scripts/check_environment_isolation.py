@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -287,6 +288,20 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
 
     if environment in {"staging", "production"} and env.get("MEGURI_ENABLE_DEBUG_ROUTES", "").lower() != "false":
         add("debug_routes", "env.MEGURI_ENABLE_DEBUG_ROUTES", f"{environment} debug routes must be false")
+    try:
+        timeout_seconds = float(env.get("MEGURI_LLM_TIMEOUT_SECONDS", ""))
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError
+    except ValueError:
+        add("llm_runtime", "env.MEGURI_LLM_TIMEOUT_SECONDS", "must be a positive number")
+    try:
+        if int(env.get("MEGURI_LLM_MAX_CONCURRENCY", "")) <= 0:
+            raise ValueError
+    except ValueError:
+        add("llm_runtime", "env.MEGURI_LLM_MAX_CONCURRENCY", "must be a positive integer")
+    expected_channel = {"dev": "mock", "staging": "candidate", "production": "last-good"}[environment]
+    if env.get("MEGURI_LLM_RELEASE_CHANNEL") != expected_channel:
+        add("llm_release_channel", "env.MEGURI_LLM_RELEASE_CHANNEL", f"expected {expected_channel!r}")
     if environment == "production":
         if env.get("MEGURI_MUTATION_ALLOWED", "").lower() != "false":
             add("production_mutation", "env.MEGURI_MUTATION_ALLOWED", "production mutation must default to false")

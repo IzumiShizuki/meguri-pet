@@ -35,6 +35,7 @@ def manifest(release_id: str, database_revision: str = "20260714_0001") -> dict:
         "embedding_model_revision": "embedding-model-r1",
         "llm_base_model": "meguri-base-r1",
         "llm_adapter_revision": "meguri-adapter-r1",
+        "llm_adapter_sha256": "6789abcdef012345" * 4,
         "model_registry_id": "meguri-text-staging-r1",
         "tests": {"python": "passed", "typescript": "passed", "integration": "passed"},
         "generated_at": "2026-07-14T12:00:00Z",

@@ -11,6 +11,10 @@ and the current process does not have the server-side release directory and
 secret-file access needed to create an isolated staging database safely.
 Therefore this report does not claim a real backup, restore, RPO, or RTO result.
 
+A second read-only Docker check at 2026-07-14 22:01 +08:00 confirmed all 22
+protected containers were still running, the protected networks and named
+volumes remained present, and no Meguri environment object had appeared.
+
 ## Verified locally
 
 Five automated tests exercise the backup/restore control flow with an injected

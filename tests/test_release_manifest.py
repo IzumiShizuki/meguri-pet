@@ -45,6 +45,7 @@ class ReleaseManifestTests(unittest.TestCase):
             expected_embedding_model_revision=None,
             expected_llm_base_model=None,
             expected_llm_adapter_revision=None,
+            expected_llm_adapter_sha256=None,
             expected_image_digest=[],
             readiness=True,
         )
@@ -76,6 +77,7 @@ class ReleaseManifestTests(unittest.TestCase):
                 embedding_model_revision="bge-m3@revision",
                 llm_base_model="model@revision",
                 llm_adapter_revision="adapter@sha256",
+                llm_adapter_sha256="c" * 64,
                 model_registry_id="meguri-text-test",
                 python_tests="passed",
                 typescript_tests="passed",
@@ -89,4 +91,3 @@ class ReleaseManifestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
