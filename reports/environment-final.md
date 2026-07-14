@@ -20,6 +20,8 @@ registry, authenticated gateway and last-good routing are integrated through
 L-013. The remaining blockers are live
 database/staging evidence, immutable pushed images, a trained and registered
 LLM candidate/last-good pair, and independent server deployment/secrets access.
+The current requirement-by-requirement verdict is recorded in
+`reports/environment-completion-audit.md`.
 
 This implementation follows the authority order from
 [15｜开发、Staging 与生产隔离实施计划](https://app.notion.com/p/39da363659638157a494e897cedef86f),
@@ -77,7 +79,7 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 
 Final local results:
 
-- `python -m pytest -o addopts='' -q`: **177 passed, 6 skipped**; all
+- `python -m pytest -o addopts='' -q`: **179 passed, 6 skipped**; all
   skips are explicitly gated on the absent isolated PostgreSQL test URL;
 - `pnpm test:ts`: **20 passed**;
 - Python compile-all and Alembic offline upgrade/downgrade through
@@ -96,7 +98,7 @@ not affect test outcomes.
 
 ## Protected server recheck
 
-At 2026-07-14 22:27:23 +08:00, a read-only Docker TLS query confirmed:
+At 2026-07-14 22:37:12 +08:00, a read-only Docker TLS query confirmed:
 
 - Docker Engine remains `29.2.1`;
 - all 22 baseline containers remain running;
@@ -162,6 +164,7 @@ accepted and production cannot be promoted.
 - `04c58af` evaluated LLM registry integration
 - `ed52a05` authenticated LLM staging gateway and last-good routing integration
 - `1871e7f` integrated runtime Release Manifest and handoff gates
+- `c6cb144` LLM human/safety Staging-gate integration
 
 The original E-010 evidence commit is `0e65465`; a final synchronization commit
 records the post-integration contracts, tests and blocker state.

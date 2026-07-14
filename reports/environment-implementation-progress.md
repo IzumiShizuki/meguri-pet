@@ -235,7 +235,7 @@
   empty-database migration, migration failure, backup/restore, two rollback
   fault injections, and protected-service invariants to be true with evidence
   digests. The committed blocked artifact intentionally returns 1.
-- Live read-only recheck (latest: 2026-07-14 22:27:23 +08:00): Docker Engine 29.2.1, all
+- Live read-only recheck (latest: 2026-07-14 22:37:12 +08:00): Docker Engine 29.2.1, all
   22 protected containers running, all required networks/named volumes present,
   and no Meguri environment object. No mutation was issued.
 - Final regression (before the final integrated rerun recorded in

@@ -22,5 +22,5 @@
     "protected_services_unchanged": true
   },
   "reason": "Repository Memory and LLM pipelines are integrated, but no isolated staging release, immutable image digests, trained registered LLM candidate, server release directory, deployment identity, or independent secret-file provisioning is available.",
-  "generated_at": "2026-07-14T23:00:00+08:00"
+  "generated_at": "2026-07-14T22:37:12+08:00"
 }
