@@ -27,6 +27,7 @@ from training.llm.scripts.training_utils import (
     smoke_manifest,
     tokenize_assistant_only,
     validate_dataset_for_training,
+    validate_enablement_gate_report,
     validate_probe_report,
     validate_training_config,
 )
@@ -76,7 +77,8 @@ def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.experiment_id):
         raise PipelineError("experiment ID must be a safe 3-80 character identifier")
     config = load_yaml(args.config)
-    validate_training_config(config, allow_disabled=args.allow_disabled_config)
+    validate_enablement_gate_report(args.enablement_gate_report, config)
+    validate_training_config(config, allow_disabled=args.enablement_gate_report is not None)
     probe = validate_probe_report(args.probe_report, config)
     manifest, _ = validate_dataset_for_training(args.dataset_dir)
     output_dir = args.experiment_root.resolve() / args.experiment_id
@@ -259,7 +261,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--probe-report", type=Path, required=True)
     value.add_argument("--experiment-root", type=Path, default=ARTIFACT_ROOT / "checkpoints")
     value.add_argument("--allow-download", action="store_true")
-    value.add_argument("--allow-disabled-config", action="store_true")
+    value.add_argument("--enablement-gate-report", type=Path)
     value.add_argument("--smoke", action="store_true")
     value.add_argument("--smoke-samples", type=int, default=160)
     value.add_argument("--smoke-validation-samples", type=int, default=40)
