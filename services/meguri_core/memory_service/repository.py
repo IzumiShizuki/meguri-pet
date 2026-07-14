@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Text, and_, cast, delete, func, or_, select
+from sqlalchemy import Text, and_, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .enums import (
@@ -24,6 +24,8 @@ from .models import (
     MemoryActor,
     MemoryCandidate,
     MemoryCandidateCreate,
+    MemoryFeedback,
+    MemoryFeedbackCreate,
     MemoryItem,
     MemorySearchQuery,
     MemoryUpdate,
@@ -35,6 +37,7 @@ from .orm import (
     MemoryAuditLogRow,
     MemoryCandidateRow,
     MemoryEmbeddingRow,
+    MemoryFeedbackRow,
     MemoryIdempotencyRow,
     MemoryItemRow,
     MemoryOutboxRow,
@@ -136,9 +139,33 @@ def binding_model(row: IdentityBindingRow) -> IdentityBinding:
     )
 
 
+def feedback_model(row: MemoryFeedbackRow) -> MemoryFeedback:
+    return MemoryFeedback(
+        feedback_id=row.feedback_id,
+        tenant_id=row.tenant_id,
+        user_id=row.user_id,
+        memory_id=row.memory_id,
+        version_id=row.version_id,
+        feedback_kind=row.feedback_kind,
+        query_text=row.query_text,
+        hit_rank=row.hit_rank,
+        details=row.details,
+        created_at=row.created_at,
+    )
+
+
 class SqlAlchemyMemoryRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def lock_idempotency_key(
+        self, tenant_id: str, operation: str, request_id: str
+    ) -> None:
+        key = "\0".join((tenant_id, operation, request_id))
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": key},
+        )
 
     async def get_idempotent(
         self, tenant_id: str, operation: str, request_id: str
@@ -291,6 +318,32 @@ class SqlAlchemyMemoryRepository:
                 MemoryItemRow.tenant_id == tenant_id,
             )
         )
+
+    async def create_feedback(
+        self, feedback: MemoryFeedbackCreate
+    ) -> MemoryFeedback | None:
+        valid_version = await self.session.scalar(
+            select(MemoryVersionRow.version_id)
+            .join(
+                MemoryItemRow,
+                MemoryItemRow.memory_id == MemoryVersionRow.memory_id,
+            )
+            .where(
+                MemoryItemRow.memory_id == feedback.memory_id,
+                MemoryItemRow.tenant_id == feedback.tenant_id,
+                MemoryItemRow.user_id == feedback.user_id,
+                MemoryVersionRow.version_id == feedback.version_id,
+                MemoryVersionRow.memory_id == feedback.memory_id,
+            )
+        )
+        if valid_version is None:
+            return None
+        payload = feedback.model_dump()
+        payload["feedback_kind"] = feedback.feedback_kind.value
+        row = MemoryFeedbackRow(feedback_id=uuid4(), **payload)
+        self.session.add(row)
+        await self.session.flush()
+        return feedback_model(row)
 
     async def list_active_items(
         self,
@@ -724,6 +777,37 @@ class SqlAlchemyMemoryRepository:
             )
         rows = (await self.session.execute(statement)).all()
         return [RetrievedItem(item_model(row, version), semantic=float(score)) for row, version, score in rows]
+
+    async def structured_search(self, query: MemorySearchQuery) -> list[RetrievedItem]:
+        if query.canonical_key is None:
+            return []
+        statement = (
+            select(MemoryItemRow, MemoryVersionRow)
+            .join(
+                MemoryVersionRow,
+                and_(
+                    MemoryVersionRow.memory_id == MemoryItemRow.memory_id,
+                    MemoryVersionRow.version_id == MemoryItemRow.current_version_id,
+                ),
+            )
+            .where(
+                MemoryItemRow.tenant_id == query.tenant_id,
+                MemoryItemRow.user_id == query.user_id,
+                MemoryItemRow.status == MemoryStatus.ACTIVE.value,
+                MemoryItemRow.scope.in_([scope.value for scope in query.scopes]),
+                MemoryItemRow.canonical_key == query.canonical_key,
+                or_(MemoryItemRow.expires_at.is_(None), MemoryItemRow.expires_at > query.now),
+            )
+            .limit(query.limit)
+        )
+        if query.memory_types:
+            statement = statement.where(
+                MemoryItemRow.memory_type.in_(
+                    [kind.value for kind in query.memory_types]
+                )
+            )
+        rows = (await self.session.execute(statement)).all()
+        return [RetrievedItem(item_model(row, version), keyword=1.0) for row, version in rows]
 
     async def keyword_search(self, query: MemorySearchQuery) -> list[RetrievedItem]:
         document = func.to_tsvector("simple", MemoryVersionRow.content_text)

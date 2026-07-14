@@ -68,7 +68,10 @@ class ConflictResolver:
         self,
         candidate: MemoryCandidateCreate,
         existing: list[MemoryItem],
+        *,
+        semantic_scores: dict[object, float] | None = None,
     ) -> ConflictResolution:
+        semantic_scores = semantic_scores or {}
         normalized = normalize_text(candidate.content_text)
         key = canonical_key(candidate)
         for item in existing:
@@ -100,5 +103,17 @@ class ConflictResolver:
                     existing_memory_id=item.memory_id,
                     existing_version_id=version.version_id,
                     similarity=similarity,
+                )
+            semantic_similarity = max(
+                0.0,
+                min(1.0, float(semantic_scores.get(item.memory_id, 0.0))),
+            )
+            if semantic_similarity >= self.duplicate_threshold:
+                return ConflictResolution(
+                    action=ConflictAction.DUPLICATE,
+                    reason="high_semantic_similarity",
+                    existing_memory_id=item.memory_id,
+                    existing_version_id=version.version_id,
+                    similarity=semantic_similarity,
                 )
         return ConflictResolution(action=ConflictAction.CREATE, reason="no_conflict")

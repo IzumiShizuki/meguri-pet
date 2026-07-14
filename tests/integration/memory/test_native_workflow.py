@@ -23,6 +23,7 @@ from services.meguri_core.memory_service.models import (
     IdentityBindingCreate,
     MemoryActor,
     MemoryCandidateCreate,
+    MemoryFeedbackCreate,
     MemorySearchQuery,
     MemoryUpdate,
     SessionSummaryUpsert,
@@ -139,6 +140,19 @@ async def test_candidate_version_delete_restore_and_environment_isolation(
         )
     )
     assert current_hits and current_hits[0].version_id == updated.current_version_id
+    recorded_feedback = await native_provider.record_feedback(
+        MemoryFeedbackCreate(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            memory_id=item.memory_id,
+            version_id=updated.current_version_id,
+            feedback_kind="false_recall",
+            query_text="black coffee",
+            hit_rank=1,
+        ),
+        request_id=f"feedback-{uuid4()}",
+    )
+    assert recorded_feedback.version_id == updated.current_version_id
 
     await native_provider.delete(
         item.memory_id,
@@ -189,6 +203,30 @@ async def test_repository_transaction_rolls_back_candidate(native_provider) -> N
         tenant_id=tenant_id,
         user_id=user_id,
     ) == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_request_id_creates_one_candidate(native_provider) -> None:
+    tenant_id = f"tenant-{uuid4().hex}"
+    user_id = f"user-{uuid4().hex}"
+    request_id = f"same-request-{uuid4()}"
+    proposed = candidate(
+        tenant_id,
+        user_id,
+        "User prefers idempotent memory writes",
+    )
+
+    first, second = await asyncio.gather(
+        native_provider.create_candidate(proposed, request_id=request_id),
+        native_provider.create_candidate(proposed, request_id=request_id),
+    )
+
+    assert first.candidate_id == second.candidate_id
+    candidates = await native_provider.list_candidates(
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
+    assert [entry.candidate_id for entry in candidates].count(first.candidate_id) == 1
 
 
 @pytest.mark.asyncio
@@ -260,15 +298,17 @@ async def test_outbox_workers_claim_once_and_write_pinned_embedding(native_provi
         candidate(tenant_id, user_id, "User prefers calm background music"),
         request_id=f"create-{uuid4()}",
     )
-    await native_provider.review_candidate(
+    item = await native_provider.review_candidate(
         created.candidate_id,
         CandidateReview(decision="approve", reason="integration approval"),
         actor=MemoryActor(actor_type=ActorType.ADMIN, actor_id="integration-admin"),
         request_id=f"approve-{uuid4()}",
     )
+    assert item is not None
+    vector = [1.0, *([0.0] * 1023)]
     embedding = BgeM3EmbeddingProvider(
         revision=EMBEDDING_MODEL_REVISION,
-        embed_callable=lambda texts: [[0.0] * 1024 for _ in texts],
+        embed_callable=lambda texts: [vector for _ in texts],
     )
     workers = [
         EmbeddingWorker(
@@ -281,3 +321,15 @@ async def test_outbox_workers_claim_once_and_write_pinned_embedding(native_provi
     results = await asyncio.gather(*(worker.run_once() for worker in workers))
     assert sum(result["completed"] for result in results) >= 1
     assert sum(result["failed"] for result in results) == 0
+    hits = await native_provider.search(
+        MemorySearchQuery(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            query="calm background music",
+            modes=[SearchMode.EXACT_VECTOR],
+            query_embedding=vector,
+            embedding_model=embedding.model,
+            embedding_revision=embedding.revision,
+        )
+    )
+    assert hits and hits[0].memory_id == item.memory_id

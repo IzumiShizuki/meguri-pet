@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 from time import perf_counter
 from typing import Any
 from uuid import UUID
 
 from .conflict_resolver import ConflictResolver, canonical_key
 from .contracts import (
+    EmbeddingProvider,
     MemoryAuthorizationError,
     MemoryNotFoundError,
     MemoryStateError,
@@ -16,6 +18,7 @@ from .enums import (
     CandidateStatus,
     ConflictAction,
     MemoryStatus,
+    MemoryType,
     ReviewDecision,
     SearchMode,
 )
@@ -28,6 +31,8 @@ from .models import (
     MemoryCandidate,
     MemoryCandidateCreate,
     MemoryExport,
+    MemoryFeedback,
+    MemoryFeedbackCreate,
     MemoryHit,
     MemoryItem,
     MemorySearchQuery,
@@ -51,6 +56,24 @@ def require_request_id(request_id: str) -> str:
     if len(value) > 200:
         raise ValueError("request_id must be at most 200 characters")
     return value
+
+
+def operation_key(base: str, *scope: str) -> str:
+    if not scope:
+        return base
+    digest = hashlib.sha256("\0".join(scope).encode("utf-8")).hexdigest()[:32]
+    return f"{base}.{digest}"
+
+
+async def lock_idempotency(
+    repository,
+    tenant_id: str,
+    operation: str,
+    request_id: str,
+) -> None:
+    lock = getattr(repository, "lock_idempotency_key", None)
+    if callable(lock):
+        await lock(tenant_id, operation, request_id)
 
 
 def candidate_create_from_model(candidate: MemoryCandidate) -> MemoryCandidateCreate:
@@ -86,12 +109,14 @@ class MemoryService:
         conflict_resolver: ConflictResolver | None = None,
         metrics: MemoryMetrics | None = None,
         hard_delete_enabled: bool = False,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         self.uow_factory = unit_of_work_factory
         self.review_policy = review_policy or CandidateReviewPolicy()
         self.conflict_resolver = conflict_resolver or ConflictResolver()
         self.metrics = metrics or memory_metrics
         self.hard_delete_enabled = hard_delete_enabled
+        self.embedding_provider = embedding_provider
 
     async def create_candidate(
         self,
@@ -100,9 +125,12 @@ class MemoryService:
         request_id: str,
     ) -> MemoryCandidate:
         request_id = require_request_id(request_id)
-        operation = "candidate.create"
+        operation = operation_key("candidate.create", candidate.user_id)
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
+            await lock_idempotency(
+                repository, candidate.tenant_id, operation, request_id
+            )
             cached = await repository.get_idempotent(candidate.tenant_id, operation, request_id)
             if cached:
                 return MemoryCandidate.model_validate(cached)
@@ -180,6 +208,9 @@ class MemoryService:
             row = await repository.get_candidate_for_update(candidate_id)
             if row is None:
                 raise MemoryNotFoundError("memory candidate not found")
+            await lock_idempotency(
+                repository, row.tenant_id, operation, request_id
+            )
             cached = await repository.get_idempotent(row.tenant_id, operation, request_id)
             if cached is not None:
                 payload = cached.get("item")
@@ -218,7 +249,36 @@ class MemoryService:
                 user_id=row.user_id,
                 memory_type=row.memory_type,
             )
-            resolution = self.conflict_resolver.resolve(candidate_create, existing)
+            semantic_scores: dict[object, float] = {}
+            if self.embedding_provider is not None and existing:
+                try:
+                    vector = (
+                        await self.embedding_provider.embed([row.content_text])
+                    )[0]
+                    semantic_matches = await repository.vector_search(
+                        MemorySearchQuery(
+                            tenant_id=row.tenant_id,
+                            user_id=row.user_id,
+                            query=row.content_text,
+                            limit=min(50, max(5, len(existing))),
+                            memory_types=[MemoryType(row.memory_type)],
+                            modes=[SearchMode.EXACT_VECTOR],
+                            query_embedding=vector,
+                            embedding_model=self.embedding_provider.model,
+                            embedding_revision=self.embedding_provider.revision,
+                        )
+                    )
+                    semantic_scores = {
+                        match.item.memory_id: match.semantic
+                        for match in semantic_matches
+                    }
+                except Exception:
+                    self.metrics.inc("memory_embedding_failure_total")
+            resolution = self.conflict_resolver.resolve(
+                candidate_create,
+                existing,
+                semantic_scores=semantic_scores,
+            )
             if resolution.action in {ConflictAction.SUPERSEDE, ConflictAction.REJECT}:
                 self.metrics.inc("memory_conflict_total")
             action = AuditAction.ITEM_CREATE
@@ -304,6 +364,10 @@ class MemoryService:
                 SearchMode.HYBRID in modes or SearchMode.EXACT_VECTOR in modes
             ):
                 retrieved.extend(await repository.vector_search(query))
+            if query.canonical_key is not None and (
+                SearchMode.HYBRID in modes or SearchMode.STRUCTURED in modes
+            ):
+                retrieved.extend(await repository.structured_search(query))
             if SearchMode.HYBRID in modes or SearchMode.KEYWORD in modes:
                 retrieved.extend(await repository.keyword_search(query))
         combined: dict[UUID, dict[str, Any]] = {}
@@ -347,6 +411,43 @@ class MemoryService:
             raise MemoryNotFoundError("memory not found")
         return item
 
+    async def record_feedback(
+        self,
+        feedback: MemoryFeedbackCreate,
+        *,
+        request_id: str,
+    ) -> MemoryFeedback:
+        request_id = require_request_id(request_id)
+        operation = operation_key(
+            "memory.feedback",
+            feedback.user_id,
+            str(feedback.memory_id),
+            str(feedback.version_id),
+            feedback.feedback_kind.value,
+        )
+        async with self.uow_factory() as uow:
+            repository = repository_of(uow)
+            await lock_idempotency(
+                repository, feedback.tenant_id, operation, request_id
+            )
+            cached = await repository.get_idempotent(
+                feedback.tenant_id, operation, request_id
+            )
+            if cached:
+                return MemoryFeedback.model_validate(cached)
+            result = await repository.create_feedback(feedback)
+            if result is None:
+                raise MemoryNotFoundError("memory version not found")
+            await repository.put_idempotent(
+                feedback.tenant_id,
+                operation,
+                request_id,
+                result.model_dump(mode="json"),
+            )
+            if feedback.feedback_kind.value == "false_recall":
+                self.metrics.inc("memory_false_recall_feedback_total")
+            return result
+
     async def supersede(
         self,
         memory_id: UUID,
@@ -359,6 +460,9 @@ class MemoryService:
         operation = f"memory.supersede.{memory_id}"
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
+            await lock_idempotency(
+                repository, update.tenant_id, operation, request_id
+            )
             cached = await repository.get_idempotent(update.tenant_id, operation, request_id)
             if cached:
                 return MemoryItem.model_validate(cached)
@@ -447,6 +551,9 @@ class MemoryService:
         operation = f"memory.{target.value}.{memory_id}"
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
+            await lock_idempotency(
+                repository, tenant_id, operation, request_id
+            )
             cached = await repository.get_idempotent(tenant_id, operation, request_id)
             if cached:
                 return MemoryItem.model_validate(cached)
@@ -489,8 +596,17 @@ class MemoryService:
         request_id = require_request_id(request_id)
         if format != "jsonl":
             raise ValueError("only jsonl export is supported")
+        operation = operation_key("memory.export", user_id)
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
+            await lock_idempotency(
+                repository, tenant_id, operation, request_id
+            )
+            cached = await repository.get_idempotent(
+                tenant_id, operation, request_id
+            )
+            if cached:
+                return MemoryExport.model_validate(cached)
             actor = MemoryActor(actor_type=ActorType.USER, actor_id=user_id)
             await repository.append_audit(
                 tenant_id=tenant_id,
@@ -510,13 +626,20 @@ class MemoryService:
             audits = await repository.list_audit_events(
                 tenant_id=tenant_id, user_id=user_id
             )
-            return MemoryExport(
+            result = MemoryExport(
                 tenant_id=tenant_id,
                 user_id=user_id,
                 items=items,
                 versions=versions,
                 audit_events=audits,
             )
+            await repository.put_idempotent(
+                tenant_id,
+                operation,
+                request_id,
+                result.model_dump(mode="json"),
+            )
+            return result
 
     async def hard_delete(
         self,
@@ -541,6 +664,9 @@ class MemoryService:
         operation = f"memory.hard_delete.{memory_id}"
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
+            await lock_idempotency(
+                repository, tenant_id, operation, request_id
+            )
             cached = await repository.get_idempotent(
                 tenant_id, operation, request_id
             )
@@ -592,9 +718,17 @@ class MemoryService:
         request_id: str,
     ) -> IdentityBinding:
         request_id = require_request_id(request_id)
-        operation = "identity.bind"
+        operation = operation_key(
+            "identity.bind",
+            binding.user_id,
+            binding.platform,
+            binding.platform_user_id,
+        )
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
+            await lock_idempotency(
+                repository, binding.tenant_id, operation, request_id
+            )
             cached = await repository.get_idempotent(binding.tenant_id, operation, request_id)
             if cached:
                 return IdentityBinding.model_validate(cached)
@@ -641,6 +775,9 @@ class MemoryService:
             if row is None:
                 raise MemoryNotFoundError("identity binding not found")
             operation = f"identity.unbind.{binding_id}"
+            await lock_idempotency(
+                repository, row.tenant_id, operation, request_id
+            )
             if await repository.get_idempotent(row.tenant_id, operation, request_id):
                 return
             await repository.unbind_identity(row)
@@ -663,6 +800,28 @@ class MemoryService:
         *,
         request_id: str,
     ) -> SessionSummaryUpsert:
-        require_request_id(request_id)
+        request_id = require_request_id(request_id)
+        operation = operation_key(
+            "session.summary",
+            summary.user_id,
+            summary.client_id,
+            summary.session_id,
+        )
         async with self.uow_factory() as uow:
-            return await repository_of(uow).upsert_session_summary(summary)
+            repository = repository_of(uow)
+            await lock_idempotency(
+                repository, summary.tenant_id, operation, request_id
+            )
+            cached = await repository.get_idempotent(
+                summary.tenant_id, operation, request_id
+            )
+            if cached:
+                return SessionSummaryUpsert.model_validate(cached)
+            result = await repository.upsert_session_summary(summary)
+            await repository.put_idempotent(
+                summary.tenant_id,
+                operation,
+                request_id,
+                result.model_dump(mode="json"),
+            )
+            return result

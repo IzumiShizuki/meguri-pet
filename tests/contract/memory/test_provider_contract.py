@@ -43,7 +43,8 @@ async def provider(request):
             tenant_id="meguri-contract-test",
             database_url=database_url,
             mutation_allowed=True,
-        )
+        ),
+        allow_legacy_auto_approval=True,
     )
     try:
         yield native

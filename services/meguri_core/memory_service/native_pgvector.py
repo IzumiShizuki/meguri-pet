@@ -16,14 +16,16 @@ from services.meguri_core.memory import (
     SessionSummary as LegacySessionSummary,
     SessionSummaryInput as LegacySessionSummaryInput,
 )
+from services.meguri_core.schemas import MemoryCandidate as RuntimeMemoryCandidate
 
-from .contracts import EmbeddingProvider, MemoryNotFoundError
+from .contracts import EmbeddingProvider, MemoryNotFoundError, MemoryStateError
 from .database import (
     MemoryDatabaseSettings,
     create_memory_engine,
     create_session_factory,
 )
-from .enums import ActorType, MemoryStatus, MemoryType, SourceKind
+from .embedding import create_runtime_embedding_provider
+from .enums import ActorType, MemoryStatus, MemoryType, SearchMode, SourceKind
 from .models import (
     CandidateReview,
     HardDeleteResult,
@@ -33,6 +35,8 @@ from .models import (
     MemoryCandidate,
     MemoryCandidateCreate,
     MemoryExport,
+    MemoryFeedback,
+    MemoryFeedbackCreate,
     MemoryHit,
     MemoryItem,
     MemorySearchQuery,
@@ -54,6 +58,16 @@ LEGACY_TYPE_MAP: dict[str, MemoryType] = {
     "episodic": MemoryType.CORRECTED_FACT,
 }
 
+RUNTIME_TYPE_MAP: dict[str, MemoryType] = {
+    "identity": MemoryType.USER_PROFILE,
+    "preference": MemoryType.USER_PREFERENCE,
+    "relationship": MemoryType.RELATIONSHIP_FACT,
+    "commitment": MemoryType.COMMITMENT,
+    "project": MemoryType.LONG_TERM_PROJECT,
+    "routine": MemoryType.RECURRING_HABIT,
+    "event": MemoryType.CORRECTED_FACT,
+}
+
 
 class NativePgvectorMemoryProvider:
     provider_name = "native_pgvector"
@@ -65,10 +79,16 @@ class NativePgvectorMemoryProvider:
         service: MemoryService | None = None,
         tenant_id: str | None = None,
         query_embedding_provider: EmbeddingProvider | None = None,
+        allow_legacy_auto_approval: bool | None = None,
     ) -> None:
         if service is None:
             settings = settings or MemoryDatabaseSettings.from_env()
             self.settings = settings
+            query_embedding_provider = query_embedding_provider or (
+                create_runtime_embedding_provider(
+                    expected_revision=settings.expected_embedding_model_revision
+                )
+            )
             self.engine = create_memory_engine(settings)
             session_factory = create_session_factory(self.engine)
             self.uow_factory = MemoryUnitOfWorkFactory(session_factory)
@@ -78,6 +98,7 @@ class NativePgvectorMemoryProvider:
                     "MEGURI_ALLOW_HARD_DELETE", "false"
                 ).lower()
                 == "true",
+                embedding_provider=query_embedding_provider,
             )
             self.tenant_id = settings.tenant_id
         else:
@@ -89,6 +110,14 @@ class NativePgvectorMemoryProvider:
             self.service = service
             self.tenant_id = tenant_id
         self.query_embedding_provider = query_embedding_provider
+        self.allow_legacy_auto_approval = (
+            allow_legacy_auto_approval
+            if allow_legacy_auto_approval is not None
+            else os.getenv(
+                "MEGURI_ALLOW_LEGACY_MEMORY_AUTO_APPROVAL", "false"
+            ).lower()
+            == "true"
+        )
 
     @classmethod
     def from_env(cls) -> "NativePgvectorMemoryProvider":
@@ -158,28 +187,52 @@ class NativePgvectorMemoryProvider:
 
     async def search(self, query):
         if isinstance(query, MemorySearchQuery):
-            return await self.service.search(query)
+            return await self.service.search(
+                await self._with_query_embedding(query)
+            )
         if not isinstance(query, LegacySearchInput):
             raise TypeError("search requires MemorySearchQuery or legacy MemorySearchInput")
-        embedding = None
-        model = revision = None
-        if self.query_embedding_provider is not None:
-            embedding = (await self.query_embedding_provider.embed([query.query]))[0]
-            model = self.query_embedding_provider.model
-            revision = self.query_embedding_provider.revision
-        authoritative = await self.service.search(
+        authoritative = await self.search(
             MemorySearchQuery(
                 tenant_id=self.tenant_id,
                 user_id=query.user_id,
                 query=query.query,
                 limit=query.limit,
                 memory_types=[LEGACY_TYPE_MAP[kind] for kind in query.memory_types if kind in LEGACY_TYPE_MAP],
-                query_embedding=embedding,
-                embedding_model=model,
-                embedding_revision=revision,
             )
         )
         return [self._legacy_hit(hit, query.user_id) for hit in authoritative]
+
+    async def _with_query_embedding(
+        self, query: MemorySearchQuery
+    ) -> MemorySearchQuery:
+        if query.query_embedding is not None:
+            if self.query_embedding_provider is not None and (
+                query.embedding_model != self.query_embedding_provider.model
+                or query.embedding_revision
+                != self.query_embedding_provider.revision
+            ):
+                raise ValueError(
+                    "query embedding model/revision does not match runtime"
+                )
+            return query
+        if self.query_embedding_provider is None or not (
+            SearchMode.HYBRID in query.modes
+            or SearchMode.EXACT_VECTOR in query.modes
+        ):
+            return query
+        try:
+            vector = (await self.query_embedding_provider.embed([query.query]))[0]
+        except Exception:
+            self.service.metrics.inc("memory_embedding_failure_total")
+            return query
+        return query.model_copy(
+            update={
+                "query_embedding": vector,
+                "embedding_model": self.query_embedding_provider.model,
+                "embedding_revision": self.query_embedding_provider.revision,
+            }
+        )
 
     async def get(
         self,
@@ -189,6 +242,16 @@ class NativePgvectorMemoryProvider:
         user_id: str,
     ) -> MemoryItem:
         return await self.service.get(memory_id, tenant_id=tenant_id, user_id=user_id)
+
+    async def record_feedback(
+        self,
+        feedback: MemoryFeedbackCreate,
+        *,
+        request_id: str,
+    ) -> MemoryFeedback:
+        return await self.service.record_feedback(
+            feedback, request_id=request_id
+        )
 
     async def supersede(self, memory_id, update, **kwargs):
         if isinstance(update, MemoryUpdate):
@@ -353,6 +416,52 @@ class NativePgvectorMemoryProvider:
         # Candidate extraction remains in the validated LLM response/policy layer.
         return []
 
+    async def submit_runtime_candidate(
+        self,
+        candidate: RuntimeMemoryCandidate,
+        *,
+        user_id: str,
+        source_client: str,
+        source_session: str,
+        source_turn_id: str,
+        request_id: str,
+    ) -> MemoryCandidate:
+        memory_type = RUNTIME_TYPE_MAP[candidate.type]
+        importance = (
+            0.8
+            if memory_type
+            in {
+                MemoryType.COMMITMENT,
+                MemoryType.RELATIONSHIP_FACT,
+                MemoryType.LONG_TERM_PROJECT,
+            }
+            else 0.6
+        )
+        return await self.create_candidate(
+            MemoryCandidateCreate(
+                tenant_id=self.tenant_id,
+                user_id=user_id,
+                memory_type=memory_type,
+                content_text=candidate.summary,
+                content_json={
+                    "importance": importance,
+                    "runtime_candidate_type": candidate.type,
+                },
+                confidence=candidate.confidence,
+                sensitivity=candidate.sensitivity,
+                source_client_id=source_client,
+                source_session_id=source_session,
+                source_turn_id=source_turn_id,
+                source_message_ids=[source_turn_id],
+                source_kind=SourceKind.LLM_CANDIDATE,
+                provenance={
+                    "source": "meguri_runtime_response",
+                    "source_scope": candidate.source_scope,
+                },
+            ),
+            request_id=request_id,
+        )
+
     async def upsert(self, legacy: LegacyUpsertInput) -> LegacyMemoryRecord:
         if legacy.memory_type in {"recent_emotion", "session_summary"}:
             raise ValueError("short-term state cannot be promoted through legacy upsert")
@@ -382,6 +491,10 @@ class NativePgvectorMemoryProvider:
         )
         if candidate.status.value == "rejected":
             raise ValueError(f"legacy memory candidate rejected: {candidate.review_reason}")
+        if not self.allow_legacy_auto_approval:
+            raise MemoryStateError(
+                "legacy candidate was queued; automatic approval is disabled"
+            )
         item = await self.review_candidate(
             candidate.candidate_id,
             CandidateReview(decision="approve", reason="legacy compatibility review"),

@@ -37,6 +37,44 @@ orchestrator = TurnOrchestrator()
 app.state.orchestrator = orchestrator
 
 
+async def secure_authoritative_turn(
+    http_request: Request,
+    turn_request: TurnRequest,
+    *,
+    memory_provider=None,
+) -> TurnRequest:
+    provider = memory_provider or orchestrator.memory
+    if getattr(provider, "provider_name", "fake") != "native_pgvector":
+        return turn_request
+    from .api_auth import api_error, get_api_principal
+
+    principal = await get_api_principal(http_request)
+    if principal.client_id not in {"airi", "astrbot", "desktop_pet", "website"}:
+        raise api_error(403, "client_not_allowed", "authenticated client is not allowed")
+    provider_tenant = getattr(provider, "tenant_id", None)
+    if provider_tenant is not None and principal.tenant_id != provider_tenant:
+        raise api_error(
+            403,
+            "tenant_not_allowed",
+            "authenticated tenant does not match the configured memory tenant",
+        )
+    if not principal.session_id:
+        raise api_error(
+            401,
+            "authenticated_session_required",
+            "authenticated session identity is required",
+        )
+    return TurnRequest.model_validate(
+        {
+            **turn_request.model_dump(),
+            "user_id": principal.user_id,
+            "client_id": principal.client_id,
+            "session_id": principal.session_id,
+            "formal_memory_allowed": principal.formal_memory_allowed,
+        }
+    )
+
+
 @app.get("/health")
 def health() -> dict:
     provider_name = getattr(orchestrator.llm, "provider_name", "unknown")
@@ -52,14 +90,16 @@ def health() -> dict:
 
 
 @app.post("/v1/chat/respond", response_model=ChatResponse)
-async def chat_respond(request: TurnRequest) -> ChatResponse:
-    return await orchestrator.run_inline(request)
+async def chat_respond(http_request: Request, request: TurnRequest) -> ChatResponse:
+    secured = await secure_authoritative_turn(http_request, request)
+    return await orchestrator.run_inline(secured)
 
 
 @app.post("/v1/turns", response_model=TurnCreateResponse, status_code=202)
-async def create_turn(request: TurnRequest, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> TurnCreateResponse:
-    record = await orchestrator.start(request, idempotency_key=idempotency_key)
-    return TurnCreateResponse(turn_id=record.turn_id, session_id=request.session_id, build_id=BUILD_ID, status=record.status)
+async def create_turn(http_request: Request, request: TurnRequest, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key")) -> TurnCreateResponse:
+    secured = await secure_authoritative_turn(http_request, request)
+    record = await orchestrator.start(secured, idempotency_key=idempotency_key)
+    return TurnCreateResponse(turn_id=record.turn_id, session_id=secured.session_id, build_id=BUILD_ID, status=record.status)
 
 
 @app.get("/v1/turns/{turn_id}", response_model=TurnStatusResponse)
@@ -131,12 +171,28 @@ def delete_runtime_override(scope: str) -> dict:
 
 @app.get("/v1/memories")
 async def list_memories(user_id: str, include_deleted: bool = False) -> dict:
+    if getattr(orchestrator.memory, "provider_name", "fake") == "native_pgvector":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "authoritative_memory_route_required",
+                "message": "use the authenticated authoritative memory API",
+            },
+        )
     records = await orchestrator.memory.list_records(user_id, include_deleted=include_deleted)
     return {"user_id": user_id, "items": [record.model_dump(mode="json") for record in records]}
 
 
 @app.get("/v1/memories/export")
 async def export_memories(user_id: str) -> dict:
+    if getattr(orchestrator.memory, "provider_name", "fake") == "native_pgvector":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "authoritative_memory_route_required",
+                "message": "use POST /v1/memories/export",
+            },
+        )
     records = await orchestrator.memory.list_records(user_id, include_deleted=True)
     return {
         "user_id": user_id,
@@ -147,6 +203,16 @@ async def export_memories(user_id: str) -> dict:
 
 @app.post("/v1/memories/review")
 async def review_memory(request: ManualMemoryReviewRequest) -> dict:
+    from .memory_service.contracts import AuthoritativeMemoryProvider
+
+    if isinstance(orchestrator.memory, AuthoritativeMemoryProvider):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "authoritative_review_route_required",
+                "message": "use the authenticated candidate review API",
+            },
+        )
     existing = await orchestrator.memory.list_records(request.user_id)
     decision = orchestrator.memory_policy.manual_review(request, existing)
     record = None

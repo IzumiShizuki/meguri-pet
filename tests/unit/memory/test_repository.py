@@ -22,7 +22,7 @@ class CapturingSession:
         self.statement = statement
         return EmptyResult()
 
-    async def execute(self, statement):
+    async def execute(self, statement, *_args, **_kwargs):
         self.statement = statement
         return EmptyResult()
 
@@ -64,6 +64,17 @@ async def test_outbox_claim_uses_skip_locked():
 
 
 @pytest.mark.asyncio
+async def test_idempotency_uses_transaction_advisory_lock():
+    session = CapturingSession()
+    repository = SqlAlchemyMemoryRepository(session)  # type: ignore[arg-type]
+    await repository.lock_idempotency_key(
+        "tenant-a", "candidate.create.scope", "request-1"
+    )
+    assert "PG_ADVISORY_XACT_LOCK" in str(session.statement).upper()
+    assert "HASHTEXTEXTENDED" in str(session.statement).upper()
+
+
+@pytest.mark.asyncio
 async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     session = CapturingSession()
     repository = SqlAlchemyMemoryRepository(session)  # type: ignore[arg-type]
@@ -89,6 +100,14 @@ async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     assert "MEMORY_ITEMS.TENANT_ID" in keyword_sql
     assert "MEMORY_ITEMS.USER_ID" in keyword_sql
     assert "MEMORY_ITEMS.STATUS" in keyword_sql
+
+    structured = query.model_copy(update={"canonical_key": "preference:drink"})
+    await repository.structured_search(structured)
+    structured_sql = compiled(session.statement).upper()
+    assert "MEMORY_ITEMS.CANONICAL_KEY" in structured_sql
+    assert "MEMORY_ITEMS.TENANT_ID" in structured_sql
+    assert "MEMORY_ITEMS.USER_ID" in structured_sql
+    assert "MEMORY_ITEMS.CURRENT_VERSION_ID" in structured_sql
 
 
 class RecordingTransaction:

@@ -22,6 +22,7 @@ from .memory_service.contracts import (
 )
 from .memory_service.enums import (
     CandidateStatus,
+    FeedbackKind,
     MemoryScope,
     MemoryType,
     SearchMode,
@@ -33,6 +34,7 @@ from .memory_service.export import render_memory_export_jsonl
 from .memory_service.models import (
     CandidateReview,
     MemoryCandidateCreate,
+    MemoryFeedbackCreate,
     MemorySearchQuery,
     MemoryUpdate,
     StrictModel,
@@ -62,6 +64,7 @@ class ReviewRequest(StrictModel):
 
 class SearchRequest(StrictModel):
     query: str = Field(min_length=1, max_length=4000)
+    canonical_key: str | None = Field(default=None, min_length=1, max_length=500)
     limit: int = Field(default=5, ge=1, le=50)
     memory_types: list[MemoryType] = Field(default_factory=list)
     scopes: list[MemoryScope] = Field(default_factory=lambda: [MemoryScope.GLOBAL_USER])
@@ -81,6 +84,14 @@ class SupersedeRequest(StrictModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     importance: float | None = Field(default=None, ge=0, le=1)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackRequest(StrictModel):
+    version_id: UUID
+    feedback_kind: FeedbackKind
+    query_text: str | None = Field(default=None, max_length=4000)
+    hit_rank: int | None = Field(default=None, ge=1)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExportRequest(StrictModel):
@@ -271,6 +282,28 @@ async def supersede_memory(
                 **body.model_dump(),
             ),
             actor=principal.memory_actor(),
+            request_id=request_id,
+        )
+    )
+
+
+@router.post("/memories/{memory_id}/feedback", status_code=201)
+async def record_memory_feedback(
+    memory_id: UUID,
+    body: FeedbackRequest,
+    principal: PrincipalDependency,
+    provider: ProviderDependency,
+    request_id: RequestIdDependency,
+):
+    require_formal_memory(principal)
+    return await memory_call(
+        provider.record_feedback(
+            MemoryFeedbackCreate(
+                tenant_id=principal.tenant_id,
+                user_id=principal.user_id,
+                memory_id=memory_id,
+                **body.model_dump(),
+            ),
             request_id=request_id,
         )
     )

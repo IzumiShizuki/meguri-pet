@@ -1,5 +1,6 @@
 import pytest
 
+from services.meguri_core.api_auth import ApiPrincipal
 from services.meguri_core.memory_service.identity import IdentityResolver
 
 
@@ -46,6 +47,11 @@ async def test_verified_bindings_share_user_but_keep_client_sessions_isolated():
         "desktop-session",
     }
     assert all(identity.formal_memory_allowed for identity in (website, astrbot, airi))
+    principal = ApiPrincipal.from_resolved_identity(airi)
+    assert principal.user_id == "user-shared"
+    assert principal.client_id == "desktop_pet"
+    assert principal.session_id == "desktop-session"
+    assert principal.formal_memory_allowed is True
 
 
 @pytest.mark.asyncio

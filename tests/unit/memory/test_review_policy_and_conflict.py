@@ -105,3 +105,20 @@ def test_structured_conflict_supersedes_but_exact_content_deduplicates():
     conflict = ConflictResolver().resolve(correction, [existing])
     assert conflict.action is ConflictAction.SUPERSEDE
     assert conflict.existing_memory_id == existing.memory_id
+
+
+def test_semantic_similarity_deduplicates_when_lexical_overlap_is_low():
+    proposed = candidate(
+        "Tea without sugar is the user's preferred drink",
+        content_json={},
+    )
+    existing = item("The user chooses unsweetened tea")
+    resolution = ConflictResolver().resolve(
+        proposed,
+        [existing],
+        semantic_scores={existing.memory_id: 1.0000001},
+    )
+
+    assert resolution.action is ConflictAction.DUPLICATE
+    assert resolution.reason == "high_semantic_similarity"
+    assert resolution.similarity == 1.0

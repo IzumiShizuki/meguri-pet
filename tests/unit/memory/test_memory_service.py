@@ -153,6 +153,22 @@ async def test_candidate_creation_is_idempotent_and_never_implicitly_active():
 
 
 @pytest.mark.asyncio
+async def test_same_request_id_is_scoped_per_user() -> None:
+    repository = FakeRepository()
+    service = MemoryService(FakeUowFactory(repository))  # type: ignore[arg-type]
+    first_input = candidate_create()
+    second_input = first_input.model_copy(update={"user_id": "user-b"})
+
+    first = await service.create_candidate(first_input, request_id="shared-request")
+    second = await service.create_candidate(second_input, request_id="shared-request")
+
+    assert first.user_id == "user-a"
+    assert second.user_id == "user-b"
+    assert first.candidate_id != second.candidate_id
+    assert len(repository.idempotency) == 2
+
+
+@pytest.mark.asyncio
 async def test_approval_failure_does_not_finalize_candidate_or_idempotency():
     repository = FakeRepository(fail_create_item=True)
     factory = FakeUowFactory(repository)

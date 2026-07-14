@@ -30,13 +30,14 @@ class TurnRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     user_id: str = Field(min_length=1)
-    client_id: Literal["astrbot", "desktop_pet", "website"]
+    client_id: Literal["airi", "astrbot", "desktop_pet", "website"]
     session_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     client_capabilities: ClientCapabilities = Field(default_factory=ClientCapabilities)
     optional_screen_context_id: str | None = None
     relationship_profile: Relationship | None = None
+    formal_memory_allowed: bool = True
 
 
 class RuntimeState(BaseModel):

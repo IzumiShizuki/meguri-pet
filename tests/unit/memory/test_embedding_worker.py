@@ -6,8 +6,10 @@ import pytest
 from services.meguri_core.memory_service.embedding import (
     BgeM3EmbeddingProvider,
     EmbeddingWorker,
+    SentenceTransformerBgeM3EmbeddingProvider,
     content_sha256,
 )
+from services.meguri_core.memory_service.release import EMBEDDING_MODEL_REVISION
 
 
 @pytest.mark.asyncio
@@ -24,6 +26,38 @@ async def test_bge_m3_adapter_requires_revision_and_dimension():
     )
     assert len((await valid.embed(["text"]))[0]) == 1024
     assert len(content_sha256("text")) == 64
+
+
+@pytest.mark.asyncio
+async def test_sentence_transformer_adapter_is_lazy_pinned_and_normalized():
+    calls = []
+
+    class Encoded:
+        def tolist(self):
+            return [[0.0] * 1024]
+
+    class Model:
+        def encode(self, texts, **kwargs):
+            assert texts == ["tea"]
+            assert kwargs["normalize_embeddings"] is True
+            calls.append(("encode", kwargs))
+            return Encoded()
+
+    def loader(**kwargs):
+        calls.append(("load", kwargs))
+        return Model()
+
+    provider = SentenceTransformerBgeM3EmbeddingProvider(
+        revision=EMBEDDING_MODEL_REVISION,
+        local_files_only=True,
+        model_loader=loader,
+    )
+    assert calls == []
+    assert len((await provider.embed(["tea"]))[0]) == 1024
+    assert calls[0][0] == "load"
+    assert calls[0][1]["revision"] == EMBEDDING_MODEL_REVISION
+    assert calls[0][1]["local_files_only"] is True
+    assert calls[0][1]["trust_remote_code"] is False
 
 
 class WorkerRepository:

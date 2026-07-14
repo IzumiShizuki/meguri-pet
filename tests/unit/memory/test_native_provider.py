@@ -10,10 +10,14 @@ from services.meguri_core.memory_service.enums import (
     MemoryScope,
     MemoryStatus,
     MemoryType,
+    SearchMode,
 )
+from services.meguri_core.memory_service.embedding import BgeM3EmbeddingProvider
+from services.meguri_core.memory_service.contracts import MemoryStateError
 from services.meguri_core.memory_service.models import (
     MemoryCandidate,
     MemoryItem,
+    MemorySearchQuery,
     MemoryVersion,
 )
 from services.meguri_core.memory_service.native_pgvector import (
@@ -29,6 +33,11 @@ class StubService:
         self.uow_factory = lambda: None
         self.created = []
         self.reviewed = []
+        self.searches = []
+
+    async def search(self, query):
+        self.searches.append(query)
+        return []
 
     async def create_candidate(self, candidate, *, request_id):
         self.created.append((candidate, request_id))
@@ -76,6 +85,7 @@ async def test_legacy_upsert_runs_candidate_and_review_flow():
     provider = NativePgvectorMemoryProvider(
         service=service,  # type: ignore[arg-type]
         tenant_id="meguri-dev",
+        allow_legacy_auto_approval=True,
     )
     record = await provider.upsert(
         MemoryUpsertInput(
@@ -111,3 +121,54 @@ async def test_legacy_upsert_rejects_short_term_state():
                 confidence=0.9,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_legacy_upsert_queues_without_explicit_compatibility_flag():
+    service = StubService()
+    provider = NativePgvectorMemoryProvider(
+        service=service,  # type: ignore[arg-type]
+        tenant_id="meguri-dev",
+        allow_legacy_auto_approval=False,
+    )
+    with pytest.raises(MemoryStateError, match="automatic approval is disabled"):
+        await provider.upsert(
+            MemoryUpsertInput(
+                user_id="user-a",
+                memory_type="preference",
+                canonical_text="User prefers tea",
+                source_client="website",
+                source_session="session-web",
+                confidence=0.9,
+            )
+        )
+    assert len(service.created) == 1
+    assert service.reviewed == []
+
+
+@pytest.mark.asyncio
+async def test_authoritative_search_generates_pinned_query_embedding():
+    service = StubService()
+    embedding = BgeM3EmbeddingProvider(
+        revision="0123456789abcdef",
+        embed_callable=lambda texts: [[0.25] * 1024 for _ in texts],
+    )
+    provider = NativePgvectorMemoryProvider(
+        service=service,  # type: ignore[arg-type]
+        tenant_id="meguri-dev",
+        query_embedding_provider=embedding,
+    )
+
+    await provider.search(
+        MemorySearchQuery(
+            tenant_id="meguri-dev",
+            user_id="user-a",
+            query="tea preference",
+            modes=[SearchMode.HYBRID],
+        )
+    )
+
+    query = service.searches[0]
+    assert query.query_embedding == [0.25] * 1024
+    assert query.embedding_model == "BAAI/bge-m3"
+    assert query.embedding_revision == "0123456789abcdef"

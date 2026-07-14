@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from services.meguri_core.api_auth import (
     ApiPrincipal,
@@ -14,6 +16,8 @@ from services.meguri_core.identity_api import router as identity_router
 from services.meguri_core.memory_api import router as memory_router
 from services.meguri_core.memory_service.enums import ActorType
 from services.meguri_core.memory_service.metrics import memory_metrics
+from services.meguri_core.app import secure_authoritative_turn
+from services.meguri_core.schemas import TurnRequest
 
 
 class ProviderStub:
@@ -22,6 +26,7 @@ class ProviderStub:
         self.review = None
         self.binding = None
         self.hard_delete_call = None
+        self.feedback = None
         self.raise_on_create: Exception | None = None
 
     async def create_candidate(self, candidate, *, request_id):
@@ -50,6 +55,14 @@ class ProviderStub:
             "deleted_versions": 1,
             "deleted_candidates": 1,
             "audit_retained": True,
+        }
+
+    async def record_feedback(self, feedback, *, request_id):
+        self.feedback = (feedback, request_id)
+        return {
+            **feedback.model_dump(mode="json"),
+            "feedback_id": str(uuid4()),
+            "created_at": "2026-07-14T00:00:00Z",
         }
 
 
@@ -238,6 +251,33 @@ def test_hard_delete_is_admin_only_and_target_is_explicit() -> None:
     assert kwargs["actor"].actor_type is ActorType.ADMIN
 
 
+def test_feedback_scope_is_derived_and_false_recall_is_typed() -> None:
+    provider = ProviderStub()
+    client = build_client(provider, user_principal())
+    memory_id = uuid4()
+    version_id = uuid4()
+
+    response = client.post(
+        f"/v1/memories/{memory_id}/feedback",
+        headers={"X-Request-ID": "feedback-1"},
+        json={
+            "version_id": str(version_id),
+            "feedback_kind": "false_recall",
+            "query_text": "tea",
+            "hit_rank": 1,
+        },
+    )
+
+    assert response.status_code == 201
+    feedback, request_id = provider.feedback
+    assert feedback.tenant_id == "tenant-server"
+    assert feedback.user_id == "user-server"
+    assert feedback.memory_id == memory_id
+    assert feedback.version_id == version_id
+    assert feedback.feedback_kind.value == "false_recall"
+    assert request_id == "feedback-1"
+
+
 def test_metrics_have_required_unlabelled_series() -> None:
     rendered = memory_metrics.render()
 
@@ -257,3 +297,66 @@ def test_metrics_have_required_unlabelled_series() -> None:
         assert metric in rendered
     assert "tenant-server" not in rendered
     assert "user-server" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_authoritative_chat_scope_comes_only_from_authenticated_principal() -> None:
+    request = Request({"type": "http", "headers": []})
+    request.state.meguri_principal = ApiPrincipal(
+        tenant_id="tenant-a",
+        user_id="trusted-user",
+        client_id="airi",
+        session_id="trusted-session",
+        actor_id="trusted-user",
+        formal_memory_allowed=False,
+    )
+    untrusted = TurnRequest(
+        user_id="attacker-selected-user",
+        client_id="website",
+        session_id="attacker-selected-session",
+        message="hello",
+    )
+
+    secured = await secure_authoritative_turn(
+        request,
+        untrusted,
+        memory_provider=type(
+            "NativeMarker", (), {"provider_name": "native_pgvector"}
+        )(),
+    )
+
+    assert secured.user_id == "trusted-user"
+    assert secured.client_id == "airi"
+    assert secured.session_id == "trusted-session"
+    assert secured.formal_memory_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_authoritative_chat_rejects_cross_tenant_principal() -> None:
+    request = Request({"type": "http", "headers": []})
+    request.state.meguri_principal = ApiPrincipal(
+        tenant_id="tenant-b",
+        user_id="trusted-user",
+        client_id="website",
+        session_id="trusted-session",
+        actor_id="trusted-user",
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await secure_authoritative_turn(
+            request,
+            TurnRequest(
+                user_id="ignored",
+                client_id="website",
+                session_id="ignored",
+                message="hello",
+            ),
+            memory_provider=type(
+                "NativeMarker",
+                (),
+                {"provider_name": "native_pgvector", "tenant_id": "tenant-a"},
+            )(),
+        )
+
+    assert caught.value.status_code == 403
+    assert caught.value.detail["code"] == "tenant_not_allowed"

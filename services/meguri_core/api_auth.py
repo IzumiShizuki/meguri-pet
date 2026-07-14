@@ -7,6 +7,7 @@ from fastapi import Depends, Header, HTTPException, Request
 
 from .memory_service.contracts import AuthoritativeMemoryProvider
 from .memory_service.enums import ActorType
+from .memory_service.identity import ResolvedIdentity
 from .memory_service.models import MemoryActor, StrictModel
 
 
@@ -18,12 +19,29 @@ class ApiPrincipal(StrictModel):
     tenant_id: str
     user_id: str
     client_id: str
+    session_id: str | None = None
     actor_type: ActorType = ActorType.USER
     actor_id: str
     formal_memory_allowed: bool = True
 
     def memory_actor(self) -> MemoryActor:
         return MemoryActor(actor_type=self.actor_type, actor_id=self.actor_id)
+
+    @classmethod
+    def from_resolved_identity(
+        cls,
+        identity: ResolvedIdentity,
+        *,
+        actor_id: str | None = None,
+    ) -> "ApiPrincipal":
+        return cls(
+            tenant_id=identity.tenant_id,
+            user_id=identity.user_id,
+            client_id=identity.client_id,
+            session_id=identity.session_id,
+            actor_id=actor_id or identity.user_id,
+            formal_memory_allowed=identity.formal_memory_allowed,
+        )
 
 
 async def get_api_principal(request: Request) -> ApiPrincipal:
@@ -49,6 +67,7 @@ async def get_api_principal(request: Request) -> ApiPrincipal:
             "X-Meguri-Formal-Memory-Allowed", "true"
         ).lower()
         == "true",
+        session_id=request.headers.get("X-Meguri-Session-ID"),
     )
 
 

@@ -168,6 +168,14 @@ async def test_jsonl_export_contains_all_versions_provenance_and_audit() -> None
         "memory_version",
         "audit_event",
     ]
+    replayed = await service_for(repository).export_user(
+        "user-a",
+        tenant_id="tenant-a",
+        format="jsonl",
+        request_id="export-1",
+    )
+    assert replayed.generated_at == exported.generated_at
+    assert len(repository.audits) == 1
 
 
 @pytest.mark.asyncio

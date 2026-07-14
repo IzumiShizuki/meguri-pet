@@ -13,6 +13,8 @@ from .models import (
     MemoryCandidate,
     MemoryCandidateCreate,
     MemoryExport,
+    MemoryFeedback,
+    MemoryFeedbackCreate,
     MemoryHit,
     MemoryItem,
     MemorySearchQuery,
@@ -80,6 +82,13 @@ class AuthoritativeMemoryProvider(Protocol):
         tenant_id: str,
         user_id: str,
     ) -> MemoryItem: ...
+
+    async def record_feedback(
+        self,
+        feedback: MemoryFeedbackCreate,
+        *,
+        request_id: str,
+    ) -> MemoryFeedback: ...
 
     async def supersede(
         self,
