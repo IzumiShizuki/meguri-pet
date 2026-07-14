@@ -116,3 +116,27 @@
   passed; the normal isolation configuration passed.
 - Safety: repository-only; no remote health route, container, database, or
   secret was touched.
+
+## E-006 - temporary/raw exposure ledger and production gate
+
+- Status: completed.
+- Inventory: all 29 ports reachable from the workstation baseline are recorded
+  by service group with declared binding, observed reachability,
+  authentication state, data classification, responsible-owner confirmation,
+  evidence, and an explicit closure condition. The two repository-only Meguri
+  loopback ports are also registered.
+- Validator: every published Meguri Compose port must appear in the ledger;
+  unapproved all-interface Meguri bindings fail closed. Existing protected
+  services are inventory-only and were not changed.
+- Production behavior: the structural command succeeds, while
+  `--production-gate` intentionally returns 1 for the ten unresolved existing
+  exposure groups. Production remains blocked.
+- Test commands:
+  - `python ops/scripts/check_exposure_ledger.py`
+  - `python -m unittest -v tests.test_exposure_ledger`
+  - `python ops/scripts/check_exposure_ledger.py --production-gate` (expected
+    nonzero)
+- Result: structural validation passed; 4 ledger tests passed; the production
+  gate returned 1 with the expected unresolved reviews.
+- Safety: ledger-only; no firewall, cloud rule, reverse proxy, listener,
+  container, or existing service was changed.
