@@ -1,0 +1,19 @@
+# Starting lock from the official Unsloth Qwen3.5 4B notebook.
+# A successful L-001 probe must record the fully resolved environment with
+# `python -m pip freeze`; this file is not a substitute for that report.
+torch==2.8.0
+torchvision==0.23.0
+transformers==5.2.0
+tokenizers>=0.22.0,<0.23.0
+trl==0.22.2
+unsloth==2026.2.1
+datasets>=3.0,<5
+peft>=0.15,<1
+accelerate>=1.0,<2
+bitsandbytes>=0.45,<1
+jsonschema>=4.23,<5
+pydantic>=2.7,<3
+PyYAML>=6,<7
+safetensors>=0.5,<1
+huggingface-hub>=0.30,<2
+

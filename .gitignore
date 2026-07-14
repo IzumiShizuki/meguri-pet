@@ -23,6 +23,11 @@ coverage/
 /reports/*
 /baselines/
 /training/*
+!/training/llm/
+!/training/llm/**
+/training/llm/artifacts/
+/training/llm/checkpoints/
+/training/llm/reports/
 
 # Secrets and local environment files
 .env
