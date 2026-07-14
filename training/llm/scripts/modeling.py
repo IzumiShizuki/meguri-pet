@@ -84,7 +84,6 @@ def attach_lora(config: dict[str, Any], model: Any, loader_class: Any) -> Any:
     lora = config["lora"]
     common = {
         "r": int(lora["r"]),
-        "target_modules": lora.get("target_modules"),
         "lora_alpha": int(lora["alpha"]),
         "lora_dropout": float(lora["dropout"]),
         "bias": str(lora.get("bias", "none")),
@@ -103,6 +102,7 @@ def attach_lora(config: dict[str, Any], model: Any, loader_class: Any) -> Any:
         )
     return loader_class.get_peft_model(
         model,
+        target_modules=lora.get("target_modules"),
         use_gradient_checkpointing=training.get("gradient_checkpointing", "unsloth"),
         **common,
     )
