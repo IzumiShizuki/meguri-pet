@@ -168,3 +168,26 @@
   tests passed; both direct CLI entrypoints loaded and displayed usage.
 - Safety: repository simulation only; no server Compose command, pull,
   migration, health request, or rollback was run.
+
+## E-008 - staging PostgreSQL backup and restore rehearsal
+
+- Status: repository implementation completed; real staging rehearsal is
+  pending the isolated deployment and server-side release/secret access.
+- Backup: custom format, compression, no owner/ACL, environment-specific output
+  directory, mode `0600`, and atomic metadata containing size, SHA-256, release,
+  data build, PostgreSQL version, and Alembic revision. No password is copied
+  into the host process or report.
+- Rehearsal: only a safe `meguri_staging_restore_*` database may be created;
+  checksum is verified before mutation; Alembic and pgvector must match; the
+  temporary database is force-dropped after success or failure.
+- Active recovery: intentionally unavailable without a maintenance window and
+  explicit recovery approval; production restore remains blocked.
+- Test commands:
+  - `python -m unittest -v tests.test_postgres_backup`
+  - `python ops/scripts/backup_staging.py --help`
+  - `python ops/scripts/rehearse_staging_restore.py --help`
+- Result: 5 backup/restore control-flow and fault tests passed; both CLI
+  entrypoints loaded. `reports/staging-restore-rehearsal.md` clearly records
+  that no runtime RPO/RTO evidence exists yet.
+- Safety: local fake transport only; no server database, archive, directory,
+  container, volume, or secret was accessed.
