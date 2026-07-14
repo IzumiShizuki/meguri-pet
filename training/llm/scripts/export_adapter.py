@@ -10,8 +10,15 @@ from training.llm.scripts.common import PipelineError, canonical_json, read_json
 
 def adapter_hash(root: Path) -> tuple[str, dict[str, str]]:
     hashes: dict[str, str] = {}
+    non_adapter_state = {
+        "optimizer.pt",
+        "scheduler.pt",
+        "rng_state.pth",
+        "trainer_state.json",
+        "training_args.bin",
+    }
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
-        if path.name in {"export_manifest.json"}:
+        if path.name in {"export_manifest.json", *non_adapter_state}:
             continue
         hashes[path.relative_to(root).as_posix()] = sha256_file(path)
     if not hashes:
@@ -19,14 +26,22 @@ def adapter_hash(root: Path) -> tuple[str, dict[str, str]]:
     return sha256_text(canonical_json(hashes)), hashes
 
 
-def export(experiment_dir: Path, export_root: Path) -> Path:
+def export(experiment_dir: Path, export_root: Path, selection_path: Path | None = None) -> Path:
     experiment = read_json(experiment_dir / "experiment_manifest.json")
     if experiment.get("status") != "pass":
         raise PipelineError("only a passing experiment can be exported")
-    source = Path(str(experiment.get("final_adapter") or ""))
+    selection = read_json(selection_path) if selection_path else None
+    source_value = (
+        selection.get("selected", {}).get("adapter_path")
+        if selection is not None
+        else experiment.get("final_adapter")
+    )
+    source = Path(str(source_value or ""))
     if not source.is_dir():
         raise PipelineError("experiment final_adapter is unavailable")
     digest, hashes = adapter_hash(source)
+    if selection is not None and selection.get("selected", {}).get("adapter_sha256") != digest:
+        raise PipelineError("selected checkpoint hash does not match its validation selection")
     model_id = f"{experiment['experiment_id']}-{digest[:12]}"
     destination = export_root.resolve() / model_id
     if destination.exists():
@@ -50,6 +65,7 @@ def export(experiment_dir: Path, export_root: Path) -> Path:
             "base_model_revision": experiment["base_model_revision"],
             "tokenizer_revision": experiment["tokenizer_revision"],
             "adapter_sha256": digest,
+            "validation_selection": str(selection_path.resolve()) if selection_path else None,
             "files": hashes,
             "created_at": utc_now(),
         },
@@ -61,9 +77,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Export and hash a reproducible LoRA adapter")
     parser.add_argument("experiment_dir", type=Path)
     parser.add_argument("--export-root", type=Path, required=True)
+    parser.add_argument("--selection", type=Path)
     args = parser.parse_args()
     try:
-        output = export(args.experiment_dir, args.export_root)
+        output = export(args.experiment_dir, args.export_root, args.selection)
     except PipelineError as exc:
         print(json.dumps({"status": "fail", "error": str(exc)}, ensure_ascii=False))
         return 2
