@@ -1,0 +1,6 @@
+name: meguri-production
+
+services:
+  core:
+    pull_policy: always
+

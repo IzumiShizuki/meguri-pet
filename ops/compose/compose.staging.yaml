@@ -1,0 +1,8 @@
+name: meguri-staging
+
+services:
+  core:
+    pull_policy: always
+    ports:
+      - 127.0.0.1:${MEGURI_CORE_PORT:-18080}:8000
+
