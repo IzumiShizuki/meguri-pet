@@ -134,6 +134,28 @@ class PostgresBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(BackupError, "filename is unsafe"):
                 rehearse_restore(database, metadata_path, "meguri_staging_restore_safe")
 
+    def test_remote_control_plane_has_explicit_compose_and_backup_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote_backups = root / "remote-backups"
+            control_backups = root / "control-backups"
+            env_path = env_file(root, remote_backups)
+            env_path.write_text(
+                env_path.read_text(encoding="utf-8")
+                + f"MEGURI_CONTROL_PLANE_BACKUP_DIR={control_backups.resolve()}\n",
+                encoding="utf-8",
+            )
+            transport = FakeTransport()
+            database = StagingDatabase(
+                env_path,
+                compose="docker-compose",
+                transport=transport,
+            )
+            metadata_path = create_backup(database, control_backups)
+
+            self.assertTrue(metadata_path.is_file())
+            self.assertTrue(all(command[0] == "docker-compose" for command in transport.commands))
+
 
 if __name__ == "__main__":
     unittest.main()

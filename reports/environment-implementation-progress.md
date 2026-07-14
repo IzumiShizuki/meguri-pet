@@ -169,6 +169,16 @@
   tests passed; both direct CLI entrypoints loaded and displayed usage.
 - Safety: repository simulation only; no server Compose command, pull,
   migration, health request, or rollback was run.
+- 2026-07-15 remote-control-plane update: staging now accepts an explicit
+  standalone Compose executable, a preloaded-digest `never` pull policy, a
+  separate local Manifest source, and an in-container readiness probe. The
+  default remains registry pull plus HTTP readiness for a host-local runner;
+  Production still requires `pull_policy: always`.
+- Verification: `python -m unittest -v tests.test_staging_deployment
+  tests.test_postgres_backup tests.test_migration_job
+  tests.test_environment_checker` passed 22 tests;
+  `python ops/scripts/check_environment_isolation.py` passed; standalone
+  Compose rendered staging with `config --quiet`.
 
 ## E-008 - staging PostgreSQL backup and restore rehearsal
 
@@ -192,6 +202,10 @@
   that no runtime RPO/RTO evidence exists yet.
 - Safety: local fake transport only; no server database, archive, directory,
   container, volume, or secret was accessed.
+- 2026-07-15 remote-control-plane update: backup/restore accepts the same
+  standalone Compose executable and an explicit
+  `MEGURI_CONTROL_PLANE_BACKUP_DIR`. Database commands remain inside the
+  isolated staging container and the checksum gate is unchanged.
 
 ## E-009 - CI/CD boundaries and production approval
 

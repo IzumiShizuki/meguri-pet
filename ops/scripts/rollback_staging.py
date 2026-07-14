@@ -18,12 +18,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=Path("/opt/meguri/staging/state"))
     parser.add_argument("--docker", default="docker")
+    parser.add_argument("--compose", help="standalone Compose executable for a remote control plane")
     parser.add_argument("--health-timeout", type=float, default=180)
     args = parser.parse_args(argv)
     try:
         DeploymentController(
             args.state_dir,
             docker=args.docker,
+            compose=args.compose,
             health_timeout=args.health_timeout,
         ).rollback()
     except (OSError, ValueError, KeyError, TypeError, DeploymentError) as exc:

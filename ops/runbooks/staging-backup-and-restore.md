@@ -19,6 +19,14 @@ process. The archive and metadata use mode `0600`; metadata records SHA-256,
 size, release/data build, PostgreSQL version, and Alembic revision. Backups are
 never deleted automatically.
 
+For a TLS Docker control plane, set
+`MEGURI_CONTROL_PLANE_BACKUP_DIR=<absolute-local-staging-backup-dir>` in the
+local release env and pass the standalone Compose binary with `--compose`.
+`pg_dump` and `pg_restore` still execute inside the isolated staging database
+container; only the checksummed archive stream and metadata live in the
+explicit control-plane directory. Copy the completed archive and metadata to
+`/opt/meguri/staging/backups` without changing either checksum.
+
 ## Rehearse restore safely
 
 Choose a unique temporary name matching `meguri_staging_restore_*`:

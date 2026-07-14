@@ -20,10 +20,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--metadata", type=Path, required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--docker", default="docker")
+    parser.add_argument("--compose", help="standalone Compose executable for a remote control plane")
     args = parser.parse_args(argv)
     try:
         result = rehearse_restore(
-            StagingDatabase(args.env_file.resolve(), docker=args.docker),
+            StagingDatabase(args.env_file.resolve(), docker=args.docker, compose=args.compose),
             args.metadata.resolve(),
             args.target,
         )

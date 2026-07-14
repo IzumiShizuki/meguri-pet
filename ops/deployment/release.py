@@ -92,8 +92,13 @@ def preflight_release(env_file: Path, manifest_file: Path) -> dict[str, Any]:
         raise DeploymentError("COMPOSE_PROJECT_NAME must be meguri-staging")
     if env.get("MEGURI_RELEASE_ID") != manifest.get("release_id"):
         raise DeploymentError("release ID differs between env and manifest")
-    if Path(env.get("MEGURI_RELEASE_MANIFEST_FILE", "")) != manifest_file:
-        raise DeploymentError("MEGURI_RELEASE_MANIFEST_FILE must point to the candidate manifest")
+    control_plane_manifest = env.get("MEGURI_CONTROL_PLANE_MANIFEST_FILE", "").strip()
+    manifest_source = Path(control_plane_manifest or env.get("MEGURI_RELEASE_MANIFEST_FILE", ""))
+    if manifest_source != manifest_file:
+        raise DeploymentError(
+            "MEGURI_CONTROL_PLANE_MANIFEST_FILE or MEGURI_RELEASE_MANIFEST_FILE "
+            "must point to the candidate manifest"
+        )
     if env.get("MEGURI_MUTATION_ALLOWED", "").lower() != "false":
         raise DeploymentError("staging application mutation must default to false")
 
@@ -135,6 +140,12 @@ def preflight_release(env_file: Path, manifest_file: Path) -> dict[str, Any]:
 
     if env.get("MEGURI_DATABASE_REVISION") != manifest.get("database_revision"):
         raise DeploymentError("database revision differs between env and manifest")
+    image_pull_policy = env.get("MEGURI_IMAGE_PULL_POLICY", "always").strip().lower()
+    if image_pull_policy not in {"always", "never"}:
+        raise DeploymentError("MEGURI_IMAGE_PULL_POLICY must be always or never")
+    health_probe_mode = env.get("MEGURI_HEALTH_PROBE_MODE", "http").strip().lower()
+    if health_probe_mode not in {"http", "compose"}:
+        raise DeploymentError("MEGURI_HEALTH_PROBE_MODE must be http or compose")
     return {
         "environment": "staging",
         "project_name": "meguri-staging",
@@ -144,14 +155,19 @@ def preflight_release(env_file: Path, manifest_file: Path) -> dict[str, Any]:
         "health_url": health_url(env),
         "database_revision": str(manifest["database_revision"]),
         "image_digests": {name: manifest_digests[name] for name in image_variables},
+        "image_pull_policy": image_pull_policy,
+        "health_probe_mode": health_probe_mode,
         "validated_at": now_iso(),
     }
 
 
-def compose_command(state: dict[str, Any], docker: str = "docker") -> list[str]:
-    return [
-        docker,
-        "compose",
+def compose_command(
+    state: dict[str, Any],
+    docker: str = "docker",
+    compose: str | None = None,
+) -> list[str]:
+    prefix = [compose] if compose else [docker, "compose"]
+    return prefix + [
         "--project-name",
         "meguri-staging",
         "--env-file",
@@ -191,12 +207,14 @@ class DeploymentController:
         state_dir: Path,
         *,
         docker: str = "docker",
+        compose: str | None = None,
         runner: Callable[[list[str]], None] = default_runner,
         probe: Callable[[str, str, float], None] = ready_probe,
         health_timeout: float = 180,
     ) -> None:
         self.state_dir = state_dir
         self.docker = docker
+        self.compose = compose
         self.runner = runner
         self.probe = probe
         self.health_timeout = health_timeout
@@ -214,17 +232,48 @@ class DeploymentController:
         return self.state_dir / "current.json"
 
     def validate_compose(self, state: dict[str, Any]) -> None:
-        self.runner(compose_command(state, self.docker) + ["config", "--quiet"])
+        self.runner(compose_command(state, self.docker, self.compose) + ["config", "--quiet"])
+
+    def probe_with_compose(self, command: list[str], state: dict[str, Any]) -> None:
+        probe = command + [
+            "exec",
+            "-T",
+            "core",
+            "python",
+            "-c",
+            (
+                "import json,sys,urllib.request; "
+                "value=json.load(urllib.request.urlopen("
+                "'http://127.0.0.1:8000/health/ready',timeout=3)); "
+                "raise SystemExit(0 if value.get('status')=='ready' "
+                "and value.get('release_id')==sys.argv[1] else 1)"
+            ),
+            str(state["release_id"]),
+        ]
+        deadline = time.monotonic() + self.health_timeout
+        last_error = "no response"
+        while time.monotonic() < deadline:
+            try:
+                self.runner(probe)
+                return
+            except Exception as exc:
+                last_error = type(exc).__name__
+                time.sleep(2)
+        raise DeploymentError(f"readiness did not pass before timeout ({last_error})")
 
     def activate(self, state: dict[str, Any], *, migrate: bool) -> None:
-        command = compose_command(state, self.docker)
+        command = compose_command(state, self.docker, self.compose)
         self.validate_compose(state)
-        self.runner(command + ["pull", "postgres", "migration", "core"])
+        if state.get("image_pull_policy", "always") == "always":
+            self.runner(command + ["pull", "postgres", "migration", "core"])
         self.runner(command + ["up", "-d", "--wait", "postgres"])
         if migrate:
             self.runner(command + ["run", "--rm", "migration", "upgrade", "head"])
         self.runner(command + ["up", "-d", "--no-deps", "core"])
-        self.probe(str(state["health_url"]), str(state["release_id"]), self.health_timeout)
+        if state.get("health_probe_mode", "http") == "compose":
+            self.probe_with_compose(command, state)
+        else:
+            self.probe(str(state["health_url"]), str(state["release_id"]), self.health_timeout)
 
     def deploy(self, candidate: dict[str, Any]) -> None:
         previous = read_json(self.last_good_path)

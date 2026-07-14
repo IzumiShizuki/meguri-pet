@@ -19,10 +19,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--env-file", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--docker", default="docker")
+    parser.add_argument("--compose", help="standalone Compose executable for a remote control plane")
     args = parser.parse_args(argv)
     try:
         metadata = create_backup(
-            StagingDatabase(args.env_file.resolve(), docker=args.docker),
+            StagingDatabase(args.env_file.resolve(), docker=args.docker, compose=args.compose),
             args.output_dir.resolve(),
         )
     except (OSError, ValueError, KeyError, TypeError, BackupError) as exc:

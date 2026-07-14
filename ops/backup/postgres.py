@@ -70,6 +70,7 @@ class StagingDatabase:
         env_file: Path,
         *,
         docker: str = "docker",
+        compose: str | None = None,
         transport: Transport | None = None,
     ) -> None:
         if not env_file.is_absolute():
@@ -85,12 +86,12 @@ class StagingDatabase:
         if SAFE_NAME.fullmatch(self.database) is None or SAFE_NAME.fullmatch(self.owner) is None:
             raise BackupError("database and owner must be safe PostgreSQL identifiers")
         self.docker = docker
+        self.compose_executable = compose
         self.transport = transport or SubprocessTransport()
 
     def compose(self) -> list[str]:
-        return [
-            self.docker,
-            "compose",
+        prefix = [self.compose_executable] if self.compose_executable else [self.docker, "compose"]
+        return prefix + [
             "--project-name",
             "meguri-staging",
             "--env-file",
@@ -146,9 +147,14 @@ class StagingDatabase:
 
 
 def create_backup(database: StagingDatabase, output_dir: Path) -> Path:
-    expected_dir = Path(database.env.get("MEGURI_BACKUP_DIR", ""))
-    if output_dir.resolve() != expected_dir.resolve():
-        raise BackupError("output directory must equal MEGURI_BACKUP_DIR")
+    configured_dirs = [Path(database.env.get("MEGURI_BACKUP_DIR", ""))]
+    control_plane_dir = database.env.get("MEGURI_CONTROL_PLANE_BACKUP_DIR", "").strip()
+    if control_plane_dir:
+        configured_dirs.append(Path(control_plane_dir))
+    if output_dir.resolve() not in {path.resolve() for path in configured_dirs}:
+        raise BackupError(
+            "output directory must equal MEGURI_BACKUP_DIR or MEGURI_CONTROL_PLANE_BACKUP_DIR"
+        )
     release_id = database.env.get("MEGURI_RELEASE_ID", "")
     if SAFE_RELEASE.fullmatch(release_id) is None:
         raise BackupError("MEGURI_RELEASE_ID is unsafe for a backup filename")
