@@ -6,6 +6,7 @@ from uuid import UUID
 
 from .conflict_resolver import ConflictResolver, canonical_key
 from .contracts import (
+    MemoryAuthorizationError,
     MemoryNotFoundError,
     MemoryStateError,
 )
@@ -20,6 +21,7 @@ from .enums import (
 )
 from .models import (
     CandidateReview,
+    HardDeleteResult,
     IdentityBinding,
     IdentityBindingCreate,
     MemoryActor,
@@ -83,11 +85,13 @@ class MemoryService:
         review_policy: CandidateReviewPolicy | None = None,
         conflict_resolver: ConflictResolver | None = None,
         metrics: MemoryMetrics | None = None,
+        hard_delete_enabled: bool = False,
     ) -> None:
         self.uow_factory = unit_of_work_factory
         self.review_policy = review_policy or CandidateReviewPolicy()
         self.conflict_resolver = conflict_resolver or ConflictResolver()
         self.metrics = metrics or memory_metrics
+        self.hard_delete_enabled = hard_delete_enabled
 
     async def create_candidate(
         self,
@@ -500,6 +504,9 @@ class MemoryService:
             items = await repository.list_user_items(
                 tenant_id=tenant_id, user_id=user_id, include_deleted=True
             )
+            versions = await repository.list_user_versions(
+                tenant_id=tenant_id, user_id=user_id
+            )
             audits = await repository.list_audit_events(
                 tenant_id=tenant_id, user_id=user_id
             )
@@ -507,8 +514,75 @@ class MemoryService:
                 tenant_id=tenant_id,
                 user_id=user_id,
                 items=items,
+                versions=versions,
                 audit_events=audits,
             )
+
+    async def hard_delete(
+        self,
+        memory_id: UUID,
+        *,
+        tenant_id: str,
+        user_id: str,
+        reason: str,
+        confirmation: str,
+        actor: MemoryActor,
+        request_id: str,
+    ) -> HardDeleteResult:
+        request_id = require_request_id(request_id)
+        if not self.hard_delete_enabled:
+            raise MemoryAuthorizationError("hard delete is disabled")
+        if actor.actor_type is not ActorType.ADMIN:
+            raise MemoryAuthorizationError("hard delete requires an administrator")
+        if confirmation != f"HARD_DELETE:{memory_id}":
+            raise MemoryAuthorizationError("hard delete confirmation did not match")
+        if not reason.strip():
+            raise ValueError("hard delete reason is required")
+        operation = f"memory.hard_delete.{memory_id}"
+        async with self.uow_factory() as uow:
+            repository = repository_of(uow)
+            cached = await repository.get_idempotent(
+                tenant_id, operation, request_id
+            )
+            if cached:
+                return HardDeleteResult.model_validate(cached)
+            current = await repository.get_item(
+                memory_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                for_update=True,
+            )
+            if current is None:
+                raise MemoryNotFoundError("memory not found")
+            if current.status is not MemoryStatus.DELETED:
+                raise MemoryStateError("memory must be soft deleted first")
+            await repository.append_audit(
+                tenant_id=tenant_id,
+                request_id=request_id,
+                action=AuditAction.HARD_DELETE,
+                aggregate_type="memory",
+                aggregate_id=str(memory_id),
+                actor=actor,
+                details={
+                    "user_id": user_id,
+                    "reason": reason,
+                    "audit_retained": True,
+                },
+            )
+            counts = await repository.hard_delete_item(current)
+            result = HardDeleteResult(
+                memory_id=memory_id,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                **counts,
+            )
+            await repository.put_idempotent(
+                tenant_id,
+                operation,
+                request_id,
+                result.model_dump(mode="json"),
+            )
+            return result
 
     async def bind_identity(
         self,

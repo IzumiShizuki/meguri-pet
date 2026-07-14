@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Text, and_, cast, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .enums import (
@@ -461,6 +461,96 @@ class SqlAlchemyMemoryRepository:
             statement = statement.where(MemoryItemRow.status != MemoryStatus.DELETED.value)
         rows = (await self.session.execute(statement)).all()
         return [item_model(row, version) for row, version in rows]
+
+    async def list_user_versions(
+        self, *, tenant_id: str, user_id: str
+    ) -> list[MemoryVersion]:
+        rows = list(
+            (
+                await self.session.scalars(
+                    select(MemoryVersionRow)
+                    .join(
+                        MemoryItemRow,
+                        MemoryItemRow.memory_id == MemoryVersionRow.memory_id,
+                    )
+                    .where(
+                        MemoryItemRow.tenant_id == tenant_id,
+                        MemoryItemRow.user_id == user_id,
+                    )
+                    .order_by(
+                        MemoryVersionRow.memory_id,
+                        MemoryVersionRow.version_no,
+                    )
+                )
+            ).all()
+        )
+        return [version_model(row) for row in rows]
+
+    async def hard_delete_item(self, item: MemoryItem) -> dict[str, int]:
+        """Physically remove one soft-deleted aggregate while retaining audit rows."""
+
+        version_ids = list(
+            (
+                await self.session.scalars(
+                    select(MemoryVersionRow.version_id).where(
+                        MemoryVersionRow.memory_id == item.memory_id
+                    )
+                )
+            ).all()
+        )
+        candidate_ids = list(
+            (
+                await self.session.scalars(
+                    select(MemoryCandidateRow.candidate_id).where(
+                        MemoryCandidateRow.accepted_memory_id == item.memory_id
+                    )
+                )
+            ).all()
+        )
+        if version_ids:
+            await self.session.execute(
+                delete(MemoryOutboxRow).where(
+                    MemoryOutboxRow.aggregate_id.in_(version_ids)
+                )
+            )
+        aggregate_identifiers = [
+            str(item.memory_id),
+            *(str(candidate_id) for candidate_id in candidate_ids),
+        ]
+        await self.session.execute(
+            delete(MemoryIdempotencyRow).where(
+                MemoryIdempotencyRow.tenant_id == item.tenant_id,
+                or_(
+                    *(
+                        MemoryIdempotencyRow.operation.contains(identifier)
+                        for identifier in aggregate_identifiers
+                    ),
+                    *(
+                        cast(MemoryIdempotencyRow.response_json, Text).contains(
+                            identifier
+                        )
+                        for identifier in aggregate_identifiers
+                    ),
+                ),
+            )
+        )
+        await self.session.execute(
+            delete(MemoryCandidateRow).where(
+                MemoryCandidateRow.accepted_memory_id == item.memory_id
+            )
+        )
+        await self.session.execute(
+            delete(MemoryItemRow).where(
+                MemoryItemRow.memory_id == item.memory_id,
+                MemoryItemRow.tenant_id == item.tenant_id,
+                MemoryItemRow.user_id == item.user_id,
+            )
+        )
+        await self.session.flush()
+        return {
+            "deleted_versions": len(version_ids),
+            "deleted_candidates": len(candidate_ids),
+        }
 
     async def enqueue_embedding(self, version_id: UUID, tenant_id: str) -> None:
         self.session.add(

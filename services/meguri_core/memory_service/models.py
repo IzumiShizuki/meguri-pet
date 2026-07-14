@@ -196,9 +196,19 @@ class MemoryExport(StrictModel):
     format: Literal["jsonl"] = "jsonl"
     generated_at: datetime = Field(default_factory=utc_now)
     items: list[MemoryItem]
+    versions: list[MemoryVersion]
     audit_events: list[dict[str, Any]] = Field(default_factory=list)
 
     _validate_generated_at = field_validator("generated_at")(_timezone_required)
+
+
+class HardDeleteResult(StrictModel):
+    memory_id: UUID
+    tenant_id: str
+    user_id: str
+    deleted_versions: int = Field(ge=0)
+    deleted_candidates: int = Field(ge=0)
+    audit_retained: bool = True
 
 
 class IdentityBindingCreate(StrictModel):

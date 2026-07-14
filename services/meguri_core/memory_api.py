@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import Field
 
 from .api_auth import (
@@ -29,6 +29,7 @@ from .memory_service.enums import (
     SourceKind,
 )
 from .memory_service.metrics import memory_metrics
+from .memory_service.export import render_memory_export_jsonl
 from .memory_service.models import (
     CandidateReview,
     MemoryCandidateCreate,
@@ -84,6 +85,12 @@ class SupersedeRequest(StrictModel):
 
 class ExportRequest(StrictModel):
     format: str = "jsonl"
+
+
+class HardDeleteRequest(StrictModel):
+    user_id: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=1000)
+    confirmation: str = Field(min_length=1, max_length=100)
 
 
 async def memory_call(awaitable):
@@ -296,11 +303,38 @@ async def export_memories(
     request_id: RequestIdDependency,
 ):
     require_formal_memory(principal)
-    return await memory_call(
+    exported = await memory_call(
         provider.export_user(
             principal.user_id,
             tenant_id=principal.tenant_id,
             format=body.format,
+            request_id=request_id,
+        )
+    )
+    return Response(
+        content=render_memory_export_jsonl(exported),
+        media_type="application/x-ndjson",
+        headers={"Content-Disposition": 'attachment; filename="memory-export.jsonl"'},
+    )
+
+
+@router.post("/admin/memories/{memory_id}/hard-delete")
+async def hard_delete_memory(
+    memory_id: UUID,
+    body: HardDeleteRequest,
+    principal: PrincipalDependency,
+    provider: ProviderDependency,
+    request_id: RequestIdDependency,
+):
+    require_admin(principal)
+    return await memory_call(
+        provider.hard_delete(
+            memory_id,
+            tenant_id=principal.tenant_id,
+            user_id=body.user_id,
+            reason=body.reason,
+            confirmation=body.confirmation,
+            actor=principal.memory_actor(),
             request_id=request_id,
         )
     )

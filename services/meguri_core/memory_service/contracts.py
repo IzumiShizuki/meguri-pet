@@ -8,6 +8,7 @@ from .models import (
     CandidateReview,
     IdentityBinding,
     IdentityBindingCreate,
+    HardDeleteResult,
     MemoryActor,
     MemoryCandidate,
     MemoryCandidateCreate,
@@ -118,6 +119,18 @@ class AuthoritativeMemoryProvider(Protocol):
         format: str,
         request_id: str,
     ) -> MemoryExport: ...
+
+    async def hard_delete(
+        self,
+        memory_id: UUID,
+        *,
+        tenant_id: str,
+        user_id: str,
+        reason: str,
+        confirmation: str,
+        actor: MemoryActor,
+        request_id: str,
+    ) -> HardDeleteResult: ...
 
     async def bind_identity(
         self,

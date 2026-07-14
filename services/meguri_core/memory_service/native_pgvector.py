@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timezone
+import os
 from typing import overload
 from uuid import UUID, uuid4
 
@@ -25,6 +26,7 @@ from .database import (
 from .enums import ActorType, MemoryStatus, MemoryType, SourceKind
 from .models import (
     CandidateReview,
+    HardDeleteResult,
     IdentityBinding,
     IdentityBindingCreate,
     MemoryActor,
@@ -69,7 +71,13 @@ class NativePgvectorMemoryProvider:
             self.engine = create_memory_engine(settings)
             session_factory = create_session_factory(self.engine)
             self.uow_factory = MemoryUnitOfWorkFactory(session_factory)
-            self.service = MemoryService(self.uow_factory)
+            self.service = MemoryService(
+                self.uow_factory,
+                hard_delete_enabled=os.getenv(
+                    "MEGURI_ALLOW_HARD_DELETE", "false"
+                ).lower()
+                == "true",
+            )
             self.tenant_id = settings.tenant_id
         else:
             if not tenant_id:
@@ -228,6 +236,27 @@ class NativePgvectorMemoryProvider:
     ) -> MemoryExport:
         return await self.service.export_user(
             user_id, tenant_id=tenant_id, format=format, request_id=request_id
+        )
+
+    async def hard_delete(
+        self,
+        memory_id: UUID,
+        *,
+        tenant_id: str,
+        user_id: str,
+        reason: str,
+        confirmation: str,
+        actor: MemoryActor,
+        request_id: str,
+    ) -> HardDeleteResult:
+        return await self.service.hard_delete(
+            memory_id,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            reason=reason,
+            confirmation=confirmation,
+            actor=actor,
+            request_id=request_id,
         )
 
     async def bind_identity(

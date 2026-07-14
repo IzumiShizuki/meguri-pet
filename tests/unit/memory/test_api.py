@@ -21,6 +21,7 @@ class ProviderStub:
         self.candidate = None
         self.review = None
         self.binding = None
+        self.hard_delete_call = None
         self.raise_on_create: Exception | None = None
 
     async def create_candidate(self, candidate, *, request_id):
@@ -39,6 +40,17 @@ class ProviderStub:
     async def bind_identity(self, binding, *, actor, request_id):
         self.binding = (binding, actor, request_id)
         return {"binding_id": str(uuid4())}
+
+    async def hard_delete(self, memory_id, **kwargs):
+        self.hard_delete_call = (memory_id, kwargs)
+        return {
+            "memory_id": str(memory_id),
+            "tenant_id": kwargs["tenant_id"],
+            "user_id": kwargs["user_id"],
+            "deleted_versions": 1,
+            "deleted_candidates": 1,
+            "audit_retained": True,
+        }
 
 
 def build_client(
@@ -194,6 +206,36 @@ def test_provider_exception_is_sanitized() -> None:
     }
     assert "super-secret" not in response.text
     assert "db.internal" not in response.text
+
+
+def test_hard_delete_is_admin_only_and_target_is_explicit() -> None:
+    memory_id = uuid4()
+    provider = ProviderStub()
+    user_client = build_client(provider, user_principal())
+    body = {
+        "user_id": "target-user",
+        "reason": "approved erasure request",
+        "confirmation": f"HARD_DELETE:{memory_id}",
+    }
+
+    denied = user_client.post(
+        f"/v1/admin/memories/{memory_id}/hard-delete",
+        headers={"X-Request-ID": "hard-delete-denied"},
+        json=body,
+    )
+    assert denied.status_code == 403
+
+    admin_client = build_client(provider, admin_principal())
+    accepted = admin_client.post(
+        f"/v1/admin/memories/{memory_id}/hard-delete",
+        headers={"X-Request-ID": "hard-delete-1"},
+        json=body,
+    )
+    assert accepted.status_code == 200
+    _, kwargs = provider.hard_delete_call
+    assert kwargs["tenant_id"] == "tenant-admin"
+    assert kwargs["user_id"] == "target-user"
+    assert kwargs["actor"].actor_type is ActorType.ADMIN
 
 
 def test_metrics_have_required_unlabelled_series() -> None:
