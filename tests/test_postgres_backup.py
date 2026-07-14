@@ -32,6 +32,8 @@ class FakeTransport:
             if "meguri_staging_restore_" in joined:
                 return str(self.restored_active_items)
             return "0"
+        if "md5(string_agg" in joined:
+            return "d41d8cd98f00b204e9800998ecf8427e"
         if "SELECT count(*) FROM" in joined:
             return "0"
         return ""
@@ -91,6 +93,10 @@ class PostgresBackupTests(unittest.TestCase):
                 "memory_audit_log",
                 "memory_outbox",
             })
+            self.assertEqual(
+                metadata["recovery_snapshot"]["fixed_queries"]["active_memory_fingerprint"],
+                "d41d8cd98f00b204e9800998ecf8427e",
+            )
             self.assertEqual(metadata["archive_bytes"], archive.stat().st_size)
             self.assertTrue(any("pg_dump" in command for command in transport.commands))
 

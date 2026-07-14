@@ -86,11 +86,20 @@ def recovery_snapshot(database: StagingDatabase, *, target: str | None = None) -
                 database=target,
             )
         )
+        active_fingerprint = database.query(
+            "SELECT COALESCE(md5(string_agg(memory_id::text || ':' || "
+            "current_version_id::text, ',' ORDER BY memory_id)), md5('')) "
+            "FROM memory_items WHERE status = 'active'",
+            database=target,
+        )
     except ValueError as exc:
         raise BackupError("database recovery snapshot returned a non-integer count") from exc
     return {
         "table_counts": counts,
-        "fixed_queries": {"active_memory_items": active_items},
+        "fixed_queries": {
+            "active_memory_items": active_items,
+            "active_memory_fingerprint": active_fingerprint,
+        },
     }
 
 
