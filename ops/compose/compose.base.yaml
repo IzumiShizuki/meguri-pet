@@ -86,6 +86,8 @@ services:
       MEGURI_RELEASE_ID: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
       MEGURI_DATA_BUILD_ID: ${MEGURI_DATA_BUILD_ID:?MEGURI_DATA_BUILD_ID is required}
       MEGURI_DATA_ROOT: /app/datasets/meguri
+      MEGURI_RELEASE_MANIFEST_PATH: /run/meguri/release-manifest.json
+      MEGURI_EXPRESSION_MAP_PATH: /app/datasets/meguri/exports/expression_map/expression_map.json
       MEGURI_DATABASE_URL_FILE: /run/secrets/database_url
       MEGURI_MEMORY_PROVIDER: ${MEGURI_MEMORY_PROVIDER:?MEGURI_MEMORY_PROVIDER is required}
       MEGURI_LLM_PROVIDER: ${MEGURI_LLM_PROVIDER:?MEGURI_LLM_PROVIDER is required}
@@ -116,6 +118,10 @@ services:
       - type: bind
         source: ${MEGURI_CORE_LOG_DIR:?MEGURI_CORE_LOG_DIR is required}
         target: /var/log/meguri
+      - type: bind
+        source: ${MEGURI_RELEASE_MANIFEST_FILE:?MEGURI_RELEASE_MANIFEST_FILE is required}
+        target: /run/meguri/release-manifest.json
+        read_only: true
     expose:
       - "8000"
     networks:

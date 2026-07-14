@@ -93,3 +93,26 @@
   rendered successfully.
 - Safety: repository-only so far; no existing database, server container,
   volume, network, route, or credential was changed.
+
+## E-005 - liveness, readiness, and file-secret runtime contract
+
+- Status: completed locally; managed-environment runtime proof remains part of
+  the isolated staging acceptance.
+- Endpoints: `/health/live` proves only that the process can answer;
+  `/health/ready` returns 503 in dev/staging/production unless the release and
+  runtime identities, mounted data build, Prompt/Response/expression hashes,
+  provider selection, secret files, and live Alembic revision all match.
+- Secret behavior: core rejects inline secret variables and loads database,
+  LLM, JWT, and AstrBot values only from their `_FILE` paths. Error payloads do
+  not echo secret values.
+- Packaging: the core image now includes Prompt/Response contract files and
+  `asyncpg`; the environment-specific Release Manifest is mounted read-only.
+- Test commands:
+  - `python -m unittest -v tests.test_deployment_readiness
+    tests.test_llm_provider tests.test_meguri_core`
+  - `python ops/scripts/check_environment_isolation.py`
+  - `python -m unittest -v tests.test_environment_checker`
+- Result: 25 readiness/provider/core tests and 2 isolation-checker tests
+  passed; the normal isolation configuration passed.
+- Safety: repository-only; no remote health route, container, database, or
+  secret was touched.

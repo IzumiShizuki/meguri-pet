@@ -313,6 +313,7 @@ def validate_uniqueness(configurations: dict[str, tuple[dict[str, str], dict[str
         "MEGURI_EDGE_NETWORK",
         "MEGURI_INTERNAL_NETWORK",
         "MEGURI_DATA_DIR",
+        "MEGURI_RELEASE_MANIFEST_FILE",
         "MEGURI_CORE_LOG_DIR",
         "MEGURI_POSTGRES_LOG_DIR",
         "MEGURI_BACKUP_DIR",

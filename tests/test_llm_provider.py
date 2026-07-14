@@ -1,5 +1,7 @@
 import json
 import unittest
+import tempfile
+from pathlib import Path
 
 import httpx
 from pydantic import ValidationError
@@ -180,6 +182,29 @@ class LlmProviderConfigurationTests(unittest.TestCase):
             create_llm_provider_from_env({**base, "MEGURI_LLM_BASE_URL": "http://llm.example.test/v1"})
         with self.assertRaises(LlmConfigurationError):
             create_llm_provider_from_env({**base, "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1"})
+
+    def test_remote_provider_reads_api_key_from_file_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            provider = create_llm_provider_from_env(
+                {
+                    "MEGURI_LLM_PROVIDER": "openai-compatible",
+                    "MEGURI_LLM_MODEL": "model",
+                    "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
+                    "MEGURI_LLM_API_KEY_FILE": str(secret),
+                }
+            )
+            self.assertEqual(provider.api_key, "test-key")
+            with self.assertRaises(LlmConfigurationError):
+                create_llm_provider_from_env(
+                    {
+                        "MEGURI_LLM_PROVIDER": "openai-compatible",
+                        "MEGURI_LLM_MODEL": "model",
+                        "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
+                        "MEGURI_LLM_API_KEY": "inline-key",
+                    }
+                )
 
     def test_response_models_reject_additional_properties(self):
         with self.assertRaises(ValidationError):
