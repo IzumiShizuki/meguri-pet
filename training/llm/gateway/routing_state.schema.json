@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "candidate_enabled", "candidate_model_id", "last_good_model_id", "updated_at"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "candidate_enabled": {"type": "boolean"},
+    "candidate_model_id": {"type": ["string", "null"]},
+    "last_good_model_id": {"type": ["string", "null"]},
+    "updated_at": {"type": "string"}
+  }
+}

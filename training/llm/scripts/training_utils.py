@@ -75,6 +75,23 @@ def validate_probe_report(path: Path, config: dict[str, Any]) -> dict[str, Any]:
     return report
 
 
+def validate_enablement_gate_report(path: Path | None, config: dict[str, Any]) -> None:
+    if config.get("enabled"):
+        if path is not None:
+            raise PipelineError("enabled training configs must not use a disabled-route gate override")
+        return
+    if path is None:
+        raise PipelineError("disabled training route requires an explicit enablement gate report")
+    report = read_json(path)
+    gates = report.get("gates") or {}
+    required = list(config.get("enablement_gates") or [])
+    missing = [name for name in required if gates.get(name) is not True]
+    if missing:
+        raise PipelineError(f"disabled-route enablement gates are not passing: {missing}")
+    if not report.get("project_lead_approval_reference"):
+        raise PipelineError("disabled-route gate report requires a project lead approval reference")
+
+
 def validate_dataset_for_training(dataset_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     manifest = read_json(dataset_dir / "dataset_manifest.json")
     quality = read_json(dataset_dir / "quality_report.json")

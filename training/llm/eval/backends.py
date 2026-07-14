@@ -23,7 +23,12 @@ class GenerationResult:
 class EvaluationBackend(Protocol):
     metadata: dict[str, Any]
 
-    def generate(self, system_prompt: str, user_content: str) -> GenerationResult: ...
+    def generate(
+        self,
+        system_prompt: str,
+        user_content: str,
+        cancel_event: Any | None = None,
+    ) -> GenerationResult: ...
 
 
 class OpenAIBackend:
@@ -65,7 +70,12 @@ class OpenAIBackend:
             "chat_template_sha256": None,
         }
 
-    def generate(self, system_prompt: str, user_content: str) -> GenerationResult:
+    def generate(
+        self,
+        system_prompt: str,
+        user_content: str,
+        cancel_event: Any | None = None,
+    ) -> GenerationResult:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -168,7 +178,12 @@ class LocalUnslothBackend:
         inputs = self.tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
         return {key: value.to("cuda") for key, value in inputs.items()}
 
-    def generate(self, system_prompt: str, user_content: str) -> GenerationResult:
+    def generate(
+        self,
+        system_prompt: str,
+        user_content: str,
+        cancel_event: Any | None = None,
+    ) -> GenerationResult:
         torch = self.torch
         inputs = self._inputs(system_prompt, user_content)
         input_length = int(inputs["input_ids"].shape[-1])
@@ -188,6 +203,18 @@ class LocalUnslothBackend:
         first_ms = (time.perf_counter() - first_start) * 1000
         torch.cuda.synchronize()
         start = time.perf_counter()
+        stopping_criteria = None
+        if cancel_event is not None:
+            try:
+                from transformers import StoppingCriteria, StoppingCriteriaList
+            except ImportError as exc:
+                raise PipelineError("Transformers stopping criteria are unavailable") from exc
+
+            class CancelRequested(StoppingCriteria):
+                def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
+                    return bool(cancel_event.is_set())
+
+            stopping_criteria = StoppingCriteriaList([CancelRequested()])
         with torch.inference_mode():
             output = self.model.generate(
                 **inputs,
@@ -195,11 +222,14 @@ class LocalUnslothBackend:
                 do_sample=False,
                 use_cache=True,
                 pad_token_id=self.tokenizer.eos_token_id,
+                stopping_criteria=stopping_criteria,
             )
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
         generated = output[0][input_length:]
         raw = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        if cancel_event is not None and cancel_event.is_set():
+            raise PipelineError("generation cancelled")
         token_count = int(generated.numel())
         return GenerationResult(
             raw_output=raw,

@@ -101,7 +101,10 @@ def nvidia_smi() -> dict[str, Any]:
 def static_probe(config: dict[str, Any]) -> dict[str, Any]:
     config_errors = validate_config(config)
     versions = package_versions(REQUIRED_PACKAGES)
-    missing = sorted(name for name, version in versions.items() if version is None)
+    required = set(REQUIRED_PACKAGES)
+    if not config.get("model", {}).get("load_in_4bit"):
+        required.discard("bitsandbytes")
+    missing = sorted(name for name in required if versions.get(name) is None)
     gpu = nvidia_smi()
     hardware_errors: list[str] = []
     if not gpu.get("available"):
