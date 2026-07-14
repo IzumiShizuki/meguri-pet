@@ -53,7 +53,10 @@ def validate_probe_report(path: Path, config: dict[str, Any]) -> dict[str, Any]:
     for field in ("repo_id", "revision", "tokenizer_revision"):
         if identity.get(field) != expected.get(field):
             raise PipelineError(f"probe model identity mismatch: {field}")
-    checks = report.get("checks") or {}
+    full = report.get("full") or {}
+    if full.get("status") != "pass":
+        raise PipelineError("the L-001 full probe section is not passing")
+    checks = full.get("checks") or {}
     required = (
         "cuda_available",
         "bf16_supported",

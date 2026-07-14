@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import platform
@@ -10,6 +11,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from services.meguri_core.schemas import LlmResponse
+
 from .common import (
     ARTIFACT_ROOT,
     CONFIG_ROOT,
@@ -18,10 +21,12 @@ from .common import (
     git_commit,
     load_yaml,
     package_versions,
+    sha256_text,
     utc_now,
     write_json,
 )
-from .modeling import assert_text_only_trainable_parameters, load_model_with_lora
+from .modeling import assert_text_only_trainable_parameters, load_base_model, load_model_with_lora
+from .training_utils import tokenize_assistant_only
 
 
 REQUIRED_PACKAGES = (
@@ -142,7 +147,7 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
     model, processor, model_api = load_model_with_lora(config, allow_download=allow_download)
     parameter_counts = assert_text_only_trainable_parameters(model)
     tokenizer = _text_tokenizer(processor)
-    system_prompt = (PROJECT_ROOT / "configs" / "meguri_system_prompt.txt").read_text(encoding="utf-8")
+    system_prompt = (PROJECT_ROOT / "configs" / "meguri_system_prompt.txt").read_text(encoding="utf-8").strip()
     assistant = json.dumps(
         {
             "reply": "了解了，我们先确认最小训练链路。",
@@ -154,21 +159,21 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
         ensure_ascii=False,
         separators=(",", ":"),
     )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "请确认训练环境。"},
-        {"role": "assistant", "content": assistant},
-    ]
-    prompt = tokenizer.apply_chat_template(messages[:-1], tokenize=False, add_generation_prompt=True)
-    complete = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-    prompt_ids = tokenizer(prompt, add_special_tokens=False)["input_ids"]
-    encoded = tokenizer(complete, add_special_tokens=False, return_tensors="pt")
-    input_ids = encoded["input_ids"].to("cuda")
-    attention_mask = encoded["attention_mask"].to("cuda")
-    labels = input_ids.clone()
-    labels[:, : len(prompt_ids)] = -100
-    if not bool((labels != -100).any()):
-        raise PipelineError("assistant-only mask contains no trainable tokens")
+    row = {
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": "请确认训练环境。"},
+            {"role": "assistant", "content": assistant},
+        ]
+    }
+    encoded = tokenize_assistant_only(
+        row,
+        tokenizer,
+        max_seq_length=int(config["training"]["max_seq_length"]),
+    )
+    input_ids = torch.tensor([encoded["input_ids"]], device="cuda")
+    attention_mask = torch.tensor([encoded["attention_mask"]], device="cuda")
+    labels = torch.tensor([encoded["labels"]], device="cuda")
 
     model.train()
     output = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
@@ -176,6 +181,15 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
         raise PipelineError("single-batch forward did not produce a finite loss")
     output.loss.backward()
     model.zero_grad(set_to_none=True)
+    loss_value = float(output.loss.detach().cpu())
+    assistant_mask = {
+        "total_tokens": len(encoded["input_ids"]),
+        "prompt_tokens": sum(value == -100 for value in encoded["labels"]),
+        "assistant_tokens": sum(value != -100 for value in encoded["labels"]),
+    }
+    gradient_checkpointing = bool(getattr(model, "is_gradient_checkpointing", False))
+    if not gradient_checkpointing:
+        raise PipelineError("gradient checkpointing is not active after LoRA attachment")
 
     adapter_dir = artifact_dir / "probe_adapter"
     if adapter_dir.exists():
@@ -183,12 +197,68 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
     model.save_pretrained(adapter_dir)
     if hasattr(processor, "save_pretrained"):
         processor.save_pretrained(adapter_dir)
-    base_model = getattr(model, "get_base_model", lambda: model)()
+    peak_gib = torch.cuda.max_memory_allocated() / (1024**3)
+    del output, input_ids, attention_mask, labels, model
+    gc.collect()
+    torch.cuda.empty_cache()
+    base_model, reloaded_processor, reloaded_api = load_base_model(config, allow_download=False)
     reloaded = PeftModel.from_pretrained(base_model, adapter_dir, is_trainable=False)
     if reloaded is None:
         raise PipelineError("adapter reload returned no model")
-
-    peak_gib = torch.cuda.max_memory_allocated() / (1024**3)
+    if hasattr(reloaded_api, "for_inference"):
+        reloaded_api.for_inference(reloaded)
+    inference_tokenizer = _text_tokenizer(reloaded_processor)
+    inference_messages = [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "runtime_state": {
+                        "client_id": "website",
+                        "mode": "work",
+                        "relationship_profile": "sibling",
+                        "outfit_code": "01",
+                        "local_time": "2026-07-14T12:00:00+08:00",
+                        "is_holiday": False,
+                        "voice_enabled": False,
+                        "screen_context_enabled": False,
+                        "allowed_expression_tags": ["neutral", "happy", "worried"],
+                    },
+                    "user_message": "请用 JSON 确认环境正常。",
+                    "canon_examples": [],
+                    "long_term_memories": [],
+                    "recent_context": [],
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+    ]
+    rendered = inference_tokenizer.apply_chat_template(
+        inference_messages,
+        tokenize=False,
+        add_generation_prompt=True,
+        enable_thinking=False,
+    )
+    inference_inputs = inference_tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
+    inference_inputs = {name: value.to("cuda") for name, value in inference_inputs.items()}
+    inference_length = int(inference_inputs["input_ids"].shape[-1])
+    with torch.inference_mode():
+        generated = reloaded.generate(
+            **inference_inputs,
+            do_sample=False,
+            max_new_tokens=256,
+            pad_token_id=inference_tokenizer.eos_token_id,
+        )
+    raw_inference = inference_tokenizer.decode(
+        generated[0][inference_length:], skip_special_tokens=True
+    ).strip()
+    try:
+        LlmResponse.model_validate(json.loads(raw_inference))
+    except Exception as exc:
+        raise PipelineError("minimum probe inference did not produce valid Meguri JSON") from exc
+    peak_gib = max(peak_gib, torch.cuda.max_memory_allocated() / (1024**3))
     maximum = float(config["hardware"].get("maximum_training_peak_gib") or 0)
     if maximum and peak_gib > maximum:
         raise PipelineError(f"probe peak memory {peak_gib:.3f} GiB exceeds {maximum:.3f} GiB")
@@ -198,15 +268,24 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
         "torch_version": torch.__version__,
         "bf16_supported": torch.cuda.is_bf16_supported(),
         "device_name": torch.cuda.get_device_name(0),
-        "loss": float(output.loss.detach().cpu()),
+        "loss": loss_value,
         "peak_memory_gib": round(peak_gib, 4),
-        "assistant_mask": {
-            "total_tokens": int(input_ids.shape[-1]),
-            "prompt_tokens": len(prompt_ids),
-            "assistant_tokens": int((labels != -100).sum().item()),
+        "checks": {
+            "cuda_available": True,
+            "bf16_supported": True,
+            "model_loaded": True,
+            "assistant_mask": True,
+            "forward": True,
+            "backward": True,
+            "gradient_checkpointing": gradient_checkpointing,
+            "adapter_save": True,
+            "adapter_reload": True,
+            "json_inference": True,
         },
+        "assistant_mask": assistant_mask,
         "adapter_saved": True,
         "adapter_reloaded": True,
+        "minimum_json_inference_sha256": sha256_text(raw_inference),
         **parameter_counts,
         "model_api": getattr(model_api, "__name__", str(model_api)),
     }
@@ -293,4 +372,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
