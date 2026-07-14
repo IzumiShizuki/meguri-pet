@@ -1,171 +1,147 @@
 # Meguri environment isolation final report
 
-> Date: 2026-07-14 (Asia/Shanghai)
+> Date: 2026-07-15 (Asia/Shanghai)
 >
 > Branch: `feat/environment-isolation`
 >
+> Current Staging release: `meguri-staging-20260715-r002`
+>
 > Production mutation: **blocked**
 >
-> Real staging acceptance: **blocked pending artifacts/access**
+> Full Staging application: **NO-GO pending authenticated DeepSeek smoke**
 
 ## Outcome
 
-The repository now contains an isolated, fail-closed environment and deployment
-framework for dev, staging, and production. E-001 through E-009 are implemented
-and locally verified. E-010 repository acceptance plus a second read-only
-protected-server check passed, but runtime staging acceptance is intentionally
-not claimed. The native pgvector Memory implementation and recovery tooling are
-now integrated through M-012, and the reproducible LLM training/evaluation,
-registry, authenticated gateway and last-good routing are integrated through
-L-013. The remaining blockers are live
-database/staging evidence, immutable pushed images, a trained and registered
-LLM candidate/last-good pair, and independent server deployment/secrets access.
-The current requirement-by-requirement verdict is recorded in
-`reports/environment-completion-audit.md`.
+E-001 through E-009 and the environment/recovery portion of E-010 are
+implemented and verified against a real isolated Staging deployment on
+`111.228.35.186`. The server now has an independent `meguri-staging` Compose
+project, edge/internal networks, pgvector database, app/migration roles, named
+volume, file secrets, release state, checksummed backups, and last-good
+rollback. Existing AstrBot, website, middleware, PostgreSQL and public routing
+were left unchanged.
 
-This implementation follows the authority order from
-[15｜开发、Staging 与生产隔离实施计划](https://app.notion.com/p/39da363659638157a494e897cedef86f),
-cross-checked with the current repository/server state, pages 13/11/00,
-[14.1](https://app.notion.com/p/39da3636596381eb8f13f5e3f3850d07),
-[16｜PostgreSQL + pgvector](https://app.notion.com/p/39da36365963818b904ad4960dd3addc),
-and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af7101ec).
+The task is not declared fully complete. The configured external DeepSeek
+provider has no usable API credential, so real Turn/SSE/RAG/Memory integration
+has not passed. Environment acceptance evidence remains fail-closed for that
+single external gate, and all Production operations remain blocked.
 
-## Delivered controls
+## E-task status
 
-| Task | Result | Main evidence |
+| Task | Status | Runtime result |
 | --- | --- | --- |
-| E-001 | Complete | Three explicit Compose projects; unique edge/internal networks, database volumes, logs, backups, and secret paths |
-| E-002 | Complete | Static isolation checker plus seven committed fault fixtures |
-| E-003 | Complete | Release Manifest schema/generator/readiness checker with image, data, Prompt, Schema, expression, DB, embedding, model registry and adapter identities |
-| E-004 | Local implementation complete | Isolated pgvector PostgreSQL, linear Alembic schema through `20260714_0004`, native provider, separate migration owner/app role, core startup gate |
-| E-005 | Local implementation complete | `/health/live`, fail-closed `/health/ready`, file-only secrets, runtime identity and live DB revision check |
-| E-006 | Complete | All 29 observed reachable ports registered; ten unresolved existing exposure groups block production |
-| E-007 | Local implementation complete | Digest-only staging preflight, ordered migration/start, atomic last-good state, automatic same-revision rollback |
-| E-008 | Local implementation complete | Checksummed custom backup and isolated restore-rehearsal workflow; runtime RPO/RTO not yet measured |
-| E-009 | Complete | CI validation, manual serialized staging CD, validation-only production approval workflow |
-| E-010 | Repository/live invariant complete; staging blocked | Integrated Memory M-001-M-012 and LLM L-001-L-013 contracts, protected-server invariants, machine-readable all-or-nothing staging acceptance evidence |
+| E-001 | Complete | Explicit dev/Staging/Production projects; live Staging networks and volume are independently named |
+| E-002 | Complete | Isolation checker and negative fixtures pass |
+| E-003 | Complete | Immutable `r001`/`r002` Manifests pass readiness validation |
+| E-004 | Complete for Staging | Empty pgvector database migrated to `20260714_0004`; unsafe migration fixture blocked core replacement |
+| E-005 | Complete for Staging | Live readiness has zero failures; secrets are file-only and mode `0400` |
+| E-006 | Complete | Staging core is loopback-only; ledger remains the Production exposure gate |
+| E-007 | Complete for Staging | Explicit two-image rollback, image-fault rollback, and readiness-fault rollback passed |
+| E-008 | Complete for Staging | Non-empty backup/restore/fingerprint rehearsal passed; RTO evidence recorded |
+| E-009 | Complete | CI controls and manual Production approval gate are present and tested |
+| E-010 | Environment checks complete; application smoke blocked | All required isolation/recovery booleans have evidence; authenticated DeepSeek Turn/SSE remains missing |
 
-## Isolation and security properties
+## Runtime topology
 
-- PostgreSQL joins only each environment's `internal: true` network and exposes
-  no host port. Dev/staging core binds only to loopback; production publishes no
-  port and requires a separately approved entry change.
-- Dev, staging, and production have distinct project, network, database, owner,
-  app role, named volume, data/log/backup directory, and secret-file identity.
-- Core never receives the migration-owner URL or app-role provisioning password.
-  Inline database, LLM, JWT, or AstrBot secrets are rejected.
-- Migration failure prevents core startup. Release readiness fails on Manifest,
-  mounted data, artifact hash, provider, model, adapter, secret, or live DB
-  revision drift.
-- Native Memory loads its app URL from a secret file only, pins tenant/schema/
-  embedding identities, keeps MemoryOS read-only and Mem0 shadow-only, and
-  fails health on Alembic revision drift.
-- The LLM runtime enforces the configured request concurrency cap. A staging or
-  production release must match a non-placeholder evaluated model registry ID,
-  adapter revision/digest, Prompt hash and Response Schema hash.
-- The authenticated staging gateway independently enforces bearer auth,
-  deterministic requests, concurrency/timeout limits, schema validation,
-  registered adapter hashes and candidate/last-good routing. Core rejects a
-  gateway response whose model/base/adapter identity headers drift from the
-  Release Manifest-backed runtime configuration.
-- Staging deployment accepts only Manifest-matching `@sha256` images. Candidate
-  readiness failure restores same-revision last-good. Cross-revision deployment
-  remains blocked until a verified active recovery workflow exists.
-- Production requires independent base, exposure, Manifest, restore, rollback,
-  backup, route, multi-owner and time-window approval gates. Current gates do
-  not pass and no production deploy workflow exists.
+- `meguri-staging-core-1`: healthy, networks `meguri-staging-edge` and
+  `meguri-staging-internal`, host binding `127.0.0.1:18080` only.
+- `meguri-staging-postgres-1`: healthy, internal network only, no host port.
+- `meguri-staging-postgres-data`: the only Meguri named volume.
+- `/opt/meguri/staging`: independent config/data, secrets, logs, backups,
+  releases, state and evidence directories.
+- `MEGURI_MUTATION_ALLOWED=false`; no public proxy route was added.
 
-## Verification results
+Current image digests:
 
-Final local results:
+- Core `r002`: `sha256:02d3986e7a8453a9a25d7b64c3517aaaba35602c84cde618905125561b3001bb`.
+- Core `r001` rollback target: `sha256:61ab40fb1a1c2a1a1e05cf097217c5cdde568b37c75d05b7e971f725d941a821`.
+- Migration: `sha256:3d826edb697234cd53e48ae976834889ae5b90fee0e5eed725079fca779e5589`.
+- PostgreSQL/pgvector: `sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb`.
 
-- `python -m pytest -o addopts='' -q`: **179 passed, 6 skipped**; all
-  skips are explicitly gated on the absent isolated PostgreSQL test URL;
-- `pnpm test:ts`: **20 passed**;
-- Python compile-all and Alembic offline upgrade/downgrade through
-  `20260714_0004`: **passed**;
-- deterministic exact-vector baseline: **p50 18.177 ms, p95 22.637 ms,
-  p99 22.978 ms, 0% errors, recall@5 100%** on 500 synthetic vectors (not a
-  PostgreSQL/network benchmark); HNSW remains disabled;
-- dev/staging/production `docker compose ... config --quiet`: **passed**;
-- environment isolation checker: **passed**;
-- Memory/LLM Agent contract checker: **passed**;
-- blocked staging acceptance checker: **returned 1 as expected**;
-- production exposure and approval gates: **returned 1 as expected**.
+## Verification
 
-The Python run emitted one upstream Starlette/httpx deprecation warning; it did
-not affect test outcomes.
+Repository commands:
 
-## Protected server recheck
+```text
+python -m pytest -q
+python -m unittest discover -v
+pnpm test:ts
+python ops/scripts/check_environment_isolation.py
+docker-compose ... config --quiet
+python -m unittest -v tests.test_staging_deployment tests.test_postgres_backup
+```
 
-At 2026-07-14 22:37:12 +08:00, a read-only Docker TLS query confirmed:
+Results:
 
-- Docker Engine remains `29.2.1`;
-- all 22 baseline containers remain running;
-- every protected network and named volume remains present;
-- no container, network, or volume begins with `meguri-dev`,
-  `meguri-staging`, or `meguri-production`.
+- Local Pytest: 184 passed, with six expected database-gated skips. The gated
+  provider/workflow/recovery subset was then copied
+  into a disposable container on `meguri-staging-internal` and passed all 7
+  live PostgreSQL cases with zero skips; the container was removed.
+- Python unittest discovery: 128 passed.
+- TypeScript: 20 passed.
+- Remote-control-plane, migration, readiness, rollback and restore commands:
+  passed as described in `reports/environment-completion-audit.md` and
+  `reports/staging-restore-rehearsal.md`.
+- A synthetic DeepSeek Turn failed closed with sanitized HTTP 401 evidence;
+  no credential value appeared in output or logs.
 
-No server file, secret, container, network, volume, image, database, route,
-firewall rule, listener, AstrBot object, site object, or existing PostgreSQL
-object was created, changed, restarted, or removed by this task.
+## Restore and rollback
 
-## Runtime staging blockers
+The authoritative non-empty archive is 35,922 bytes at SHA-256
+`1bfdaab8ecc9eae974e723faf8eec78954bde349cabc1a5d21b9ce08367e33df`.
+Restore to `meguri_staging_restore_20260715_0154` matched revision, pgvector,
+nine table counts, active count and fingerprint, then cleaned up in 10.974 s.
 
-The following evidence is still absent and cannot be safely inferred:
+Rollback evidence:
 
-1. immutable pushed digests for core and migration images plus a pinned pgvector
-   image digest;
-2. `/opt/meguri/staging` release/data/log/backup/secret directories and a
-   deployment identity able to provision them without exposing secret values;
-3. a real empty-database run of the integrated native pgvector schema/provider,
-   embedding worker and recovery validator;
-4. a trained, evaluated and registered LLM candidate/last-good pair, immutable
-   adapter revision/digest and authenticated endpoint;
-5. real user/account/data/volume isolation, backup,
-   restore, migration-failure and image/readiness rollback evidence;
-6. measured staging RPO/RTO and checksummed before/after server inventories.
+1. Deploy `r001` core digest `61ab40...`.
+2. Deploy `r002` core digest `02d398...`.
+3. Explicitly roll back to `r001`; state records `rollback_from=r002`.
+4. Redeploy `r002`.
+5. Inject nonexistent core digest; deployment fails and `r002` remains current.
+6. Inject LLM base/Manifest mismatch; readiness returns 503 and `r002` is restored.
+7. Inject unsafe app-role identity; migration fails before candidate core replacement.
 
-Until those items exist, `ops/acceptance/blocked.staging-acceptance.json` and
-`reports/staging-restore-rehearsal.md` remain authoritative: staging is not
-accepted and production cannot be promoted.
+## Protected services
 
-## Next safe sequence
+Before/after inventory digests are
+`f0391c00f39e138997cc19956a343a00f55f6ab719a18306af689f2cc2acfe7d` and
+`0dbdbbbbd610d19cb7f85a0fc7a863e724eb2a7e2985381b334aff443d55af57`.
+All 22 protected containers remained running and had start timestamps older
+than the Staging window. No protected container, network, volume, database,
+route, firewall rule, DNS record, certificate or proxy configuration changed.
 
-1. Run the integrated Memory contract/recovery suite against an approved empty
-   isolated PostgreSQL + pgvector database; train/evaluate/register the LLM
-   candidate and identify its last-good rollback target.
-2. CI builds/pushes immutable images and generates a non-placeholder staging
-   Release Manifest with registered model/adapter evidence.
-3. Provision only `/opt/meguri/staging` directories and independent mode-0600
-   secret files through an approved server deployment identity.
-4. Capture protected-server inventory, deploy staging, run empty-DB migration
-   and isolation tests, create/restore a backup, inject migration/image/readiness
-   faults, and capture the after inventory.
-5. Replace the blocked staging artifact only when every required check is true;
-   update the restore report with real RPO/RTO.
-6. Keep production blocked until its separate approval and exposure gates are
-   resolved. Do not change OpenResty/1Panel or traffic as part of staging proof.
+## Commits
 
-## Fine-grained commits
+The original fine-grained E-001 through E-010 commits remain listed in Git
+history. This runtime completion pass added:
 
-- `4e91939` baseline report
-- `add61a8` isolated Compose baseline
-- `20be91d` isolation checker
-- `b78a5bd` Release Manifest
-- `5097f46` migration/app-role gate
-- `cf7118d` runtime readiness and file secrets
-- `0198fb4` exposure inventory
-- `ce809f0` staging deploy/last-good rollback
-- `b05566c` backup/restore rehearsal
-- `ebc7003` CI/CD and production approval
-- `877aa6a` native pgvector Memory integration and environment adaptation
-- `8925618` Memory recovery/release evidence integration
-- `04c58af` evaluated LLM registry integration
-- `ed52a05` authenticated LLM staging gateway and last-good routing integration
-- `1871e7f` integrated runtime Release Manifest and handoff gates
-- `c6cb144` LLM human/safety Staging-gate integration
-- `3021d67` LLM dataset/source-build identity integration
+- `5d1e709` remote image-build efficiency;
+- `e8473e0` adapterless external DeepSeek release support;
+- `575aba7` TLS remote-control-plane deploy/backup support;
+- `60c8921` restored table-count and fixed-query verification;
+- `604a07e` active-memory identity fingerprint verification.
 
-The original E-010 evidence commit is `0e65465`; a final synchronization commit
-records the post-integration contracts, tests and blocker state.
+The only unrelated worktree edit, `training/generate_tts_samples.py`, remains
+unstaged and untouched.
+
+## Handoffs
+
+- `docs/contracts/environment-contract.md`
+- `docs/contracts/memory-environment-handoff.md`
+- `docs/contracts/llm-staging-handoff.md`
+- `ops/contracts/memory-agent.environment-contract.json`
+- `ops/contracts/llm-agent.environment-contract.json`
+
+## Remaining and blocked operations
+
+Required before full Staging GO:
+
+1. Provision a dedicated DeepSeek key into
+   `/opt/meguri/staging/secrets/llm-api-key.txt` without printing it.
+2. Re-run real Turn, SSE reconnect/cancel, RAG and native MemoryProvider smoke.
+3. Replace the blocked acceptance status only after those results pass.
+
+Still prohibited without separate approval: Production migration or restore,
+Production mutation, traffic switching, OpenResty/1Panel changes, firewall,
+DNS, certificate or public-entry changes, existing PostgreSQL changes,
+AstrBot changes, and deletion of any existing image, container or volume.
