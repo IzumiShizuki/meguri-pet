@@ -154,15 +154,15 @@ def create_app(manager: ModelManager, settings: GatewaySettings) -> FastAPI:
 
 
 def settings_from_env() -> GatewaySettings:
-    api_key_file = os.environ.get("MEGURI_LLM_GATEWAY_API_KEY_FILE", "")
+    api_key_file = os.environ.get("MEGURI_LLM_API_KEY_FILE", "")
     if not api_key_file:
-        raise RuntimeError("MEGURI_LLM_GATEWAY_API_KEY_FILE is required")
+        raise RuntimeError("MEGURI_LLM_API_KEY_FILE is required")
     try:
         api_key = open(api_key_file, encoding="utf-8").read().strip()
     except OSError as exc:
         raise RuntimeError("cannot read gateway API key file") from exc
     return GatewaySettings(
         api_key=api_key,
-        timeout_seconds=float(os.environ.get("MEGURI_LLM_GATEWAY_TIMEOUT_SECONDS", "60")),
-        max_concurrency=int(os.environ.get("MEGURI_LLM_GATEWAY_MAX_CONCURRENCY", "1")),
+        timeout_seconds=float(os.environ.get("MEGURI_LLM_TIMEOUT_SECONDS", "60")),
+        max_concurrency=int(os.environ.get("MEGURI_LLM_MAX_CONCURRENCY", "1")),
     )
