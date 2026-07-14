@@ -12,7 +12,7 @@
   "prompt_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
   "response_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
   "expression_map_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
-  "database_revision": "framework-bootstrap",
+  "database_revision": "20260714_0004",
   "embedding_model_revision": "not-configured-for-example",
   "llm_base_model": "mock-v1",
   "llm_adapter_revision": null,

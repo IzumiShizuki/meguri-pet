@@ -43,10 +43,22 @@ class MigrationComposeContractTests(unittest.TestCase):
         self.assertEqual(compose["services"]["migration"]["pull_policy"], "always")
 
     def test_initial_revision_enables_pgvector(self) -> None:
-        revision = ROOT / "migrations" / "versions" / "20260714_0001_environment_bootstrap.py"
+        revision = ROOT / "migrations" / "versions" / "20260714_0001_enable_pgvector.py"
         content = revision.read_text(encoding="utf-8")
         self.assertIn('revision: str = "20260714_0001"', content)
         self.assertIn("CREATE EXTENSION IF NOT EXISTS vector", content)
+
+    def test_memory_schema_revision_chain_ends_at_expected_head(self) -> None:
+        revisions = sorted((ROOT / "migrations" / "versions").glob("20260714_*.py"))
+        self.assertEqual(
+            [path.stem for path in revisions],
+            [
+                "20260714_0001_enable_pgvector",
+                "20260714_0002_create_memory_tables",
+                "20260714_0003_create_memory_indexes",
+                "20260714_0004_add_memory_outbox",
+            ],
+        )
 
 
 class MigrationEntrypointTests(unittest.TestCase):

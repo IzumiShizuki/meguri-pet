@@ -89,6 +89,7 @@ services:
       MEGURI_RELEASE_MANIFEST_PATH: /run/meguri/release-manifest.json
       MEGURI_EXPRESSION_MAP_PATH: /app/datasets/meguri/exports/expression_map/expression_map.json
       MEGURI_DATABASE_URL_FILE: /run/secrets/database_url
+      MEGURI_TENANT_ID: ${MEGURI_TENANT_ID:?MEGURI_TENANT_ID is required}
       MEGURI_MEMORY_PROVIDER: ${MEGURI_MEMORY_PROVIDER:?MEGURI_MEMORY_PROVIDER is required}
       MEGURI_LLM_PROVIDER: ${MEGURI_LLM_PROVIDER:?MEGURI_LLM_PROVIDER is required}
       MEGURI_LLM_BASE_URL: ${MEGURI_LLM_BASE_URL:-}

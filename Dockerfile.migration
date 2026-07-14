@@ -18,6 +18,9 @@ COPY alembic.ini ./alembic.ini
 COPY migrations ./migrations
 COPY ops/__init__.py ./ops/__init__.py
 COPY ops/migration ./ops/migration
+COPY services/__init__.py ./services/__init__.py
+COPY services/meguri_core/__init__.py ./services/meguri_core/__init__.py
+COPY services/meguri_core/memory_service ./services/meguri_core/memory_service
 
 RUN chown -R meguri:meguri /app
 

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from .models import (
     CandidateReview,
+    HardDeleteResult,
     IdentityBinding,
     IdentityBindingCreate,
     MemoryActor,
@@ -52,6 +53,14 @@ class AuthoritativeMemoryProvider(Protocol):
         *,
         request_id: str,
     ) -> MemoryCandidate: ...
+
+    async def list_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        status: str | None = None,
+    ) -> list[MemoryCandidate]: ...
 
     async def review_candidate(
         self,
@@ -111,6 +120,18 @@ class AuthoritativeMemoryProvider(Protocol):
         request_id: str,
     ) -> MemoryExport: ...
 
+    async def hard_delete(
+        self,
+        memory_id: UUID,
+        *,
+        tenant_id: str,
+        user_id: str,
+        reason: str,
+        confirmation: str,
+        actor: MemoryActor,
+        request_id: str,
+    ) -> HardDeleteResult: ...
+
     async def bind_identity(
         self,
         binding: IdentityBindingCreate,
@@ -119,6 +140,13 @@ class AuthoritativeMemoryProvider(Protocol):
         request_id: str,
     ) -> IdentityBinding: ...
 
+    async def list_identity_bindings(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[IdentityBinding]: ...
+
     async def unbind_identity(
         self,
         binding_id: UUID,
@@ -126,6 +154,14 @@ class AuthoritativeMemoryProvider(Protocol):
         actor: MemoryActor,
         request_id: str,
     ) -> None: ...
+
+    async def resolve_identity(
+        self,
+        *,
+        tenant_id: str,
+        platform: str,
+        platform_user_id: str,
+    ) -> str | None: ...
 
     async def summarize_session(
         self,

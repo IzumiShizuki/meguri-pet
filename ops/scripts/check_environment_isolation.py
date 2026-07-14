@@ -183,6 +183,8 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
         add("project_name", "env.COMPOSE_PROJECT_NAME", f"expected {expected_project!r}")
     if env.get("MEGURI_ENV") != environment:
         add("environment_identity", "env.MEGURI_ENV", f"expected {environment!r}")
+    if env.get("MEGURI_TENANT_ID") != expected_project:
+        add("tenant_identity", "env.MEGURI_TENANT_ID", f"expected {expected_project!r}")
 
     networks = compose.get("networks") or {}
     for key, expected_name in expected_networks.items():
@@ -324,6 +326,7 @@ def validate_uniqueness(configurations: dict[str, tuple[dict[str, str], dict[str
         "MEGURI_POSTGRES_DB",
         "MEGURI_POSTGRES_USER",
         "MEGURI_POSTGRES_APP_USER",
+        "MEGURI_TENANT_ID",
         "MEGURI_POSTGRES_VOLUME",
         "MEGURI_EDGE_NETWORK",
         "MEGURI_INTERNAL_NETWORK",
