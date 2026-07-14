@@ -127,6 +127,14 @@ class AuthoritativeMemoryProvider(Protocol):
         request_id: str,
     ) -> None: ...
 
+    async def resolve_identity(
+        self,
+        *,
+        tenant_id: str,
+        platform: str,
+        platform_user_id: str,
+    ) -> str | None: ...
+
     async def summarize_session(
         self,
         summary: SessionSummaryUpsert,

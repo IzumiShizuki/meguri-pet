@@ -241,6 +241,23 @@ class NativePgvectorMemoryProvider:
             binding_id, actor=actor, request_id=request_id
         )
 
+    async def resolve_identity(
+        self,
+        *,
+        tenant_id: str,
+        platform: str,
+        platform_user_id: str,
+    ) -> str | None:
+        async with self.uow_factory() as uow:
+            repository = uow.repository
+            if repository is None:
+                raise RuntimeError("memory unit of work is not active")
+            return await repository.resolve_identity(
+                tenant_id=tenant_id,
+                platform=platform,
+                platform_user_id=platform_user_id,
+            )
+
     async def summarize_session(self, summary, **kwargs):
         if isinstance(summary, SessionSummaryUpsert):
             return await self.service.summarize_session(summary, **kwargs)
