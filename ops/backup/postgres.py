@@ -18,6 +18,17 @@ from ops.scripts.check_environment_isolation import read_env_file
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 SAFE_RELEASE = re.compile(r"^[A-Za-z0-9._-]+$")
+CORE_TABLES = (
+    "identity_bindings",
+    "memory_candidates",
+    "memory_items",
+    "memory_versions",
+    "memory_embeddings",
+    "memory_feedback",
+    "session_summaries",
+    "memory_audit_log",
+    "memory_outbox",
+)
 
 
 class BackupError(RuntimeError):
@@ -62,6 +73,25 @@ def sha256_file(path: Path) -> str:
 
 def timestamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def recovery_snapshot(database: StagingDatabase, *, target: str | None = None) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    try:
+        for table in CORE_TABLES:
+            counts[table] = int(database.query(f"SELECT count(*) FROM {table}", database=target))
+        active_items = int(
+            database.query(
+                "SELECT count(*) FROM memory_items WHERE status = 'active'",
+                database=target,
+            )
+        )
+    except ValueError as exc:
+        raise BackupError("database recovery snapshot returned a non-integer count") from exc
+    return {
+        "table_counts": counts,
+        "fixed_queries": {"active_memory_items": active_items},
+    }
 
 
 class StagingDatabase:
@@ -161,6 +191,7 @@ def create_backup(database: StagingDatabase, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     revision = database.query("SELECT version_num FROM alembic_version")
     server_version = database.query("SHOW server_version")
+    snapshot = recovery_snapshot(database)
     archive = output_dir / f"{timestamp()}_{release_id}.dump"
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{archive.name}.", suffix=".tmp", dir=output_dir)
     os.close(descriptor)
@@ -182,6 +213,7 @@ def create_backup(database: StagingDatabase, output_dir: Path) -> Path:
         "database": database.database,
         "database_revision": revision,
         "postgres_server_version": server_version,
+        "recovery_snapshot": snapshot,
         "archive_file": archive.name,
         "archive_bytes": archive.stat().st_size,
         "archive_sha256": sha256_file(archive),
@@ -225,6 +257,9 @@ def rehearse_restore(database: StagingDatabase, metadata_path: Path, target: str
             raise BackupError("restored Alembic revision does not match backup metadata")
         if not vector_version:
             raise BackupError("restored database does not contain pgvector")
+        restored_snapshot = recovery_snapshot(database, target=target)
+        if restored_snapshot != metadata.get("recovery_snapshot"):
+            raise BackupError("restored core-table counts or fixed queries do not match backup metadata")
     finally:
         if created:
             database.command("dropdb", "-U", database.owner, "--force", target)
@@ -236,6 +271,7 @@ def rehearse_restore(database: StagingDatabase, metadata_path: Path, target: str
             "target_database": target,
             "database_revision": revision,
             "pgvector_version": vector_version,
+            "recovery_snapshot": restored_snapshot,
             "completed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         },
     }

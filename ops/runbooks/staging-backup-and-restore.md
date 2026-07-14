@@ -40,7 +40,8 @@ python ops/scripts/rehearse_staging_restore.py \
 
 The rehearsal rejects a changed size or checksum before database mutation,
 creates only the named temporary database, restores with owner/ACL disabled,
-checks the Alembic revision and pgvector extension, and drops the temporary
+checks the Alembic revision and pgvector extension, compares all nine core
+memory-table counts plus the fixed active-memory query, and drops the temporary
 database with `--force` even when validation fails. A successful rehearsal is
 written back to the metadata atomically.
 

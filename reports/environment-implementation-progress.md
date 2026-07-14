@@ -206,6 +206,11 @@
   standalone Compose executable and an explicit
   `MEGURI_CONTROL_PLANE_BACKUP_DIR`. Database commands remain inside the
   isolated staging container and the checksum gate is unchanged.
+- Recovery evidence now snapshots all nine authoritative memory-table counts
+  and a fixed active-memory query before `pg_dump`, compares the same values in
+  the isolated restored database, and still force-drops the target on a count
+  mismatch. Seven backup/restore tests pass, including the mismatch cleanup
+  fault path.
 
 ## E-009 - CI/CD boundaries and production approval
 
