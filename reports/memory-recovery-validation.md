@@ -10,6 +10,6 @@ Expected revision: `20260714_0004`
 - Staging backup restore rehearsal: **not executed**; the environment contract remains `implementation-required-before-staging` and provides no accessible restored target.
 - Production restore/write: **not authorized**.
 
-The read-only validator checks all nine required table counts, same-item `current_version_id`, active-item version existence, ready-embedding content hashes, audit replay of create/supersede/delete/restore/hard-delete and expected Alembic revision. The integration test is present and automatically runs when a test database URL is supplied.
+The read-only validator checks all nine required table counts, same-item `current_version_id`, active-item version existence, ready-embedding content hashes, audit replay of create/supersede/delete/restore/hard-delete and expected Alembic revision. It now accepts an approved fixed-recall corpus, verifies expected memory and optional current-version IDs through the native provider, emits content-free case/count evidence and fails when `--require-fixed-recall` is set without a corpus or any case misses its threshold. The integration test automatically exercises these gates when a test database URL and optional corpus path are supplied.
 
-This report does not claim real RPO, RTO, archive integrity, restored counts or fixed-recall stability. Those remain a staging gate.
+This report does not claim real RPO, RTO, archive integrity, restored counts or fixed-recall stability because no restored target or approved corpus was provided. Those remain a staging gate, but the gate is now executable rather than prose-only.

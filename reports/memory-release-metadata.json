@@ -6,5 +6,7 @@
   "data_build_id": "meguri_v2_02c3db0c507d7c2d",
   "vector_search_mode": "exact",
   "ann_index_enabled": false,
-  "staging_validation": "blocked-no-test-database"
+  "staging_validation": "blocked-no-test-database",
+  "embedding_runtime_validation": "blocked-dependency-and-cache-unavailable",
+  "fixed_recall_validation": "blocked-no-restored-target"
 }
