@@ -108,6 +108,17 @@ class NativePgvectorMemoryProvider:
     ) -> MemoryCandidate:
         return await self.service.create_candidate(candidate, request_id=request_id)
 
+    async def list_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        status: str | None = None,
+    ) -> list[MemoryCandidate]:
+        return await self.service.list_candidates(
+            tenant_id=tenant_id, user_id=user_id, status=status
+        )
+
     async def review_candidate(
         self,
         candidate_id: UUID,
@@ -228,6 +239,16 @@ class NativePgvectorMemoryProvider:
     ) -> IdentityBinding:
         return await self.service.bind_identity(
             binding, actor=actor, request_id=request_id
+        )
+
+    async def list_identity_bindings(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[IdentityBinding]:
+        return await self.service.list_identity_bindings(
+            tenant_id=tenant_id, user_id=user_id
         )
 
     async def unbind_identity(

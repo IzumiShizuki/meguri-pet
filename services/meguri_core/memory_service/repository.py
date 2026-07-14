@@ -194,6 +194,26 @@ class SqlAlchemyMemoryRepository:
             .with_for_update()
         )
 
+    async def list_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        status: str | None = None,
+    ) -> list[MemoryCandidate]:
+        statement = (
+            select(MemoryCandidateRow)
+            .where(
+                MemoryCandidateRow.tenant_id == tenant_id,
+                MemoryCandidateRow.user_id == user_id,
+            )
+            .order_by(MemoryCandidateRow.created_at.desc())
+        )
+        if status:
+            statement = statement.where(MemoryCandidateRow.status == status)
+        rows = list((await self.session.scalars(statement)).all())
+        return [candidate_model(row) for row in rows]
+
     async def finish_candidate(
         self,
         row: MemoryCandidateRow,
@@ -674,6 +694,23 @@ class SqlAlchemyMemoryRepository:
             .where(IdentityBindingRow.binding_id == binding_id)
             .with_for_update()
         )
+
+    async def list_identity_bindings(
+        self, *, tenant_id: str, user_id: str
+    ) -> list[IdentityBinding]:
+        rows = list(
+            (
+                await self.session.scalars(
+                    select(IdentityBindingRow)
+                    .where(
+                        IdentityBindingRow.tenant_id == tenant_id,
+                        IdentityBindingRow.user_id == user_id,
+                    )
+                    .order_by(IdentityBindingRow.created_at)
+                )
+            ).all()
+        )
+        return [binding_model(row) for row in rows]
 
     async def unbind_identity(self, row: IdentityBindingRow) -> None:
         row.status = IdentityBindingStatus.UNBOUND.value

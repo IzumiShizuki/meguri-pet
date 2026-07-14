@@ -53,6 +53,14 @@ class AuthoritativeMemoryProvider(Protocol):
         request_id: str,
     ) -> MemoryCandidate: ...
 
+    async def list_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        status: str | None = None,
+    ) -> list[MemoryCandidate]: ...
+
     async def review_candidate(
         self,
         candidate_id: UUID,
@@ -118,6 +126,13 @@ class AuthoritativeMemoryProvider(Protocol):
         actor: MemoryActor,
         request_id: str,
     ) -> IdentityBinding: ...
+
+    async def list_identity_bindings(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[IdentityBinding]: ...
 
     async def unbind_identity(
         self,

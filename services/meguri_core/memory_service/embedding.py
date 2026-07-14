@@ -7,6 +7,7 @@ import re
 from uuid import UUID
 
 from .repository import MemoryUnitOfWorkFactory
+from .metrics import MemoryMetrics, memory_metrics
 
 
 EmbedCallable = Callable[[Sequence[str]], list[list[float]] | Awaitable[list[list[float]]]]
@@ -51,6 +52,7 @@ class EmbeddingWorker:
         lease_seconds: int = 300,
         max_attempts: int = 5,
         base_retry_seconds: int = 30,
+        metrics: MemoryMetrics | None = None,
     ) -> None:
         if not worker_id.strip():
             raise ValueError("worker_id must not be empty")
@@ -61,6 +63,7 @@ class EmbeddingWorker:
         self.lease_seconds = lease_seconds
         self.max_attempts = max_attempts
         self.base_retry_seconds = base_retry_seconds
+        self.metrics = metrics or memory_metrics
 
     @staticmethod
     def _repository(unit_of_work):
@@ -77,6 +80,7 @@ class EmbeddingWorker:
                 lease_seconds=self.lease_seconds,
             )
         completed = failed = 0
+        self.metrics.set_gauge("memory_embedding_queue_depth", len(claimed))
         for task in claimed:
             try:
                 version_id = UUID(str(task.payload["version_id"]))
@@ -111,4 +115,6 @@ class EmbeddingWorker:
                         retry_delay_seconds=retry_delay,
                     )
                 failed += 1
+                self.metrics.inc("memory_embedding_failure_total")
+        self.metrics.set_gauge("memory_embedding_queue_depth", 0)
         return {"claimed": len(claimed), "completed": completed, "failed": failed}

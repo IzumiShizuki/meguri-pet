@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 from uuid import UUID
 
@@ -38,6 +39,7 @@ from .repository import (
 )
 from .retrieval import build_hit, rerank_and_budget
 from .review_policy import CandidateReviewPolicy
+from .metrics import MemoryMetrics, memory_metrics
 
 
 def require_request_id(request_id: str) -> str:
@@ -80,10 +82,12 @@ class MemoryService:
         *,
         review_policy: CandidateReviewPolicy | None = None,
         conflict_resolver: ConflictResolver | None = None,
+        metrics: MemoryMetrics | None = None,
     ) -> None:
         self.uow_factory = unit_of_work_factory
         self.review_policy = review_policy or CandidateReviewPolicy()
         self.conflict_resolver = conflict_resolver or ConflictResolver()
+        self.metrics = metrics or memory_metrics
 
     async def create_candidate(
         self,
@@ -140,7 +144,22 @@ class MemoryService:
                 request_id,
                 created.model_dump(mode="json"),
             )
+            self.metrics.inc("memory_candidate_created_total")
+            if evaluation.rejected:
+                self.metrics.inc("memory_candidate_rejected_total")
             return created
+
+    async def list_candidates(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+        status: str | None = None,
+    ) -> list[MemoryCandidate]:
+        async with self.uow_factory() as uow:
+            return await repository_of(uow).list_candidates(
+                tenant_id=tenant_id, user_id=user_id, status=status
+            )
 
     async def review_candidate(
         self,
@@ -186,6 +205,7 @@ class MemoryService:
                 await repository.put_idempotent(
                     row.tenant_id, operation, request_id, {"item": None}
                 )
+                self.metrics.inc("memory_candidate_rejected_total")
                 return None
 
             self.review_policy.assert_approval_safe(candidate_create)
@@ -195,6 +215,8 @@ class MemoryService:
                 memory_type=row.memory_type,
             )
             resolution = self.conflict_resolver.resolve(candidate_create, existing)
+            if resolution.action in {ConflictAction.SUPERSEDE, ConflictAction.REJECT}:
+                self.metrics.inc("memory_conflict_total")
             action = AuditAction.ITEM_CREATE
             if resolution.action is ConflictAction.DUPLICATE:
                 item = next(
@@ -263,9 +285,13 @@ class MemoryService:
             )
             response = {"item": item.model_dump(mode="json")}
             await repository.put_idempotent(row.tenant_id, operation, request_id, response)
+            self.metrics.inc("memory_candidate_approved_total")
+            if resolution.action is ConflictAction.CREATE:
+                self.metrics.add_gauge("memory_active_total", 1)
             return item
 
     async def search(self, query: MemorySearchQuery) -> list[MemoryHit]:
+        started = perf_counter()
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
             retrieved = []
@@ -293,9 +319,14 @@ class MemoryService:
             )
             for entry in combined.values()
         ]
-        return rerank_and_budget(
+        results = rerank_and_budget(
             hits, token_budget=query.token_budget, limit=query.limit
         )
+        self.metrics.set_gauge(
+            "memory_search_latency_ms", (perf_counter() - started) * 1000
+        )
+        self.metrics.set_gauge("memory_search_result_count", len(results))
+        return results
 
     async def get(
         self,
@@ -438,6 +469,9 @@ class MemoryService:
             await repository.put_idempotent(
                 tenant_id, operation, request_id, updated.model_dump(mode="json")
             )
+            self.metrics.add_gauge(
+                "memory_active_total", 1 if target is MemoryStatus.ACTIVE else -1
+            )
             return updated
 
     async def export_user(
@@ -507,6 +541,17 @@ class MemoryService:
                 result.model_dump(mode="json"),
             )
             return result
+
+    async def list_identity_bindings(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[IdentityBinding]:
+        async with self.uow_factory() as uow:
+            return await repository_of(uow).list_identity_bindings(
+                tenant_id=tenant_id, user_id=user_id
+            )
 
     async def unbind_identity(
         self,

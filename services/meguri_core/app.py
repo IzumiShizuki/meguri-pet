@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import PlainTextResponse
 
 from .config import BUILD_ID
 from .memory import ManualMemoryReviewRequest
@@ -23,9 +26,15 @@ app.add_middleware(
         "http://localhost:5173",
     ],
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Idempotency-Key", "Last-Event-ID"],
+    allow_headers=[
+        "Content-Type",
+        "Idempotency-Key",
+        "Last-Event-ID",
+        "X-Request-ID",
+    ],
 )
 orchestrator = TurnOrchestrator()
+app.state.orchestrator = orchestrator
 
 
 @app.get("/health")
@@ -151,7 +160,44 @@ async def review_memory(request: ManualMemoryReviewRequest) -> dict:
 
 
 @app.delete("/v1/memories/{memory_id}")
-async def delete_memory(memory_id: str, user_id: str) -> dict:
+async def delete_memory(
+    memory_id: str,
+    request: Request,
+    user_id: str | None = None,
+    reason: str = "user_requested",
+    request_id: str | None = Header(default=None, alias="X-Request-ID"),
+) -> dict:
+    from .api_auth import get_api_principal
+    from .memory_api import memory_call
+    from .memory_service.contracts import AuthoritativeMemoryProvider
+
+    if isinstance(orchestrator.memory, AuthoritativeMemoryProvider):
+        principal = await get_api_principal(request)
+        if not principal.formal_memory_allowed:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "verified_binding_required", "message": "verified identity binding is required"},
+            )
+        if request_id is None or not request_id.strip():
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "request_id_required", "message": "X-Request-ID is required"},
+            )
+        await memory_call(
+            orchestrator.memory.delete(
+                UUID(memory_id),
+                tenant_id=principal.tenant_id,
+                user_id=principal.user_id,
+                reason=reason,
+                actor=principal.memory_actor(),
+                request_id=request_id,
+            )
+        )
+        return {"memory_id": memory_id, "status": "deleted"}
+    if os.getenv("MEGURI_ENV") == "production":
+        raise HTTPException(status_code=403, detail="legacy memory mutation is disabled")
+    if user_id is None:
+        raise HTTPException(status_code=400, detail="user_id is required")
     records = await orchestrator.memory.list_records(user_id, include_deleted=True)
     if not any(record.memory_id == memory_id for record in records):
         raise HTTPException(status_code=404, detail="memory not found")
@@ -165,3 +211,16 @@ async def delete_memory(memory_id: str, user_id: str) -> dict:
 @app.exception_handler(ValueError)
 async def value_error_handler(_, exc: ValueError):
     return JSONResponse(status_code=400, content={"error": str(exc), "build_id": BUILD_ID})
+
+
+from .identity_api import router as identity_router
+from .memory_api import router as authoritative_memory_router
+from .memory_service.metrics import memory_metrics
+
+app.include_router(authoritative_memory_router)
+app.include_router(identity_router)
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    return memory_metrics.render()
