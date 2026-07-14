@@ -37,6 +37,7 @@ def health() -> dict:
         "build_id": BUILD_ID,
         "mode": "local-mock" if provider_name == "mock" else "configured-provider",
         "llm_provider": provider_name,
+        "memory_provider": getattr(orchestrator.memory, "provider_name", "fake"),
         "rag_chunks": len(orchestrator.rag.rows),
     }
 

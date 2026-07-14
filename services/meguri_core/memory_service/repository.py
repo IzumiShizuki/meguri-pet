@@ -264,6 +264,14 @@ class SqlAlchemyMemoryRepository:
         result = (await self.session.execute(statement)).first()
         return item_model(*result) if result else None
 
+    async def get_item_owner(self, memory_id: UUID, *, tenant_id: str) -> str | None:
+        return await self.session.scalar(
+            select(MemoryItemRow.user_id).where(
+                MemoryItemRow.memory_id == memory_id,
+                MemoryItemRow.tenant_id == tenant_id,
+            )
+        )
+
     async def list_active_items(
         self,
         *,

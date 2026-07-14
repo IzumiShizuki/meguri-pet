@@ -12,13 +12,13 @@ import yaml
 from .config import BUILD_ID, DATA_ROOT, DEFAULT_TIMEZONE
 from .memory import (
     CompanionMemoryPolicy,
-    FakeMemoryProvider,
     MemoryExtractionInput,
     MemoryProvider,
     MemorySearchInput,
     SessionContextStore,
     SessionMessage,
 )
+from .memory_provider_factory import create_memory_provider_from_env
 from .providers import LlmProvider, MockRagProvider, create_llm_provider_from_env
 from .schemas import (
     ChatResponse, EventEnvelope, EventMetadata, LlmResponse, ResolvedExpression, RuntimeOverride,
@@ -145,7 +145,7 @@ class TurnOrchestrator:
     ):
         self.state_machine = RuntimeStateMachine()
         self.rag = MockRagProvider(DATA_ROOT)
-        self.memory: MemoryProvider = memory_provider or FakeMemoryProvider()
+        self.memory: MemoryProvider = memory_provider or create_memory_provider_from_env()
         self.memory_policy = CompanionMemoryPolicy()
         self.sessions = SessionContextStore()
         self.llm = llm_provider or create_llm_provider_from_env()
