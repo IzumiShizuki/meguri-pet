@@ -26,7 +26,7 @@ from .common import (
 )
 
 
-CONVERTER_VERSION = "1.0.3"
+CONVERTER_VERSION = "1.1.0"
 EXPECTED_COUNTS = {
     "train": {"jp": 1313, "zh": 1313},
     "validation": {"jp": 283, "zh": 283},
@@ -454,7 +454,10 @@ def build_dataset(
 
     prompt, prompt_hash = _system_prompt()
     _, schema_hash, allowed_tags = _response_contract()
-    source_hashes: dict[str, str] = {}
+    split_metadata_hash = sha256_file(split_root / "test_scene_ids.txt")
+    source_hashes: dict[str, str] = {
+        "build_report.json": sha256_file(data_root / "build_report.json"),
+    }
     converted: dict[str, list[dict[str, Any]]] = {"train": [], "validation": []}
     for split in ("train", "validation"):
         for language in ("jp", "zh"):
@@ -488,6 +491,7 @@ def build_dataset(
         "input_hashes": source_hashes,
         "prompt_sha256": prompt_hash,
         "response_schema_sha256": schema_hash,
+        "split_metadata_sha256": split_metadata_hash,
         "converter_version": CONVERTER_VERSION,
         "normalization_policy": {
             "voice_style": VOICE_STYLE_NORMALIZATION,
@@ -521,7 +525,7 @@ def build_dataset(
         "locked_eval_count": expected_counts["locked_eval"]["jp"] + expected_counts["locked_eval"]["zh"],
         "languages": ["ja", "zh"],
         "input_hashes": source_hashes,
-        "split_metadata_sha256": sha256_file(split_root / "test_scene_ids.txt"),
+        "split_metadata_sha256": split_metadata_hash,
         "conversion_commit": git_commit(),
         "converter_version": CONVERTER_VERSION,
         "normalization_policy": identity["normalization_policy"],
