@@ -16,8 +16,8 @@ Branch: `codex/feat/native-pgvector-memory`
 | M-007 | Complete | `d229995` | Native PostgreSQL provider and opt-in runtime factory with compatibility facade | Provider tests and legacy suite; default provider remains fake unless explicitly enabled |
 | M-008 | Complete | `ba69b02` | Verified identity bindings, HMAC opaque fallback identity, cross-client sharing and session isolation rules | Identity resolver tests; unverified identities cannot write formal memory |
 | M-009 | Complete | `5ca5912` | Authenticated authoritative API, admin-only review/binding, server-derived tenant/user scope, stable sanitized errors, unlabelled metrics | API boundary tests plus full regression suite; disable with `MEGURI_MEMORY_PROVIDER=fake` |
-| M-010 | Complete | this commit | JSONL export with every immutable version, provenance and audit events; audited soft delete/restore; feature-flagged admin hard delete after mandatory soft delete and typed confirmation | Export/lifecycle/API tests; hard delete retains append-only audit evidence and is disabled unless `MEGURI_ALLOW_HARD_DELETE=true` |
-| M-011 | Pending | — | MemoryOS import-only and Mem0 shadow-only adapters | Pending |
+| M-010 | Complete | `c8ccad4` | JSONL export with every immutable version, provenance and audit events; audited soft delete/restore; feature-flagged admin hard delete after mandatory soft delete and typed confirmation | Export/lifecycle/API tests; hard delete retains append-only audit evidence and is disabled unless `MEGURI_ALLOW_HARD_DELETE=true` |
+| M-011 | Complete | this commit | Existing MemoryOS read-only importer and Mem0 aggregate-only shadow evaluator | Offline adapter/import/shadow tests; no live third-party instance was mutated and shadow results have no runtime prompt path |
 | M-012 | Pending | — | Recovery validation, performance evidence, release and final reports | Pending |
 
 ## Current gates
