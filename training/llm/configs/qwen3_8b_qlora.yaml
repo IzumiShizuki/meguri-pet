@@ -1,0 +1,53 @@
+schema_version: 1
+experiment_family: qwen3_8b_qlora
+enabled: false
+enablement_gates:
+  - four_b_pipeline_stable
+  - four_b_quality_below_threshold
+  - sixteen_gib_probe_passed
+  - smoke_100_to_200_passed
+  - project_lead_approved_training_time
+model:
+  repo_id: Qwen/Qwen3-8B
+  revision: b968826d9c46dd6066d109eabc6255188de91218
+  tokenizer_repo_id: Qwen/Qwen3-8B
+  tokenizer_revision: b968826d9c46dd6066d109eabc6255188de91218
+  loader: unsloth_language
+  multimodal: false
+  train_vision_layers: false
+  train_language_layers: true
+  load_in_4bit: true
+  dtype: bfloat16
+  quantization:
+    type: nf4
+    double_quant: true
+training:
+  max_seq_length: 2048
+  packing: false
+  assistant_only_loss: true
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 16
+  gradient_checkpointing: unsloth
+  learning_rate: 0.0001
+  num_train_epochs: 1.0
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  lr_scheduler_type: cosine
+  optimizer: adamw_8bit
+  logging_steps: 10
+  eval_steps: 50
+  save_steps: 50
+  save_total_limit: 3
+  seed: 3407
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+  target_modules: all-linear
+hardware:
+  expected_gpu_contains: RTX 5060 Ti
+  minimum_total_vram_gib: 15.0
+  maximum_training_peak_gib: 14.5
+  require_bf16: true

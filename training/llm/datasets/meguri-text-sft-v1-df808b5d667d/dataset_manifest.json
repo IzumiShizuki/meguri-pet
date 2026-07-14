@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "dataset_id": "meguri-text-sft-v1-df808b5d667d",
+  "source_build_id": "meguri_v2_02c3db0c507d7c2d",
+  "train_count": 2626,
+  "validation_count": 566,
+  "locked_eval_count": 184,
+  "languages": [
+    "ja",
+    "zh"
+  ],
+  "input_hashes": {
+    "exports/text_sft/jp_train.jsonl": "2604af0fc383c3c9234c3e3bc40b6bea3770b8aeb29691b106d31cab76adec8d",
+    "exports/text_sft/zh_train.jsonl": "4e51262ea272aab9eb1c6ee09a0172346850a1167adbba3d74af6c30fcbbac20",
+    "exports/text_sft/jp_validation.jsonl": "c58853156842e8c1f41dee73ce2c41d649eeb217f7d24bece8215d1532f46216",
+    "exports/text_sft/zh_validation.jsonl": "31d3a5b31c21e97ab6d20f9ad8639f56b896b7ae5240bafe63303cdfcec8fda8"
+  },
+  "split_metadata_sha256": "18e62a2b02594fcab964bdbde10a0d019ca9631c84af617c8db9ca4146679acc",
+  "conversion_commit": "db1e3cfd0ee1aab98d75845a558c4fcb97f0b024",
+  "converter_version": "1.0.3",
+  "normalization_policy": {
+    "voice_style": {
+      "embarrassed": "restrained"
+    },
+    "reason": "map legacy export values into the pinned runtime response schema without mutating sources"
+  },
+  "prompt_sha256": "e17211c6fc2a99d18ffe50c12627b79e93d26f63d8966a1ec7e730faa639946d",
+  "response_schema_sha256": "3819e5f532d33d69bc8a13baeae8f564f0a66d9cd42d7c7cc3feb985f6ba4c03",
+  "created_at": "2026-07-14T13:45:55.441603+00:00",
+  "files": {
+    "train.jsonl": "e5e317f14cca193fc077d4a5586b69f197dbf871635ec65076fbff1e45f4315d",
+    "validation.jsonl": "456b1b9c2c530c8f95b2635afb80dd21251e5e00eb7fd062778f048220cad489",
+    "quality_report.json": "bf0c14e3a5ccd9d491be4f45ac667034e2301924c3ebc5c628c7762ae5f319ed"
+  },
+  "locked_eval_policy": {
+    "content_read_by_converter": false,
+    "used_for_training": false,
+    "used_for_prompt_tuning": false,
+    "count_source": "build_report.json"
+  },
+  "quality_gate_status": "pass"
+}

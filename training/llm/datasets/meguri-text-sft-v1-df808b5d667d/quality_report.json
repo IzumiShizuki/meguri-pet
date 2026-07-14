@@ -1,0 +1,267 @@
+{
+  "status": "pass",
+  "blockers": {
+    "json_parse_errors": 0,
+    "response_schema_errors": 0,
+    "extra_field_errors": 0,
+    "invalid_enum_errors": 0,
+    "scene_leakage": 0,
+    "locked_eval_leakage": 0,
+    "build_id_mixing": 0,
+    "provenance_missing": 0,
+    "duplicate_sample_ids": 0,
+    "count_mismatch_groups": 0,
+    "prompt_hash_count_not_one": 0
+  },
+  "counts": {
+    "train": {
+      "total": 2626,
+      "jp": 1313,
+      "zh": 1313
+    },
+    "validation": {
+      "total": 566,
+      "jp": 283,
+      "zh": 283
+    },
+    "locked_eval": {
+      "total": 184,
+      "jp": 92,
+      "zh": 92,
+      "source": "build_report.json only; locked case content was not read"
+    }
+  },
+  "count_mismatches": {},
+  "scene_leakage": [],
+  "locked_eval_leakage": [],
+  "prompt_hashes": [
+    "e17211c6fc2a99d18ffe50c12627b79e93d26f63d8966a1ec7e730faa639946d"
+  ],
+  "ordinary_empty_memory_candidates": {
+    "count": 3192,
+    "ratio": 1.0
+  },
+  "target_normalizations": {
+    "embarrassed->restrained": 20
+  },
+  "empty_user_messages": 334,
+  "distributions": {
+    "language": {
+      "ja": 1596,
+      "zh": 1596
+    },
+    "relationship_stage": {
+      "lover": 1312,
+      "pursuit": 1678,
+      "sibling": 202
+    },
+    "interaction_mode": {
+      "event": 330,
+      "private": 896,
+      "sleep": 342,
+      "work": 1624
+    },
+    "expression_intensity": {
+      "low": 2248,
+      "medium": 944
+    }
+  },
+  "paired_ratio": {
+    "paired_line_ids": 1596,
+    "total_line_ids": 1596,
+    "ratio": 1.0
+  },
+  "near_duplicate_and_memorization_risk": {
+    "exact_normalized_reply_duplicate_groups": 78,
+    "exact_normalized_reply_duplicate_samples": 267,
+    "examples": [
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "710c7a1c9b8e7ae39a60b79b83dcfa6b6943a64acb984210672b2345bd7a9ad2",
+        "sample_ids": [
+          "meguri_01_e03_0101_jp",
+          "meguri_01_e04_0292_jp",
+          "meguri_01_e04_0316_jp",
+          "meguri_01_e09_0331_jp",
+          "meguri_01_e11_0094_jp",
+          "meguri_01_e11_0216_jp",
+          "meguri_01_e05_0030_jp",
+          "meguri_01_e05_0139_jp",
+          "meguri_01_e05_0291_jp",
+          "meguri_01_e06a_0274_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "81e5e945978fce134588c324b7c9348098848cb1dc2134bf14a862d250f8083a",
+        "sample_ids": [
+          "meguri_01_e02_0035_jp",
+          "meguri_01_e07_0268_jp",
+          "meguri_01_e06a_0050_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "d5c0188a318aee54105205fba2981730d84c29c17f238bb69dd38f872a0a1852",
+        "sample_ids": [
+          "meguri_01_e02_0261_jp",
+          "meguri_01_e12_0143_jp",
+          "meguri_01_e06a_0170_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "c35ef29a8904eb68d39dab1d836c1af135869093b2cb92e7a18465e7028f5376",
+        "sample_ids": [
+          "meguri_00_07_0031_jp",
+          "meguri_00_10_0009_jp",
+          "meguri_00_10_0330_jp",
+          "meguri_01_e02_0128_jp",
+          "meguri_01_e09_0279_jp",
+          "meguri_00_03_0685_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "a0a556072785f3788b11161b4acba585e498372ed6d443584f4490fe0f613c94",
+        "sample_ids": [
+          "meguri_00_10_0043_jp",
+          "meguri_01_e12_0390_jp",
+          "meguri_01_e12_0677_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "7e38ab833c1ac8304d5ca517ac4ccc93e18289eb93cbb0690842a3b4be0fc05a",
+        "sample_ids": [
+          "meguri_00_01_0296_jp",
+          "meguri_01_e07_0221_jp",
+          "meguri_01_e10a_0285_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "fa3802dc76c6c094bc86b369d068e9e827b4e11e1e89032ba76b169262dac992",
+        "sample_ids": [
+          "meguri_01_e01_0298_jp",
+          "meguri_01_e08a_0121_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "aa86a42e01ef3613c250b228dab02950ba21a8f76ace3e4b1594cc23cf7343a7",
+        "sample_ids": [
+          "meguri_01_e03_0049_jp",
+          "meguri_01_e04_0075_jp",
+          "meguri_01_e12_0662_jp",
+          "meguri_00_03_0632_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "721278d605fd76eac51e9728ff017ec962446a6861458f2111b964a91bb7ce15",
+        "sample_ids": [
+          "meguri_00_03_0648_jp",
+          "meguri_01_e06a_0309_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "3488ff9c626184d5f840a38c913d25656ea0a6266a51db4b6967875339e754c8",
+        "sample_ids": [
+          "meguri_01_e01_0290_jp",
+          "meguri_01_e02_0240_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "947045dde6a12a6903584212b4c5275fdc8bc6991a4ef9cccd89bda72c9b6749",
+        "sample_ids": [
+          "meguri_01_e10a_0099_jp",
+          "meguri_01_e06a_0070_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "cee91cea28fadb9c0df76f23300d10d3caf4810b48453751d20375e1e6e184c3",
+        "sample_ids": [
+          "meguri_01_e02_0017_jp",
+          "meguri_01_e08a_0218_jp",
+          "meguri_01_e05_0064_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "030da17b2ba66ae256e94406b640d008159a89bde2607defd07fc6588e1ad946",
+        "sample_ids": [
+          "meguri_01_e03_0097_jp",
+          "meguri_01_e06a_0351_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "7e00e5788b6fe3c5c50880fda0556e46951d5e66611b916feee5f2f420c86587",
+        "sample_ids": [
+          "meguri_01_e09_0292_jp",
+          "meguri_01_e05_0033_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "21b2ba1811e66eef3e01a48e589b379c48c9efa25b3a8354c7e883e04351ba73",
+        "sample_ids": [
+          "meguri_01_e10a_0050_jp",
+          "meguri_01_e12_0351_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "91c565b8b93ee9c44eb5b7f0f1a6943643bcce2e507f7d4e4bf82c858208a752",
+        "sample_ids": [
+          "meguri_01_e08c_0062_jp",
+          "meguri_01_e09_0301_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "9b8e37259ce15d077e22d04901693c13230e4094b7d412aea5722da040ae8442",
+        "sample_ids": [
+          "meguri_00_07_0074_jp",
+          "meguri_01_e06a_0002_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "9ce12e7df174cebe84ef39ec934df71051d5b77591931c71cf28c7aead2edad7",
+        "sample_ids": [
+          "meguri_01_e07_0214_jp",
+          "meguri_01_e10a_0196_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "698bceb8b2cde22b3e18c7997b79111a01188443db7d58daa8772fe9dfeca06c",
+        "sample_ids": [
+          "meguri_01_e04_0246_jp",
+          "meguri_01_e09_0069_jp",
+          "meguri_01_e10a_0080_jp",
+          "meguri_01_e12_0316_jp",
+          "meguri_01_e12_0675_jp"
+        ]
+      },
+      {
+        "language": "ja",
+        "normalized_reply_sha256": "d7d192bdd1e9c1c6ad116d5abc95d82d8677791f3ff36389250b5929aa62799c",
+        "sample_ids": [
+          "meguri_01_e02_0020_jp",
+          "meguri_01_e09_0155_jp"
+        ]
+      }
+    ],
+    "risk_note": "Targets are source-work dialogue; exact/near-match checks remain mandatory during model evaluation."
+  },
+  "schema_version": 1,
+  "dataset_id": "meguri-text-sft-v1-df808b5d667d",
+  "source_build_id": "meguri_v2_02c3db0c507d7c2d",
+  "generated_at": "2026-07-14T13:45:55.417407+00:00"
+}

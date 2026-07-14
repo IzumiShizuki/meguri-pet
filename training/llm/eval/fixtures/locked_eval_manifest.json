@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "source_build_id": "meguri_v2_02c3db0c507d7c2d",
+  "counts": {
+    "jp": 92,
+    "zh": 92,
+    "total": 184
+  },
+  "input_hashes": {
+    "exports/eval/cases_jp.jsonl": "2dff357a84b05618740c34ad64bfbc0cf31503e655b2ca2a4c0834e733fdcafd",
+    "exports/eval/cases_zh.jsonl": "4db2acc2b61445afcac8c3b0b79abbed8c1a1b671db5110b5db9dfc8bc52b362"
+  },
+  "frozen_prompt_sha256": "e17211c6fc2a99d18ffe50c12627b79e93d26f63d8966a1ec7e730faa639946d",
+  "response_schema_sha256": "3819e5f532d33d69bc8a13baeae8f564f0a66d9cd42d7c7cc3feb985f6ba4c03",
+  "rag_train_sha256": "1ea948e044fc97aa014e6d20dcca35308d1d17a70eec529273bfeafff5b21ae8",
+  "policy": {
+    "evaluation_only": true,
+    "training": false,
+    "prompt_tuning": false,
+    "early_stopping": false,
+    "checkpoint_selection": false
+  }
+}
