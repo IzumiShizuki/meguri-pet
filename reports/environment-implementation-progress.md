@@ -191,3 +191,26 @@
   that no runtime RPO/RTO evidence exists yet.
 - Safety: local fake transport only; no server database, archive, directory,
   container, volume, or secret was accessed.
+
+## E-009 - CI/CD boundaries and production approval
+
+- Status: completed; production remains deliberately blocked.
+- CI: PR/push validation runs isolation/exposure checks, asserts that the
+  production exposure gate does not unexpectedly pass, renders all Compose
+  projects, executes environment/deployment tests, and builds both images
+  without publishing.
+- Staging CD: manual dispatch only, explicit `DEPLOY_STAGING` confirmation,
+  serialized concurrency, a dedicated `[self-hosted, meguri-staging]` runner,
+  GitHub `staging` environment, dry-run preflight, then last-good deployment.
+- Production: approval schema/checker requires a Manifest digest, validity
+  window, change ticket, three distinct owners, and six positive evidence
+  checks. Existing base/exposure gates are independent blockers. The production
+  workflow validates only and contains no deploy or mutation step.
+- Test commands:
+  - `python -m unittest -v tests.test_production_approval
+    tests.test_release_manifest`
+  - `python ops/scripts/check_production_approval.py --help`
+- Result: 4 production/workflow tests and 4 Manifest regressions passed; the
+  current blocked artifact returned 1 with base-gate and exposure failures.
+- Safety: repository-only; no GitHub workflow was triggered and no image was
+  pushed, deployed, or promoted.

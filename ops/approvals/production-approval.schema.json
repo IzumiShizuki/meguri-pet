@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.invalid/schemas/production-approval.schema.json",
+  "title": "Meguri production promotion approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "approval_schema_version",
+    "environment",
+    "release_id",
+    "manifest_sha256",
+    "change_ticket",
+    "approved_at",
+    "expires_at",
+    "approvers",
+    "checks"
+  ],
+  "properties": {
+    "approval_schema_version": {"const": 1},
+    "environment": {"const": "production"},
+    "release_id": {"type": "string", "pattern": "^meguri-production-[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "change_ticket": {"type": "string", "minLength": 1},
+    "approved_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "approvers": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "identity"],
+        "properties": {
+          "role": {"type": "string", "enum": ["release-owner", "data-owner", "security-owner", "operations-owner"]},
+          "identity": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "staging_acceptance",
+        "restore_rehearsal",
+        "rollback_fault_injection",
+        "exposure_review",
+        "production_backup",
+        "route_change_approved"
+      ],
+      "properties": {
+        "staging_acceptance": {"type": "boolean"},
+        "restore_rehearsal": {"type": "boolean"},
+        "rollback_fault_injection": {"type": "boolean"},
+        "exposure_review": {"type": "boolean"},
+        "production_backup": {"type": "boolean"},
+        "route_change_approved": {"type": "boolean"}
+      }
+    }
+  }
+}

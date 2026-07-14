@@ -85,6 +85,17 @@ def validate_value(value: Any, schema: dict[str, Any], root_schema: dict[str, An
                 errors.append(f"{child_path}: additional property is forbidden")
             elif isinstance(additional, dict):
                 errors.extend(validate_value(item, additional, root_schema, child_path))
+    if isinstance(value, list):
+        if len(value) < int(schema.get("minItems", 0)):
+            errors.append(f"{path}: array has fewer than minItems")
+        if schema.get("uniqueItems") is True:
+            serialized = [json.dumps(item, sort_keys=True) for item in value]
+            if len(serialized) != len(set(serialized)):
+                errors.append(f"{path}: array items must be unique")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                errors.extend(validate_value(item, item_schema, root_schema, f"{path}[{index}]"))
     return errors
 
 
@@ -199,4 +210,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

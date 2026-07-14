@@ -1,0 +1,59 @@
+name: Environment CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - feat/environment-isolation
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install environment test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install -r ops/migration/requirements.txt
+      - name: Validate isolation and exposure contracts
+        run: |
+          python ops/scripts/check_environment_isolation.py
+          python ops/scripts/check_exposure_ledger.py
+          if python ops/scripts/check_exposure_ledger.py --production-gate; then
+            echo "Production exposure gate unexpectedly passed"
+            exit 1
+          fi
+      - name: Validate all Compose projects
+        run: |
+          for environment in dev staging production; do
+            docker compose \
+              --project-name "meguri-${environment}" \
+              --env-file "ops/env/${environment}.env.example" \
+              -f ops/compose/compose.base.yaml \
+              -f "ops/compose/compose.${environment}.yaml" \
+              config --quiet
+          done
+      - name: Run environment and deployment tests
+        run: |
+          python -m unittest -v \
+            tests.test_environment_checker \
+            tests.test_release_manifest \
+            tests.test_migration_job \
+            tests.test_deployment_readiness \
+            tests.test_exposure_ledger \
+            tests.test_staging_deployment \
+            tests.test_postgres_backup \
+            tests.test_production_approval
+      - name: Build core and migration images without publishing
+        run: |
+          docker build -t meguri-core:ci .
+          docker build -f Dockerfile.migration -t meguri-migration:ci .
