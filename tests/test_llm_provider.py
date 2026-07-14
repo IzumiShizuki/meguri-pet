@@ -275,6 +275,41 @@ class LlmProviderConfigurationTests(unittest.TestCase):
                     }
                 )
 
+    def test_external_registered_base_model_can_omit_adapter_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            provider = create_llm_provider_from_env(
+                {
+                    "MEGURI_LLM_PROVIDER": "openai-compatible",
+                    "MEGURI_LLM_MODEL": "deepseek-chat",
+                    "MEGURI_LLM_BASE_URL": "https://api.deepseek.com/v1",
+                    "MEGURI_LLM_API_KEY_FILE": str(secret),
+                    "MEGURI_MODEL_REGISTRY_ID": "external-deepseek-chat-staging",
+                    "MEGURI_LLM_BASE_MODEL_REVISION": "deepseek-chat",
+                    "MEGURI_LLM_ADAPTER_REVISION": "none",
+                    "MEGURI_LLM_ADAPTER_SHA256": "none",
+                }
+            )
+            self.assertEqual(provider.provider_name, "openai-compatible")
+            self.assertEqual(provider.expected_release_headers, {})
+
+    def test_adapter_backed_registered_model_requires_complete_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            base = {
+                "MEGURI_LLM_PROVIDER": "openai-compatible",
+                "MEGURI_LLM_MODEL": "candidate",
+                "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
+                "MEGURI_LLM_API_KEY_FILE": str(secret),
+                "MEGURI_MODEL_REGISTRY_ID": "meguri-text-staging-r1",
+                "MEGURI_LLM_BASE_MODEL_REVISION": "base-r1",
+                "MEGURI_LLM_ADAPTER_REVISION": "adapter-r1",
+            }
+            with self.assertRaisesRegex(LlmConfigurationError, "adapter-backed"):
+                create_llm_provider_from_env(base)
+
     def test_concurrency_configuration_is_validated(self):
         with tempfile.TemporaryDirectory() as directory:
             secret = Path(directory) / "llm-api-key.txt"

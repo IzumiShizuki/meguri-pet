@@ -111,19 +111,25 @@ class OpenAICompatibleLlmProvider:
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self.expected_release_headers: dict[str, str] = {}
         if expected_model_id:
-            expected = {
-                "X-Meguri-Model-Id": expected_model_id,
-                "X-Meguri-Base-Revision": expected_base_revision,
-                "X-Meguri-Adapter-Revision": expected_adapter_revision,
-                "X-Meguri-Adapter-SHA256": expected_adapter_sha256,
-            }
-            if any(not value for value in expected.values()):
+            if not expected_base_revision:
                 raise LlmConfigurationError(
-                    "registered LLM releases require base and adapter identity metadata"
+                    "registered LLM releases require base identity metadata"
                 )
-            self.expected_release_headers = {
-                key: str(value) for key, value in expected.items()
-            }
+            has_adapter = bool(expected_adapter_revision or expected_adapter_sha256)
+            if has_adapter:
+                expected = {
+                    "X-Meguri-Model-Id": expected_model_id,
+                    "X-Meguri-Base-Revision": expected_base_revision,
+                    "X-Meguri-Adapter-Revision": expected_adapter_revision,
+                    "X-Meguri-Adapter-SHA256": expected_adapter_sha256,
+                }
+                if any(not value for value in expected.values()):
+                    raise LlmConfigurationError(
+                        "adapter-backed registered LLM releases require base and adapter identity metadata"
+                    )
+                self.expected_release_headers = {
+                    key: str(value) for key, value in expected.items()
+                }
         self.transport = transport
         try:
             self.system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
