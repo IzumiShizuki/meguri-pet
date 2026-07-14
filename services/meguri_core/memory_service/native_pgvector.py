@@ -68,8 +68,7 @@ class NativePgvectorMemoryProvider:
     ) -> None:
         if service is None:
             settings = settings or MemoryDatabaseSettings.from_env()
-            self.expected_database_revision = settings.expected_database_revision
-            self.expected_embedding_model_revision = settings.expected_embedding_model_revision
+            self.settings = settings
             self.engine = create_memory_engine(settings)
             session_factory = create_session_factory(self.engine)
             self.uow_factory = MemoryUnitOfWorkFactory(session_factory)
@@ -85,8 +84,7 @@ class NativePgvectorMemoryProvider:
             if not tenant_id:
                 raise ValueError("tenant_id is required when injecting a memory service")
             self.engine = None
-            self.expected_database_revision = None
-            self.expected_embedding_model_revision = None
+            self.settings = None
             self.uow_factory = service.uow_factory
             self.service = service
             self.tenant_id = tenant_id
@@ -106,15 +104,16 @@ class NativePgvectorMemoryProvider:
         async with self.engine.connect() as connection:
             revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
             await connection.execute(text("SELECT 1"))
-        if (
-            self.expected_database_revision is not None
-            and str(revision) != self.expected_database_revision
-        ):
+        expected_revision = (
+            self.settings.expected_database_revision if self.settings else None
+        )
+        if expected_revision and str(revision) != expected_revision:
             raise RuntimeError("memory database revision does not match runtime configuration")
         return {
             "status": "ok",
             "provider": self.provider_name,
             "database_revision": str(revision),
+            "expected_database_revision": expected_revision or "not-configured",
         }
 
     async def create_candidate(

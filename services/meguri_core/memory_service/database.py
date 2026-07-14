@@ -25,6 +25,8 @@ class MemoryDatabaseSettings(BaseModel):
     expected_embedding_model_revision: str | None = Field(default=None, min_length=1, max_length=300)
     pool_size: int = Field(default=5, ge=1, le=50)
     max_overflow: int = Field(default=5, ge=0, le=100)
+    expected_database_revision: str | None = None
+    expected_embedding_model_revision: str | None = None
 
     @model_validator(mode="after")
     def validate_database_contract(self) -> "MemoryDatabaseSettings":
