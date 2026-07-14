@@ -65,3 +65,31 @@
 - Result: 4 tests passed; schema-only example returned 0; readiness returned 1
   and identified every placeholder; direct generator CLI loaded successfully.
 - Safety: repository-only; generated test artifacts were temporary.
+
+## E-004 - PostgreSQL migration job and least-privilege app role
+
+- Status: implementation completed; empty-database runtime acceptance remains
+  gated on the isolated staging deployment in E-008/E-010.
+- Files: `Dockerfile.migration`, `alembic.ini`, `migrations/`,
+  `ops/migration/`, migration Compose wiring, two additional per-environment
+  secret contracts, a negative isolation fixture, and
+  `tests/test_migration_job.py`.
+- Ownership: PostgreSQL bootstraps with an environment-specific migration
+  owner. The one-shot job creates or rotates a distinct app role, runs Alembic,
+  and grants only connect/schema/table/sequence access. Core receives only the
+  app URL and cannot read the migration-owner URL.
+- Startup gate: core uses Compose condition
+  `service_completed_successfully`; any migration failure prevents core from
+  starting.
+- Test commands:
+  - `python ops/scripts/check_environment_isolation.py`
+  - `python -m unittest -v tests.test_environment_checker
+    tests.test_migration_job`
+  - `python -m alembic -c alembic.ini heads`
+  - the E-001 Compose `config --quiet` command for all three environments
+- Result: the isolation checker passed; all seven committed fault fixtures
+  failed with their expected diagnostic; 8 checker/migration tests passed;
+  Alembic reported the single `20260714_0001` head; all three Compose projects
+  rendered successfully.
+- Safety: repository-only so far; no existing database, server container,
+  volume, network, route, or credential was changed.

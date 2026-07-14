@@ -193,13 +193,37 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
 
     services = compose.get("services") or {}
     postgres = services.get("postgres") or {}
+    migration = services.get("migration") or {}
     core = services.get("core") or {}
     if set(postgres.get("networks") or []) != {"internal"}:
         add("database_network", "compose.services.postgres.networks", "PostgreSQL must join only internal")
     if postgres.get("ports"):
         add("database_public_port", "compose.services.postgres.ports", "PostgreSQL must not publish a host port")
+    if set(migration.get("networks") or []) != {"internal"}:
+        add("migration_network", "compose.services.migration.networks", "migration must join only internal")
+    if migration.get("ports"):
+        add("migration_public_port", "compose.services.migration.ports", "migration must not publish a host port")
+    if migration.get("restart") not in ("no", False):
+        add("migration_restart", "compose.services.migration.restart", "migration must be a one-shot job")
+    if migration.get("command") != ["upgrade", "head"]:
+        add("migration_command", "compose.services.migration.command", "migration must run 'upgrade head'")
+    if set(migration.get("secrets") or []) != {"migration_database_url", "postgres_app_password"}:
+        add(
+            "migration_secrets",
+            "compose.services.migration.secrets",
+            "migration must receive only its owner URL and app-role password",
+        )
     if set(core.get("networks") or []) != {"edge", "internal"}:
         add("core_network", "compose.services.core.networks", "core must join edge and internal only")
+    if {"migration_database_url", "postgres_app_password"}.intersection(core.get("secrets") or []):
+        add("core_privilege", "compose.services.core.secrets", "core must not receive migration-owner credentials")
+    migration_dependency = (core.get("depends_on") or {}).get("migration") or {}
+    if migration_dependency.get("condition") != "service_completed_successfully":
+        add(
+            "migration_gate",
+            "compose.services.core.depends_on.migration.condition",
+            "core must wait for a successful migration job",
+        )
 
     postgres_volume_source: str | None = None
     for index, entry in enumerate(postgres.get("volumes") or []):
@@ -233,6 +257,8 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
     for key in (
         "MEGURI_POSTGRES_PASSWORD_FILE",
         "MEGURI_DATABASE_URL_FILE",
+        "MEGURI_MIGRATION_DATABASE_URL_FILE",
+        "MEGURI_POSTGRES_APP_PASSWORD_FILE",
         "MEGURI_LLM_API_KEY_FILE",
         "MEGURI_JWT_SECRET_FILE",
         "MEGURI_ASTRBOT_SHARED_TOKEN_FILE",
@@ -241,13 +267,17 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
         if not env.get(key, "").replace("\\", "/").startswith(expected_prefix):
             add("credential_identity", f"env.{key}", f"must use {expected_prefix}")
 
-    for key in ("MEGURI_POSTGRES_DB", "MEGURI_POSTGRES_USER"):
+    for key in ("MEGURI_POSTGRES_DB", "MEGURI_POSTGRES_USER", "MEGURI_POSTGRES_APP_USER"):
         if environment not in env.get(key, "").lower():
             add("credential_identity", f"env.{key}", f"must contain environment marker {environment!r}")
+    if env.get("MEGURI_POSTGRES_USER") == env.get("MEGURI_POSTGRES_APP_USER"):
+        add("credential_privilege", "env.MEGURI_POSTGRES_APP_USER", "app and migration-owner roles must differ")
 
     forbidden_plaintext = {
         "POSTGRES_PASSWORD",
         "MEGURI_DATABASE_URL",
+        "MEGURI_MIGRATION_DATABASE_URL",
+        "MEGURI_POSTGRES_APP_PASSWORD",
         "MEGURI_LLM_API_KEY",
         "MEGURI_JWT_SECRET",
         "MEGURI_ASTRBOT_SHARED_TOKEN",
@@ -260,8 +290,13 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
     if environment == "production":
         if env.get("MEGURI_MUTATION_ALLOWED", "").lower() != "false":
             add("production_mutation", "env.MEGURI_MUTATION_ALLOWED", "production mutation must default to false")
-        if core.get("build"):
-            add("production_build", "compose.services.core.build", "production must deploy a prebuilt image")
+        for service_name in ("core", "migration"):
+            if (services.get(service_name) or {}).get("build"):
+                add(
+                    "production_build",
+                    f"compose.services.{service_name}.build",
+                    "production must deploy prebuilt images",
+                )
         if core.get("ports"):
             add("production_public_port", "compose.services.core.ports", "production entry requires a separately approved edge change")
 
@@ -273,6 +308,7 @@ def validate_uniqueness(configurations: dict[str, tuple[dict[str, str], dict[str
     keys = (
         "MEGURI_POSTGRES_DB",
         "MEGURI_POSTGRES_USER",
+        "MEGURI_POSTGRES_APP_USER",
         "MEGURI_POSTGRES_VOLUME",
         "MEGURI_EDGE_NETWORK",
         "MEGURI_INTERNAL_NETWORK",
@@ -282,6 +318,8 @@ def validate_uniqueness(configurations: dict[str, tuple[dict[str, str], dict[str
         "MEGURI_BACKUP_DIR",
         "MEGURI_POSTGRES_PASSWORD_FILE",
         "MEGURI_DATABASE_URL_FILE",
+        "MEGURI_MIGRATION_DATABASE_URL_FILE",
+        "MEGURI_POSTGRES_APP_PASSWORD_FILE",
         "MEGURI_LLM_API_KEY_FILE",
         "MEGURI_JWT_SECRET_FILE",
         "MEGURI_ASTRBOT_SHARED_TOKEN_FILE",
@@ -332,4 +370,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

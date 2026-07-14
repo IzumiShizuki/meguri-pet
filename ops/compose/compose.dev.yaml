@@ -1,10 +1,14 @@
 name: meguri-dev
 
 services:
+  migration:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.migration
+
   core:
     build:
       context: ../..
       dockerfile: Dockerfile
     ports:
       - 127.0.0.1:${MEGURI_CORE_PORT:-18000}:8000
-
