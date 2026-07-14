@@ -10,6 +10,7 @@
     "api_key_file": "/run/secrets/llm_api_key",
     "timeout_variable": "MEGURI_LLM_TIMEOUT_SECONDS",
     "max_concurrency_variable": "MEGURI_LLM_MAX_CONCURRENCY",
+    "response_format_variable": "MEGURI_LLM_RESPONSE_FORMAT",
     "model_registry_variable": "MEGURI_MODEL_REGISTRY_ID",
     "non_loopback_tls_required": true,
     "unauthenticated_public_endpoint_allowed": false,

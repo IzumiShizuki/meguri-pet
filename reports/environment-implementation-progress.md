@@ -286,3 +286,15 @@
 - Remaining blocker: no usable DeepSeek key. The provider route failed closed
   with sanitized HTTP 401 evidence, so real Turn/SSE/RAG/Memory smoke is not
   claimed. Production remains blocked.
+- 2026-07-15 provider-compatibility update: DeepSeek's current official Chat
+  Completion contract accepts JSON Output as `response_format.type=json_object`
+  rather than the OpenAI `json_schema` request shape. The provider now exposes
+  an explicit `MEGURI_LLM_RESPONSE_FORMAT` boundary: Meguri gateways retain
+  `json_schema`; DeepSeek uses `json_object`, receives the same committed schema
+  inside the bounded context, and remains subject to strict Pydantic validation
+  after generation. Compose, all environment examples, the isolation checker
+  and the LLM handoff carry the setting explicitly.
+- Verification: `python -m pytest tests/test_llm_provider.py
+  tests/test_environment_acceptance.py` passed 23 tests; `python
+  ops/scripts/check_agent_environment_contracts.py` passed. No provider request,
+  credential mutation, server mutation or billable call was made.

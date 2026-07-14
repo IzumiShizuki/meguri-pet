@@ -70,6 +70,7 @@ data_build_id: meguri_v2_02c3db0c507d7c2d
 database_revision: 20260714_0004
 embedding_model_revision: 5617a9f61b028005a4858fdac845db406aefb181
 llm_base_model: deepseek-chat
+llm_response_format: json_object
 llm_adapter_revision: null
 model_registry_id: external-deepseek-chat-staging
 ```

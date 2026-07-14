@@ -301,6 +301,12 @@ def validate_environment(environment: str, env: dict[str, str], compose: dict[st
             raise ValueError
     except ValueError:
         add("llm_runtime", "env.MEGURI_LLM_MAX_CONCURRENCY", "must be a positive integer")
+    if env.get("MEGURI_LLM_RESPONSE_FORMAT") not in {"json_schema", "json_object"}:
+        add(
+            "llm_runtime",
+            "env.MEGURI_LLM_RESPONSE_FORMAT",
+            "must be json_schema or json_object",
+        )
     expected_channel = {"dev": "mock", "staging": "candidate", "production": "last-good"}[environment]
     if env.get("MEGURI_LLM_RELEASE_CHANNEL") != expected_channel:
         add("llm_release_channel", "env.MEGURI_LLM_RELEASE_CHANNEL", f"expected {expected_channel!r}")

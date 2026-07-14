@@ -9,6 +9,7 @@ base-model route is:
 MEGURI_LLM_PROVIDER=openai-compatible
 MEGURI_LLM_BASE_URL=https://api.deepseek.com/v1
 MEGURI_LLM_MODEL=deepseek-chat
+MEGURI_LLM_RESPONSE_FORMAT=json_object
 MEGURI_LLM_API_KEY_FILE=/opt/meguri/staging/secrets/llm-api-key.txt
 ```
 
@@ -30,6 +31,12 @@ adapter-backed model must supply base revision, adapter revision and adapter
 SHA-256, and the gateway response headers must match. The Release Manifest
 records `llm_base_model`, nullable `llm_adapter_revision`, nullable
 `llm_adapter_sha256`, and `model_registry_id`.
+
+DeepSeek's OpenAI-compatible API exposes JSON Output as `json_object`, not the
+OpenAI `json_schema` request shape. Meguri injects the committed response
+schema into the bounded request context for this mode and still applies the
+same strict Pydantic validation after the response. Provider-format drift
+therefore fails the turn instead of weakening the response contract.
 
 ## Health, readiness and rollback
 
