@@ -15,8 +15,9 @@ framework for dev, staging, and production. E-001 through E-009 are implemented
 and locally verified. E-010 repository acceptance plus a second read-only
 protected-server check passed, but runtime staging acceptance is intentionally
 not claimed. The native pgvector Memory implementation and recovery tooling are
-now integrated through M-012, and the reproducible LLM training/evaluation and
-registry pipeline is integrated through L-011. The remaining blockers are live
+now integrated through M-012, and the reproducible LLM training/evaluation,
+registry, authenticated gateway and last-good routing are integrated through
+L-013. The remaining blockers are live
 database/staging evidence, immutable pushed images, a trained and registered
 LLM candidate/last-good pair, and independent server deployment/secrets access.
 
@@ -40,7 +41,7 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 | E-007 | Local implementation complete | Digest-only staging preflight, ordered migration/start, atomic last-good state, automatic same-revision rollback |
 | E-008 | Local implementation complete | Checksummed custom backup and isolated restore-rehearsal workflow; runtime RPO/RTO not yet measured |
 | E-009 | Complete | CI validation, manual serialized staging CD, validation-only production approval workflow |
-| E-010 | Repository/live invariant complete; staging blocked | Integrated Memory M-001-M-012 and LLM L-001-L-011 contracts, protected-server invariants, machine-readable all-or-nothing staging acceptance evidence |
+| E-010 | Repository/live invariant complete; staging blocked | Integrated Memory M-001-M-012 and LLM L-001-L-013 contracts, protected-server invariants, machine-readable all-or-nothing staging acceptance evidence |
 
 ## Isolation and security properties
 
@@ -60,6 +61,11 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 - The LLM runtime enforces the configured request concurrency cap. A staging or
   production release must match a non-placeholder evaluated model registry ID,
   adapter revision/digest, Prompt hash and Response Schema hash.
+- The authenticated staging gateway independently enforces bearer auth,
+  deterministic requests, concurrency/timeout limits, schema validation,
+  registered adapter hashes and candidate/last-good routing. Core rejects a
+  gateway response whose model/base/adapter identity headers drift from the
+  Release Manifest-backed runtime configuration.
 - Staging deployment accepts only Manifest-matching `@sha256` images. Candidate
   readiness failure restores same-revision last-good. Cross-revision deployment
   remains blocked until a verified active recovery workflow exists.
@@ -71,7 +77,7 @@ and [17｜文本 LLM 微调](https://app.notion.com/p/39da3636596381c1a701d377af
 
 Final local results:
 
-- `python -m pytest -o addopts='' -q`: **169 passed, 6 skipped**; all
+- `python -m pytest -o addopts='' -q`: **177 passed, 6 skipped**; all
   skips are explicitly gated on the absent isolated PostgreSQL test URL;
 - `pnpm test:ts`: **20 passed**;
 - Python compile-all and Alembic offline upgrade/downgrade through
@@ -154,6 +160,8 @@ accepted and production cannot be promoted.
 - `877aa6a` native pgvector Memory integration and environment adaptation
 - `8925618` Memory recovery/release evidence integration
 - `04c58af` evaluated LLM registry integration
+- `ed52a05` authenticated LLM staging gateway and last-good routing integration
+- `1871e7f` integrated runtime Release Manifest and handoff gates
 
 The original E-010 evidence commit is `0e65465`; a final synchronization commit
 records the post-integration contracts, tests and blocker state.

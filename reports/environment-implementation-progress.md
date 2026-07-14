@@ -224,9 +224,10 @@
 - Handoff contracts: the native pgvector Memory implementation through M-012
   is integrated at schema head `20260714_0004`, with file-only app credentials,
   pinned BGE-M3 metadata, recovery validation and exact-search benchmarks. The
-  LLM training/evaluation pipeline through L-011 is integrated with locked
+  LLM training/evaluation pipeline through L-013 is integrated with locked
   safety/comparison gates, adapter digest selection, an evaluated model
-  registry and an enforced runtime concurrency limit.
+  registry, authenticated staging gateway, last-good routing, enforced runtime
+  concurrency and gateway release-header validation.
 - Manifest hardening: `model_registry_id` and `llm_adapter_sha256` are required;
   staging/production readiness rejects an unregistered model or an adapter
   revision without a digest.

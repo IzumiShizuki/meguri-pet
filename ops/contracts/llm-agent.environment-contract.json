@@ -1,7 +1,7 @@
 {
   "contract_version": 1,
   "agent": "llm",
-  "status": "pipeline-complete-model-artifacts-required-before-staging",
+  "status": "pipeline-and-gateway-complete-model-artifacts-required-before-staging",
   "authority": ["page-15", "page-17", "release-manifest"],
   "runtime_provider_name": "openai-compatible",
   "endpoint": {

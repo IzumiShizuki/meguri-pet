@@ -186,6 +186,41 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(first, second)
         self.assertEqual(max_active, 1)
 
+    async def test_registered_gateway_metadata_must_match_release(self):
+        expected_headers = {
+            "X-Meguri-Model-Id": "meguri-text-staging-r1",
+            "X-Meguri-Base-Revision": "base-r1",
+            "X-Meguri-Adapter-Revision": "adapter-r1",
+            "X-Meguri-Adapter-SHA256": "a" * 64,
+        }
+
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers=expected_headers,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps(VALID_CONTENT)}}
+                    ]
+                },
+            )
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="https://llm.example.test/v1",
+            model="candidate",
+            api_key="secret",
+            expected_model_id="meguri-text-staging-r1",
+            expected_base_revision="base-r1",
+            expected_adapter_revision="adapter-r1",
+            expected_adapter_sha256="a" * 64,
+            transport=httpx.MockTransport(handler),
+        )
+        await provider.respond(request(), state(), [], [])
+
+        expected_headers["X-Meguri-Adapter-Revision"] = "wrong-adapter"
+        with self.assertRaisesRegex(LlmProviderError, "release metadata"):
+            await provider.respond(request(), state(), [], [])
+
     async def test_provider_failure_becomes_terminal_turn_failure(self):
         class FailingProvider:
             provider_name = "failing-test"

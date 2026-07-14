@@ -15,6 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from services.meguri_core.schemas import LlmResponse
+from services.meguri_core.secrets import SecretConfigurationError, read_secret
 from training.llm.gateway.schemas import ChatCompletionRequest
 from training.llm.scripts.common import PipelineError, canonical_json
 
@@ -154,15 +155,12 @@ def create_app(manager: ModelManager, settings: GatewaySettings) -> FastAPI:
 
 
 def settings_from_env() -> GatewaySettings:
-    api_key_file = os.environ.get("MEGURI_LLM_API_KEY_FILE", "")
-    if not api_key_file:
-        raise RuntimeError("MEGURI_LLM_API_KEY_FILE is required")
     try:
-        api_key = open(api_key_file, encoding="utf-8").read().strip()
-    except OSError as exc:
-        raise RuntimeError("cannot read gateway API key file") from exc
+        api_key = read_secret(os.environ, "MEGURI_LLM_API_KEY")
+    except SecretConfigurationError as exc:
+        raise RuntimeError(str(exc)) from exc
     return GatewaySettings(
-        api_key=api_key,
+        api_key=str(api_key),
         timeout_seconds=float(os.environ.get("MEGURI_LLM_TIMEOUT_SECONDS", "60")),
         max_concurrency=int(os.environ.get("MEGURI_LLM_MAX_CONCURRENCY", "1")),
     )

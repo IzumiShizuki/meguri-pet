@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 import threading
 import unittest
+from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from services.meguri_core.schemas import LlmResponse
-from training.llm.gateway.app import GatewaySettings, create_app
+from training.llm.gateway.app import GatewaySettings, create_app, settings_from_env
 from training.llm.scripts.common import PipelineError
 
 
@@ -111,6 +115,24 @@ class GatewayTests(unittest.TestCase):
         self.assertEqual(response.status_code, 504)
         self.assertIsNotNone(manager.cancel_event)
         self.assertTrue(manager.cancel_event.is_set())
+
+    def test_gateway_api_key_is_file_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("gateway-key\n", encoding="utf-8")
+            with mock.patch.dict(
+                os.environ,
+                {"MEGURI_LLM_API_KEY_FILE": str(secret)},
+                clear=True,
+            ):
+                self.assertEqual(settings_from_env().api_key, "gateway-key")
+            with mock.patch.dict(
+                os.environ,
+                {"MEGURI_LLM_API_KEY": "inline-forbidden"},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "must not be supplied inline"):
+                    settings_from_env()
 
 if __name__ == "__main__":
     unittest.main()
