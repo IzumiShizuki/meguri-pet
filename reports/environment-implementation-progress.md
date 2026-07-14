@@ -140,3 +140,31 @@
   gate returned 1 with the expected unresolved reviews.
 - Safety: ledger-only; no firewall, cloud rule, reverse proxy, listener,
   container, or existing service was changed.
+
+## E-007 - immutable staging deploy, health gate, and last-good rollback
+
+- Status: repository implementation completed; real staging execution remains
+  pending server deployment access, release artifacts, and E-008 restore proof.
+- Preflight: staging-only, absolute release paths, `meguri-staging` project,
+  matching env/Manifest release and DB identities, all tests passed, no
+  readiness placeholders, mutation disabled, and core/migration/PostgreSQL
+  images pinned to Manifest-matching `@sha256` digests.
+- Sequence: validate Compose, pull immutable images, wait for the isolated
+  PostgreSQL service, run the one-shot migration, start core without touching
+  unrelated services, then require `/health/ready` to return the candidate
+  release ID.
+- State: atomic `current.json`, `last-good.json`, and `rollback-target.json`.
+  Migration failure occurs before old core replacement; same-revision
+  readiness failure restores last-good automatically. Cross-revision changes
+  fail before mutation until E-008 supplies a verified restore path.
+- Files: `ops/deployment/release.py`, `deploy_staging.py`,
+  `rollback_staging.py`, staging runbook, and deployment tests.
+- Test commands:
+  - `python -m unittest -v tests.test_staging_deployment
+    tests.test_release_manifest`
+  - `python ops/scripts/deploy_staging.py --help`
+  - `python ops/scripts/rollback_staging.py --help`
+- Result: 5 deploy/rollback fault-path tests and 4 Release Manifest regression
+  tests passed; both direct CLI entrypoints loaded and displayed usage.
+- Safety: repository simulation only; no server Compose command, pull,
+  migration, health request, or rollback was run.
