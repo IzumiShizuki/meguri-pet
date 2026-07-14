@@ -32,3 +32,5 @@ The post-M-012 code audit closed the remaining locally actionable gaps without c
 ## External acceptance boundary
 
 The seven skipped tests cover the native provider contract, complete lifecycle/feedback/isolation workflow, rollback atomicity, idempotent concurrency, cross-client identity/session isolation, embedding SQL and recovered-database validation. None can be honestly converted to a pass without a PostgreSQL + pgvector handoff. A staging backup, isolated restore, approved recall corpus, observed latency/error measurements and cleanup proof are still mandatory.
+
+The environment branch's latest machine contract is `implementation-complete-runtime-evidence-required`. Its remaining handoff gates match this audit: native provider/recovery contracts, environment and user isolation, pinned embedding worker execution, exact-search latency/recall and RPO/RTO evidence.

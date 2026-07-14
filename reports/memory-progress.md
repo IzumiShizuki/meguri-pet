@@ -22,7 +22,7 @@ Branch: `codex/feat/native-pgvector-memory`
 
 ## Current gates
 
-- No `memory-environment-handoff.md` or `MEGURI_TEST_DATABASE_URL` is available. A machine-readable environment contract was observed in the parallel environment worktree, but it is still marked `implementation-required-before-staging`; native PostgreSQL and recovery tests therefore skip and staging evidence is not claimed.
+- No `memory-environment-handoff.md` or `MEGURI_TEST_DATABASE_URL` is available. The primary environment branch now contains a machine-readable contract marked `implementation-complete-runtime-evidence-required`; it defines the correct revisions and explicitly retains the native database, embedding worker, isolation, latency/recall and RPO/RTO handoff gates. Those tests therefore still skip and staging evidence is not claimed.
 - Local verification currently collects 126 tests: 119 pass and the 7 native PostgreSQL/recovery cases skip for the single missing database handoff.
 - The local `py314` environment does not contain the optional `sentence-transformers` package or a staged BGE-M3 cache. Adapter behavior is covered with an injected loader, but the release image/cache/worker must be provisioned before vector acceptance.
 - No production data has been mutated. Native authority is opt-in; the application continues to use the fake compatibility provider by default.
