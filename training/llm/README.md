@@ -88,8 +88,14 @@ python -m training.llm.scripts.run_smoke `
   --experiment-id qwen35-4b-smoke-s3407 `
   --dataset-dir <derived-dataset-directory> `
   --probe-report <passing-full-probe-report> `
-  --allow-download
+  --input-pad-length 768 --allow-download
 ```
+
+The deterministic 160/40 L-006 subset currently spans 652..755 tokens. Smoke
+training requires fixed padding to 768 so Windows/Triton compiles one training
+shape; the observed maxima and requested pad length are recorded in the smoke
+dataset and experiment manifests. The command fails rather than truncating a
+sample or silently returning to variable shapes.
 
 Full training uses the same entry point without `--smoke`. Resume is explicit
 and only accepts a checkpoint below the same experiment directory. Checkpoints

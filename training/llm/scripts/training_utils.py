@@ -231,12 +231,50 @@ def tokenize_assistant_only(
     return {"input_ids": full_ids, "attention_mask": [1] * len(full_ids), "labels": labels}
 
 
+def validate_input_padding(
+    *,
+    input_pad_length: int | None,
+    max_seq_length: int,
+    train_lengths: list[int],
+    validation_lengths: list[int],
+    required: bool,
+) -> dict[str, Any]:
+    if not train_lengths or not validation_lengths:
+        raise PipelineError("training and validation token lengths are required")
+    if input_pad_length is None:
+        if required:
+            raise PipelineError("L-006 smoke training requires a fixed --input-pad-length")
+        return {
+            "enabled": False,
+            "train_max_tokens": max(train_lengths),
+            "validation_max_tokens": max(validation_lengths),
+        }
+    if input_pad_length <= 0 or input_pad_length > max_seq_length:
+        raise PipelineError(
+            f"training input pad length must be within 1..{max_seq_length}"
+        )
+    observed_max = max(max(train_lengths), max(validation_lengths))
+    if observed_max > input_pad_length:
+        raise PipelineError(
+            f"training input exceeds fixed pad length: {observed_max}>{input_pad_length}"
+        )
+    return {
+        "enabled": True,
+        "input_pad_length": input_pad_length,
+        "train_max_tokens": max(train_lengths),
+        "validation_max_tokens": max(validation_lengths),
+        "train_distinct_lengths": len(set(train_lengths)),
+        "validation_distinct_lengths": len(set(validation_lengths)),
+    }
+
+
 def smoke_manifest(
     rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
     *,
     dataset_id: str,
     seed: int,
+    input_padding: dict[str, Any],
 ) -> dict[str, Any]:
     ids = [str((row.get("metadata") or {}).get("sample_id")) for row in rows]
     validation_ids = [str((row.get("metadata") or {}).get("sample_id")) for row in validation_rows]
@@ -249,5 +287,6 @@ def smoke_manifest(
         "validation_count": len(validation_ids),
         "sample_ids_sha256": sha256_text(canonical_json(ids)),
         "validation_sample_ids_sha256": sha256_text(canonical_json(validation_ids)),
+        "input_padding": input_padding,
         "locked_eval_accessed": False,
     }

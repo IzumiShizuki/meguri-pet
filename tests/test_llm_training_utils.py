@@ -10,6 +10,7 @@ from training.llm.scripts.training_utils import (
     deterministic_stratified_subset,
     tokenize_assistant_only,
     validate_enablement_gate_report,
+    validate_input_padding,
     validate_probe_report,
     validate_training_config,
 )
@@ -206,6 +207,38 @@ class TrainingUtilsTests(unittest.TestCase):
             path.write_text(json.dumps(report), encoding="utf-8")
             with self.assertRaisesRegex(PipelineError, "environment lock hash is invalid"):
                 validate_probe_report(path, config)
+
+    def test_smoke_padding_contract_accepts_observed_subset(self) -> None:
+        result = validate_input_padding(
+            input_pad_length=768,
+            max_seq_length=2048,
+            train_lengths=[652, 708, 747],
+            validation_lengths=[652, 733, 755],
+            required=True,
+        )
+        self.assertTrue(result["enabled"])
+        self.assertEqual(result["input_pad_length"], 768)
+        self.assertEqual(result["validation_max_tokens"], 755)
+
+    def test_smoke_padding_contract_rejects_variable_shapes(self) -> None:
+        with self.assertRaisesRegex(PipelineError, "requires a fixed"):
+            validate_input_padding(
+                input_pad_length=None,
+                max_seq_length=2048,
+                train_lengths=[700],
+                validation_lengths=[710],
+                required=True,
+            )
+
+    def test_padding_contract_rejects_too_short_length(self) -> None:
+        with self.assertRaisesRegex(PipelineError, "exceeds fixed pad length"):
+            validate_input_padding(
+                input_pad_length=736,
+                max_seq_length=2048,
+                train_lengths=[747],
+                validation_lengths=[755],
+                required=True,
+            )
 
 
 if __name__ == "__main__":

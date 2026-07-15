@@ -33,6 +33,7 @@ from training.llm.scripts.training_utils import (
     tokenize_assistant_only,
     validate_dataset_for_training,
     validate_enablement_gate_report,
+    validate_input_padding,
     validate_probe_report,
     validate_training_config,
 )
@@ -139,6 +140,13 @@ def run(args: argparse.Namespace) -> Path:
     encoded_validation = [
         tokenize_assistant_only(row, tokenizer, max_seq_length=max_length) for row in validation_rows
     ]
+    input_padding = validate_input_padding(
+        input_pad_length=args.input_pad_length,
+        max_seq_length=max_length,
+        train_lengths=[len(row["input_ids"]) for row in encoded_train],
+        validation_lengths=[len(row["input_ids"]) for row in encoded_validation],
+        required=args.smoke,
+    )
     output_dir.mkdir(parents=True, exist_ok=resume_checkpoint is not None)
     if args.smoke and not (output_dir / "smoke_dataset_manifest.json").exists():
         write_json(
@@ -148,6 +156,7 @@ def run(args: argparse.Namespace) -> Path:
                 validation_rows,
                 dataset_id=str(manifest["dataset_id"]),
                 seed=seed,
+                input_padding=input_padding,
             ),
         )
     template = str(getattr(tokenizer, "chat_template", "") or "")
@@ -188,7 +197,8 @@ def run(args: argparse.Namespace) -> Path:
     sft_args = SFTConfig(**kwargs)
     collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
-        padding=True,
+        padding="max_length" if input_padding["enabled"] else True,
+        max_length=input_padding.get("input_pad_length"),
         label_pad_token_id=-100,
         return_tensors="pt",
     )
@@ -259,6 +269,7 @@ def run(args: argparse.Namespace) -> Path:
         "seed": seed,
         "lora": config["lora"],
         "training_parameters": kwargs,
+        "input_padding": input_padding,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),
         "train_metrics": result.metrics,
@@ -291,6 +302,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--smoke-samples", type=int, default=160)
     value.add_argument("--smoke-validation-samples", type=int, default=40)
     value.add_argument("--smoke-steps", type=int, default=75)
+    value.add_argument("--input-pad-length", type=int)
     value.add_argument("--resume-from-checkpoint", type=Path)
     return value
 
