@@ -122,6 +122,27 @@ def git_commit() -> str:
         return "unknown"
 
 
+def require_clean_git_worktree() -> str:
+    """Return the current commit only when provenance can be reproduced."""
+
+    commit = git_commit()
+    if commit == "unknown":
+        raise PipelineError("cannot resolve the Git commit for artifact provenance")
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PipelineError("cannot verify a clean Git worktree for artifact provenance") from exc
+    if status:
+        raise PipelineError("refusing to create a versioned artifact from a dirty Git worktree")
+    return commit
+
+
 def package_versions(names: Iterable[str]) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for name in names:

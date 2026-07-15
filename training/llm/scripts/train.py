@@ -11,10 +11,10 @@ from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     CONFIG_ROOT,
     PipelineError,
-    git_commit,
     load_yaml,
     package_versions,
     read_jsonl,
+    require_clean_git_worktree,
     sha256_file,
     sha256_text,
     utc_now,
@@ -88,6 +88,7 @@ def _smoke_inference(
 def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.experiment_id):
         raise PipelineError("experiment ID must be a safe 3-80 character identifier")
+    training_commit = require_clean_git_worktree()
     config = load_yaml(args.config)
     validate_enablement_gate_report(args.enablement_gate_report, config)
     validate_training_config(config, allow_disabled=args.enablement_gate_report is not None)
@@ -230,6 +231,8 @@ def run(args: argparse.Namespace) -> Path:
         validation_rows[0],
         generation_dtype=autocast_dtype(config, torch),
     )
+    if require_clean_git_worktree() != training_commit:
+        raise PipelineError("Git commit changed while training was running")
     experiment = {
         "schema_version": 1,
         "experiment_id": args.experiment_id,
@@ -245,7 +248,7 @@ def run(args: argparse.Namespace) -> Path:
         "prompt_sha256": manifest["prompt_sha256"],
         "response_schema_sha256": manifest["response_schema_sha256"],
         "chat_template_sha256": sha256_text(template),
-        "training_commit": git_commit(),
+        "training_commit": training_commit,
         "training_config": str(args.config.resolve()),
         "training_config_sha256": sha256_file(args.config),
         "probe_report_sha256": sha256_file(args.probe_report),

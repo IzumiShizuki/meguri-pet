@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import unittest
+from subprocess import CompletedProcess
+from unittest.mock import patch
 
 from training.llm.eval.persona_eval import evaluate_persona
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
+from training.llm.scripts.common import PipelineError, require_clean_git_worktree
 
 
 def valid_output(reply: str = "おかえりなさい、兄さん") -> str:
@@ -49,6 +52,24 @@ class LlmEvalTests(unittest.TestCase):
         raw = valid_output("兄さん、今すぐ結婚しましょう")
         metrics = evaluate_persona(raw, self.expected)
         self.assertFalse(metrics["relationship_severe_error_free_heuristic"])
+
+    def test_versioned_artifacts_require_a_clean_git_worktree(self) -> None:
+        results = [
+            CompletedProcess(["git", "rev-parse", "HEAD"], 0, stdout="a" * 40 + "\n"),
+            CompletedProcess(["git", "status"], 0, stdout=" M training/llm/eval/run_locked_eval.py\n"),
+        ]
+        with patch("training.llm.scripts.common.subprocess.run", side_effect=results):
+            with self.assertRaisesRegex(PipelineError, "dirty Git worktree"):
+                require_clean_git_worktree()
+
+    def test_clean_git_worktree_returns_pinned_commit(self) -> None:
+        commit = "b" * 40
+        results = [
+            CompletedProcess(["git", "rev-parse", "HEAD"], 0, stdout=commit + "\n"),
+            CompletedProcess(["git", "status"], 0, stdout=""),
+        ]
+        with patch("training.llm.scripts.common.subprocess.run", side_effect=results):
+            self.assertEqual(require_clean_git_worktree(), commit)
 
 
 if __name__ == "__main__":

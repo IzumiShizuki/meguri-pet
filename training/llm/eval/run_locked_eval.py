@@ -22,10 +22,10 @@ from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     PipelineError,
     canonical_json,
-    git_commit,
     load_yaml,
     package_versions,
     read_json,
+    require_clean_git_worktree,
     sha256_file,
     utc_now,
     write_json,
@@ -78,6 +78,7 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError("run ID must be a safe 3-80 character identifier")
     if args.progress_every <= 0:
         raise PipelineError("progress interval must be positive")
+    run_commit = require_clean_git_worktree()
     output_dir = args.output_root.resolve() / args.run_id
     if output_dir.exists():
         raise PipelineError(f"refusing to overwrite locked-eval run: {output_dir}")
@@ -198,6 +199,8 @@ def run(args: argparse.Namespace) -> Path:
         language: _subset_metrics([row for row in rows if row["expected"]["language"] == language])
         for language in ("jp", "zh")
     }
+    if require_clean_git_worktree() != run_commit:
+        raise PipelineError("Git commit changed while locked evaluation was running")
     report = {
         "schema_version": 1,
         "run_id": args.run_id,
@@ -227,7 +230,7 @@ def run(args: argparse.Namespace) -> Path:
             "training_config_sha256": config_hash,
             **contract_hashes,
             "raw_outputs_sha256": sha256_file(raw_path),
-            "code_commit": git_commit(),
+            "code_commit": run_commit,
             "generated_at": utc_now(),
             "framework_versions": package_versions(
                 ["torch", "transformers", "unsloth", "peft", "httpx", "pydantic"]
