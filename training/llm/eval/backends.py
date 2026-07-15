@@ -82,11 +82,11 @@ def validate_generation_controls(
     return float(repetition_penalty), int(no_repeat_ngram_size)
 
 
-def json_object_start_token_id(tokenizer: Any) -> int:
-    token_ids = tokenizer.encode("{", add_special_tokens=False)
-    if len(token_ids) != 1:
-        raise PipelineError("pinned tokenizer must encode the JSON object start as one token")
-    return int(token_ids[0])
+def json_object_start_token_ids(tokenizer: Any) -> tuple[int, ...]:
+    token_ids = tuple(int(value) for value in tokenizer.encode('{"', add_special_tokens=False))
+    if not token_ids:
+        raise PipelineError("pinned tokenizer cannot encode the JSON object prefix")
+    return token_ids
 
 
 class OpenAIBackend:
@@ -222,8 +222,8 @@ class LocalUnslothBackend:
             no_repeat_ngram_size,
         )
         self.force_json_object_start = bool(force_json_object_start)
-        self.json_start_token_id = (
-            json_object_start_token_id(tokenizer) if self.force_json_object_start else None
+        self.json_start_token_ids = (
+            json_object_start_token_ids(tokenizer) if self.force_json_object_start else ()
         )
         if input_pad_length is not None and input_pad_length <= 0:
             raise PipelineError("evaluation input pad length must be positive")
@@ -302,14 +302,16 @@ class LocalUnslothBackend:
 
         logits_processor = None
         if self.force_json_object_start:
-            json_start_token = self.json_start_token_id
+            json_start_tokens = self.json_start_token_ids
 
             class ForceJsonObjectStart(LogitsProcessor):
                 def __call__(self, input_ids: Any, scores: Any) -> Any:
-                    if int(input_ids.shape[-1]) == input_length:
-                        allowed = scores[:, json_start_token].clone()
+                    generated_count = int(input_ids.shape[-1]) - input_length
+                    if 0 <= generated_count < len(json_start_tokens):
+                        allowed_token = json_start_tokens[generated_count]
+                        allowed = scores[:, allowed_token].clone()
                         scores.fill_(float("-inf"))
-                        scores[:, json_start_token] = allowed
+                        scores[:, allowed_token] = allowed
                     return scores
 
             logits_processor = LogitsProcessorList([ForceJsonObjectStart()])

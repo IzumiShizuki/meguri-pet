@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from training.llm.eval.backends import (
     complete_json_object_end,
-    json_object_start_token_id,
+    json_object_start_token_ids,
     validate_generation_controls,
 )
 from training.llm.eval.persona_eval import evaluate_persona
@@ -103,7 +103,7 @@ class LlmEvalTests(unittest.TestCase):
         with self.assertRaisesRegex(PipelineError, "no-repeat ngram"):
             validate_generation_controls(1.05, 33)
 
-    def test_json_object_start_must_be_one_token(self) -> None:
+    def test_json_object_start_uses_tokenizer_prefix(self) -> None:
         class Tokenizer:
             def __init__(self, token_ids):
                 self.token_ids = token_ids
@@ -112,11 +112,11 @@ class LlmEvalTests(unittest.TestCase):
                 self.asserted = (value, add_special_tokens)
                 return self.token_ids
 
-        tokenizer = Tokenizer([42])
-        self.assertEqual(json_object_start_token_id(tokenizer), 42)
-        self.assertEqual(tokenizer.asserted, ("{", False))
-        with self.assertRaisesRegex(PipelineError, "one token"):
-            json_object_start_token_id(Tokenizer([4, 2]))
+        tokenizer = Tokenizer([4, 2])
+        self.assertEqual(json_object_start_token_ids(tokenizer), (4, 2))
+        self.assertEqual(tokenizer.asserted, ('{"', False))
+        with self.assertRaisesRegex(PipelineError, "cannot encode"):
+            json_object_start_token_ids(Tokenizer([]))
 
 
 if __name__ == "__main__":
