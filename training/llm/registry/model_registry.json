@@ -35,7 +35,9 @@
       "generation_profile_id": null,
       "generation_profile_sha256": null,
       "locked_eval_suite_id": null,
+      "locked_eval_source_build_id": null,
       "locked_eval_manifest_sha256": null,
+      "independent_suite_validation_sha256": null,
       "created_at": "2026-07-15T21:43:52.240107+00:00",
       "parent_model_id": null,
       "rollback_model_id": null

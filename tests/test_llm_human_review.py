@@ -48,11 +48,16 @@ class HumanReviewTests(unittest.TestCase):
                 "evaluation_only": True,
                 "used_for_checkpoint_selection": False,
             },
+            "independent_suite_validation": {
+                "status": "pass",
+                "suite_id": "meguri-locked-eval-v2",
+            },
             "provenance": {
                 "raw_outputs_sha256": sha256_file(raw_path),
                 "generation_profile_id": "decode-v2",
                 "generation_profile_sha256": "a" * 64,
                 "locked_eval_suite_id": "meguri-locked-eval-v2",
+                "locked_eval_source_build_id": "new-eval-build-v2",
                 "locked_eval_manifest_sha256": "d" * 64,
             },
         }

@@ -163,6 +163,32 @@ the old suite is rejected. A manifest supplied outside the checkout or left
 untracked is also rejected. The new suite is not comparable with the old L0 reports,
 so run all three paths against the same new manifest and inputs:
 
+The suite must be prepared and approved outside the training/tuning role. The
+freeze tool reads the candidate held-out files only to produce digests and
+zero-overlap counts; it does not export their content. It requires a new source
+build identity, distinct preparer/approver identities, and zero sample, input,
+full-case, scene, and normalized near-input overlap with train/validation and
+the previous locked set. Near-input rejection uses the frozen `0.95` similarity
+threshold recorded in the manifest:
+
+```powershell
+python -m training.llm.eval.locked_suite `
+  --suite-id <new-suite-id> --source-build-id <new-eval-source-build-id> `
+  --eval-root <independent-new-eval-root> `
+  --dataset-dir <derived-release-dataset> `
+  --previous-locked-manifest training\llm\eval\fixtures\locked_eval_manifest.json `
+  --previous-locked-eval-root <previous-locked-eval-root> `
+  --rag-jsonl <frozen-rag-jsonl> `
+  --prepared-by <independent-preparer-id> --approved-by <independent-approver-id> `
+  --source-authority <heldout-source-authority> `
+  --output training\llm\eval\fixtures\<new-suite-manifest>.json `
+  --acknowledge-independent-freeze-and-non-tuning
+```
+
+The independent party must review and commit the generated v2 manifest before
+the training/evaluation operator can launch a run. The manifest contains only
+file/content-set digests, overlap counts, and declarations—not case text.
+
 1. Base L0 without RAG and without an adapter.
 2. Prompt+RAG L0 without an adapter.
 3. The exported adapter with the frozen v2 generation profile.
@@ -175,6 +201,9 @@ python -m training.llm.eval.run_locked_eval `
   --run-id <new-suite-candidate-run> --run-kind post_train `
   --locked-manifest <committed-new-suite-manifest> `
   --eval-root <independent-new-eval-root> --rag-jsonl <frozen-rag-jsonl> `
+  --suite-rag-jsonl <frozen-rag-jsonl> --dataset-dir <derived-release-dataset> `
+  --previous-locked-manifest training\llm\eval\fixtures\locked_eval_manifest.json `
+  --previous-locked-eval-root <previous-locked-eval-root> `
   --train-jsonl <derived-train-jsonl> --backend local `
   --config training\llm\configs\qwen35_4b_bf16_lora.yaml `
   --adapter <exported-adapter> `
@@ -184,7 +213,8 @@ python -m training.llm.eval.run_locked_eval `
 
 Run the frozen safety suite with the same profile. Comparison fails closed
 unless the candidate and safety reports use the same profile and all L0 and
-candidate reports use the same locked-suite manifest and input hashes.
+candidate reports use the same locked-suite manifest, input hashes, and passing
+independence-validation digest.
 
 After automatic gates pass, create the frozen-rubric review packet. The packet
 contains model outputs and coarse relationship/mode context but omits source

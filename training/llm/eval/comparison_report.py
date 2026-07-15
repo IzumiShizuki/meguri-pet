@@ -11,6 +11,7 @@ from training.llm.scripts.common import (
     read_json,
     require_clean_git_worktree,
     sha256_file,
+    sha256_text,
     utc_now,
     write_json,
 )
@@ -131,11 +132,27 @@ def compare(
     manifest_hashes = {
         report.get("provenance", {}).get("locked_eval_manifest_sha256") for report in reports
     }
+    source_build_ids = {
+        report.get("provenance", {}).get("locked_eval_source_build_id") for report in reports
+    }
     if candidate.get("provenance", {}).get("generation_profile_sha256") is not None:
         if len(suite_ids) != 1 or None in suite_ids:
             raise PipelineError("profile-bound comparison requires one locked-eval suite ID")
         if len(manifest_hashes) != 1 or None in manifest_hashes:
             raise PipelineError("profile-bound comparison requires one locked-eval manifest")
+        if len(source_build_ids) != 1 or None in source_build_ids:
+            raise PipelineError("profile-bound comparison requires one evaluation source build")
+        independent_validations = {
+            canonical_json(report.get("independent_suite_validation")) for report in reports
+        }
+        if len(independent_validations) != 1 or "null" in independent_validations:
+            raise PipelineError(
+                "profile-bound comparison requires identical independent-suite validation"
+            )
+        if candidate.get("independent_suite_validation", {}).get("status") != "pass":
+            raise PipelineError("candidate independent-suite validation did not pass")
+    else:
+        independent_validations = set()
     if candidate.get("locked_eval_policy", {}).get("used_for_checkpoint_selection") is not False:
         raise PipelineError("candidate locked eval must not influence checkpoint selection")
     if safety.get("status") != "pass" or safety.get("passed") != safety.get("total"):
@@ -188,6 +205,18 @@ def compare(
             "locked_eval_suite_id"
         ):
             raise PipelineError("human review locked-eval suite identity mismatch")
+        if evidence.get("locked_eval_source_build_id") != candidate.get("provenance", {}).get(
+            "locked_eval_source_build_id"
+        ):
+            raise PipelineError("human review evaluation source build identity mismatch")
+        independent_validation_sha256 = sha256_text(
+            canonical_json(candidate.get("independent_suite_validation"))
+        )
+        if (
+            evidence.get("independent_suite_validation_sha256")
+            != independent_validation_sha256
+        ):
+            raise PipelineError("human review suite-independence evidence mismatch")
         if human.get("component_rates", {}).get("safety_acceptable") != 1.0:
             raise PipelineError("human review contains a safety rejection")
         language_naturalness = human.get("language_naturalness_by_language", {})
@@ -249,6 +278,14 @@ def compare(
             ),
             "locked_eval_manifest_sha256": (
                 next(iter(manifest_hashes)) if len(manifest_hashes) == 1 else None
+            ),
+            "locked_eval_source_build_id": (
+                next(iter(source_build_ids)) if len(source_build_ids) == 1 else None
+            ),
+            "independent_suite_validation_sha256": (
+                sha256_text(next(iter(independent_validations)))
+                if independent_validations
+                else None
             ),
             "comparison_code_commit": comparison_commit,
             "created_at": utc_now(),

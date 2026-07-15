@@ -18,6 +18,7 @@ from training.llm.eval.memorization_eval import (
 )
 from training.llm.eval.persona_eval import aggregate_persona_metrics, evaluate_persona
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
+from training.llm.eval.locked_suite import validate_independent_manifest
 from training.llm.generation_profile import resolve_generation_settings
 from training.llm.scripts.common import (
     ARTIFACT_ROOT,
@@ -35,6 +36,26 @@ from training.llm.scripts.common import (
 
 
 RUN_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$")
+
+
+def validate_run_contract(args: argparse.Namespace) -> None:
+    if args.run_kind == "l0_base":
+        if args.rag_jsonl is not None:
+            raise PipelineError("L0 base must run without RAG; use l0_prompt_rag for the RAG baseline")
+        if args.backend == "local" and args.adapter is not None:
+            raise PipelineError("local L0 base must not load an adapter")
+    elif args.run_kind == "l0_prompt_rag":
+        if args.rag_jsonl is None:
+            raise PipelineError("L0 Prompt + RAG requires --rag-jsonl")
+        if args.backend == "local" and args.adapter is not None:
+            raise PipelineError("local L0 Prompt + RAG must not load an adapter")
+    else:
+        if args.rag_jsonl is None:
+            raise PipelineError("post-train locked evaluation requires frozen Prompt + RAG")
+        if args.train_jsonl is None:
+            raise PipelineError("post-train locked evaluation requires train JSONL for memorization")
+        if args.backend == "local" and args.adapter is None:
+            raise PipelineError("local post-train locked evaluation requires an adapter")
 
 
 def _percentile(values: list[float], quantile: float) -> float | None:
@@ -80,18 +101,28 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError("run ID must be a safe 3-80 character identifier")
     if args.progress_every <= 0:
         raise PipelineError("progress interval must be positive")
+    validate_run_contract(args)
     run_commit = require_clean_git_worktree()
     output_dir = args.output_root.resolve() / args.run_id
     if output_dir.exists():
         raise PipelineError(f"refusing to overwrite locked-eval run: {output_dir}")
 
-    cases, eval_hashes = load_locked_cases(args.eval_root)
-    prompt, response_schema, contract_hashes = frozen_prompt_contract()
-    allowed_tags = list(response_schema["properties"]["expression_tag"]["enum"])
-    rag = FrozenRag(args.rag_jsonl)
     manifest_path = args.locked_manifest.resolve()
     manifest_sha256 = require_git_tracked_file(manifest_path)
     frozen = read_json(manifest_path)
+    manifest_version = frozen.get("schema_version")
+    if manifest_version not in {1, 2}:
+        raise PipelineError("locked-eval manifest schema version is not supported")
+    source_build_id = str(frozen.get("source_build_id") or "")
+    if not source_build_id:
+        raise PipelineError("locked-eval manifest source build ID is required")
+    cases, eval_hashes = load_locked_cases(
+        args.eval_root,
+        expected_source_build_id=source_build_id,
+    )
+    prompt, response_schema, contract_hashes = frozen_prompt_contract()
+    allowed_tags = list(response_schema["properties"]["expression_tag"]["enum"])
+    rag = FrozenRag(args.rag_jsonl)
     suite_id = frozen.get("suite_id")
     if not isinstance(suite_id, str) or not RUN_ID.fullmatch(suite_id):
         raise PipelineError("locked-eval manifest requires a safe suite ID")
@@ -103,12 +134,28 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError("runtime prompt differs from the committed locked-eval prompt")
     if contract_hashes["response_schema_sha256"] != frozen.get("response_schema_sha256"):
         raise PipelineError("response schema differs from the committed locked-eval contract")
-    if args.run_kind == "l0_prompt_rag" and args.rag_jsonl is None:
-        raise PipelineError("L0 Prompt + RAG requires --rag-jsonl")
-    if args.run_kind == "l0_base" and args.rag_jsonl is not None:
-        raise PipelineError("L0 base must run without RAG; use l0_prompt_rag for the RAG baseline")
     if rag.source_hash is not None and rag.source_hash != frozen.get("rag_train_sha256"):
         raise PipelineError("RAG input differs from the committed frozen manifest")
+    independent_suite_validation = None
+    if manifest_version == 2:
+        if args.dataset_dir is None:
+            raise PipelineError("independent suite evaluation requires --dataset-dir")
+        if args.previous_locked_manifest is None or args.previous_locked_eval_root is None:
+            raise PipelineError(
+                "independent suite evaluation requires the previous manifest and eval root"
+            )
+        if args.suite_rag_jsonl is None:
+            raise PipelineError("independent suite evaluation requires --suite-rag-jsonl")
+        require_git_tracked_file(args.previous_locked_manifest)
+        independent_suite_validation = validate_independent_manifest(
+            frozen,
+            cases=cases,
+            input_hashes=eval_hashes,
+            dataset_dir=args.dataset_dir,
+            previous_manifest_path=args.previous_locked_manifest,
+            previous_eval_root=args.previous_locked_eval_root,
+            rag_jsonl=args.suite_rag_jsonl,
+        )
     if args.train_jsonl:
         exact_index, train_candidates = load_training_reply_index(args.train_jsonl)
         train_hash = sha256_file(args.train_jsonl)
@@ -249,9 +296,11 @@ def run(args: argparse.Namespace) -> Path:
             "rubric_status": "not_scored_by_this_automatic_run",
             "fields": ["persona", "zh_naturalness", "jp_naturalness", "relationship_tone", "safety"],
         },
+        "independent_suite_validation": independent_suite_validation,
         "provenance": {
             "eval_input_hashes": eval_hashes,
             "locked_eval_suite_id": suite_id,
+            "locked_eval_source_build_id": source_build_id,
             "locked_eval_manifest_sha256": manifest_sha256,
             "rag_sha256": rag.source_hash,
             "train_jsonl_sha256_for_memorization_only": train_hash,
@@ -286,6 +335,14 @@ def parser() -> argparse.ArgumentParser:
         default=Path(__file__).parent / "fixtures" / "locked_eval_manifest.json",
     )
     value.add_argument("--rag-jsonl", type=Path)
+    value.add_argument(
+        "--suite-rag-jsonl",
+        type=Path,
+        help="Frozen RAG identity for manifest validation; L0 base does not inject it.",
+    )
+    value.add_argument("--dataset-dir", type=Path)
+    value.add_argument("--previous-locked-manifest", type=Path)
+    value.add_argument("--previous-locked-eval-root", type=Path)
     value.add_argument("--train-jsonl", type=Path, help="Used only for output memorization comparison")
     value.add_argument("--backend", choices=["local", "openai"], required=True)
     value.add_argument("--config", type=Path)

@@ -7,6 +7,7 @@ from typing import Any
 
 from training.llm.scripts.common import (
     PipelineError,
+    canonical_json,
     read_json,
     read_jsonl,
     require_clean_git_worktree,
@@ -51,9 +52,13 @@ def prepare_review_packet(
     profile_sha256 = provenance.get("generation_profile_sha256")
     if not profile_id or not profile_sha256:
         raise PipelineError("human review requires a locked eval bound to a generation profile")
+    independent_validation = report.get("independent_suite_validation")
+    if not isinstance(independent_validation, dict) or independent_validation.get("status") != "pass":
+        raise PipelineError("human review requires passing independent-suite validation")
     suite_id = provenance.get("locked_eval_suite_id")
+    source_build_id = provenance.get("locked_eval_source_build_id")
     manifest_sha256 = provenance.get("locked_eval_manifest_sha256")
-    if not suite_id or not manifest_sha256:
+    if not suite_id or not source_build_id or not manifest_sha256:
         raise PipelineError("human review requires a versioned locked-eval suite")
     rows = [row for _, row in read_jsonl(raw_path)]
     if len(rows) != 184:
@@ -85,9 +90,13 @@ def prepare_review_packet(
         "generation_profile_id": profile_id,
         "generation_profile_sha256": profile_sha256,
         "locked_eval_suite_id": suite_id,
+        "locked_eval_source_build_id": source_build_id,
         "locked_eval_manifest_sha256": manifest_sha256,
         "locked_eval_report_sha256": sha256_file(report_path),
         "raw_outputs_sha256": raw_sha256,
+        "independent_suite_validation_sha256": sha256_text(
+            canonical_json(independent_validation)
+        ),
         "rubric": {
             "rating_type": "boolean",
             "fields": list(RATING_FIELDS),
@@ -217,7 +226,11 @@ def finalize_review(
             "generation_profile_id": packet["generation_profile_id"],
             "generation_profile_sha256": packet["generation_profile_sha256"],
             "locked_eval_suite_id": packet["locked_eval_suite_id"],
+            "locked_eval_source_build_id": packet["locked_eval_source_build_id"],
             "locked_eval_manifest_sha256": packet["locked_eval_manifest_sha256"],
+            "independent_suite_validation_sha256": packet[
+                "independent_suite_validation_sha256"
+            ],
             "rubric_version": RUBRIC_VERSION,
             "code_commit": code_commit,
             "generated_at": utc_now(),

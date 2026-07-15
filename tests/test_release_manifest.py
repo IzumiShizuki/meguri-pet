@@ -49,7 +49,9 @@ class ReleaseManifestTests(unittest.TestCase):
             expected_llm_generation_profile_id=None,
             expected_llm_generation_profile_sha256=None,
             expected_llm_locked_eval_suite_id=None,
+            expected_llm_locked_eval_source_build_id=None,
             expected_llm_locked_eval_manifest_sha256=None,
+            expected_llm_independent_suite_validation_sha256=None,
             expected_image_digest=[],
             readiness=True,
         )
@@ -63,6 +65,9 @@ class ReleaseManifestTests(unittest.TestCase):
         profile_errors = check_readiness(adapter_manifest, args)
         self.assertTrue(any("llm_generation_profile_id" in item for item in profile_errors))
         self.assertTrue(any("llm_locked_eval_suite_id" in item for item in profile_errors))
+        self.assertTrue(
+            any("llm_independent_suite_validation_sha256" in item for item in profile_errors)
+        )
 
     def test_generator_hashes_artifacts_and_validates_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -91,7 +96,9 @@ class ReleaseManifestTests(unittest.TestCase):
                 llm_generation_profile_id="decode-v2",
                 llm_generation_profile_sha256="d" * 64,
                 llm_locked_eval_suite_id="locked-v2",
+                llm_locked_eval_source_build_id="new-eval-build-v2",
                 llm_locked_eval_manifest_sha256="e" * 64,
+                llm_independent_suite_validation_sha256="f" * 64,
                 model_registry_id="meguri-text-test",
                 python_tests="passed",
                 typescript_tests="passed",

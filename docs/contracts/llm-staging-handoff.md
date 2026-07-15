@@ -26,7 +26,9 @@ rollback target:
 - `llm_generation_profile_id`
 - `llm_generation_profile_sha256`
 - `llm_locked_eval_suite_id`
+- `llm_locked_eval_source_build_id`
 - `llm_locked_eval_manifest_sha256`
+- `llm_independent_suite_validation_sha256`
 - `prompt_sha256`
 - `response_schema_sha256`
 - `data_build_id`
@@ -54,6 +56,10 @@ Attach evidence for each item below before any staging promotion claim:
    the same independently frozen 184-case suite, with one committed manifest
    identity and identical input hashes. A validation-selected profile must not
    reuse its excluded previous suite.
+   The v2 manifest must also prove a new source build, zero sample/input/case/
+   scene or normalized near-input overlap with train/validation and the
+   previous suite, distinct preparer/approver identities, and measurement-only
+   declarations.
 5. Passing comparison report whose `staging_gate.status` is `pass` and whose
    `production_ready` field remains `false`.
 6. Passing human review artifact with persona approval score at or above
@@ -102,6 +108,7 @@ Record the exact evidence paths or URLs for:
 - generation profile:
 - generation profile SHA-256:
 - locked-eval suite ID and manifest SHA-256:
+- independent-suite validation SHA-256:
 - locked eval report:
 - comparison report:
 - human review:

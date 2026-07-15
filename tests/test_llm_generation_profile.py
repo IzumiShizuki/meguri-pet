@@ -11,7 +11,13 @@ import yaml
 
 from training.llm.gateway.manager import RegistryModelManager
 from training.llm.generation_profile import load_generation_profile, resolve_generation_settings
-from training.llm.scripts.common import PipelineError, read_json, sha256_file
+from training.llm.scripts.common import (
+    PipelineError,
+    canonical_json,
+    read_json,
+    sha256_file,
+    sha256_text,
+)
 from training.llm.scripts.export_adapter import adapter_hash
 from training.llm.scripts.register_model import register
 
@@ -206,6 +212,7 @@ class GenerationProfileTests(unittest.TestCase):
                 json.dumps({"selected": {"adapter_sha256": digest}}), encoding="utf-8"
             )
             locked = root / "locked.json"
+            independent_validation = {"status": "pass", "suite_id": "meguri-locked-eval-v2"}
             locked.write_text(
                 json.dumps(
                     {
@@ -213,10 +220,12 @@ class GenerationProfileTests(unittest.TestCase):
                         "run_id": "locked-v2",
                         "counts": {"total": 184},
                         "model": {"adapter_path": str(adapter)},
+                        "independent_suite_validation": independent_validation,
                         "provenance": {
                             "generation_profile_id": profile.profile_id,
                             "generation_profile_sha256": profile.sha256,
                             "locked_eval_suite_id": "meguri-locked-eval-v2",
+                            "locked_eval_source_build_id": "new-eval-build-v2",
                             "locked_eval_manifest_sha256": "2" * 64,
                             "eval_input_hashes": {"jp": "new-jp", "zh": "new-zh"},
                         },
@@ -234,7 +243,11 @@ class GenerationProfileTests(unittest.TestCase):
                             "generation_profile_id": profile.profile_id,
                             "generation_profile_sha256": profile.sha256,
                             "locked_eval_suite_id": "meguri-locked-eval-v2",
+                            "locked_eval_source_build_id": "new-eval-build-v2",
                             "locked_eval_manifest_sha256": "2" * 64,
+                            "independent_suite_validation_sha256": sha256_text(
+                                canonical_json(independent_validation)
+                            ),
                         },
                     }
                 ),
@@ -295,10 +308,15 @@ class GenerationProfileTests(unittest.TestCase):
                 "status": "pass",
                 "run_id": "locked-v2",
                 "counts": {"total": 184},
+                "independent_suite_validation": {
+                    "status": "pass",
+                    "suite_id": "meguri-locked-eval-v2",
+                },
                 "provenance": {
                     "generation_profile_id": "decode-test-v2",
                     "generation_profile_sha256": sha256_file(profile_path),
                     "locked_eval_suite_id": "meguri-locked-eval-v2",
+                    "locked_eval_source_build_id": "new-eval-build-v2",
                     "locked_eval_manifest_sha256": "2" * 64,
                 },
             }
@@ -312,6 +330,9 @@ class GenerationProfileTests(unittest.TestCase):
                         "provenance": {
                             **locked["provenance"],
                             "candidate_report": sha256_file(locked_path),
+                            "independent_suite_validation_sha256": sha256_text(
+                                canonical_json(locked["independent_suite_validation"])
+                            ),
                         },
                     }
                 ),
@@ -330,7 +351,11 @@ class GenerationProfileTests(unittest.TestCase):
                 "generation_profile_id": "decode-test-v2",
                 "generation_profile_sha256": sha256_file(profile_path),
                 "locked_eval_suite_id": "meguri-locked-eval-v2",
+                "locked_eval_source_build_id": "new-eval-build-v2",
                 "locked_eval_manifest_sha256": "2" * 64,
+                "independent_suite_validation_sha256": sha256_text(
+                    canonical_json(locked["independent_suite_validation"])
+                ),
                 "locked_eval_report": str(locked_path),
                 "comparison_report": str(comparison_path),
             }

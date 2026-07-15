@@ -147,7 +147,9 @@ def main(argv: list[str] | None = None) -> int:
             expected_llm_generation_profile_id = None
             expected_llm_generation_profile_sha256 = None
             expected_llm_locked_eval_suite_id = None
+            expected_llm_locked_eval_source_build_id = None
             expected_llm_locked_eval_manifest_sha256 = None
+            expected_llm_independent_suite_validation_sha256 = None
             expected_image_digest: list[tuple[str, str]] = []
 
         errors = check_readiness(manifest, ReadinessArgs())

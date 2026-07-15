@@ -142,7 +142,11 @@ def check_readiness(manifest: dict[str, Any], args: argparse.Namespace) -> list[
         "llm_generation_profile_id": args.expected_llm_generation_profile_id,
         "llm_generation_profile_sha256": args.expected_llm_generation_profile_sha256,
         "llm_locked_eval_suite_id": args.expected_llm_locked_eval_suite_id,
+        "llm_locked_eval_source_build_id": args.expected_llm_locked_eval_source_build_id,
         "llm_locked_eval_manifest_sha256": args.expected_llm_locked_eval_manifest_sha256,
+        "llm_independent_suite_validation_sha256": (
+            args.expected_llm_independent_suite_validation_sha256
+        ),
     }
     for field, expected_value in expected.items():
         if expected_value is not None and manifest.get(field) != expected_value:
@@ -177,7 +181,9 @@ def check_readiness(manifest: dict[str, Any], args: argparse.Namespace) -> list[
             "llm_generation_profile_id",
             "llm_generation_profile_sha256",
             "llm_locked_eval_suite_id",
+            "llm_locked_eval_source_build_id",
             "llm_locked_eval_manifest_sha256",
+            "llm_independent_suite_validation_sha256",
         )
         if adapter_revision is not None:
             for field in profile_fields:
@@ -215,7 +221,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--expected-llm-generation-profile-id")
     result.add_argument("--expected-llm-generation-profile-sha256")
     result.add_argument("--expected-llm-locked-eval-suite-id")
+    result.add_argument("--expected-llm-locked-eval-source-build-id")
     result.add_argument("--expected-llm-locked-eval-manifest-sha256")
+    result.add_argument("--expected-llm-independent-suite-validation-sha256")
     result.add_argument("--expected-image-digest", action="append", type=parse_assignment, default=[])
     return result
 

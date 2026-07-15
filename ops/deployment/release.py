@@ -117,7 +117,9 @@ def preflight_release(env_file: Path, manifest_file: Path) -> dict[str, Any]:
             "llm_generation_profile_id",
             "llm_generation_profile_sha256",
             "llm_locked_eval_suite_id",
+            "llm_locked_eval_source_build_id",
             "llm_locked_eval_manifest_sha256",
+            "llm_independent_suite_validation_sha256",
         ):
             if not manifest.get(field) or placeholder(manifest.get(field)):
                 raise DeploymentError(f"profile-bound adapter release requires {field}")

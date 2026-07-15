@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,11 @@ MODE_BY_OUTFIT = {
 }
 
 
-def load_locked_cases(eval_root: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def load_locked_cases(
+    eval_root: Path,
+    *,
+    expected_source_build_id: str = SOURCE_BUILD_ID,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Load the fixed eval set only from the evaluation entry point."""
 
     cases: list[dict[str, Any]] = []
@@ -49,7 +54,7 @@ def load_locked_cases(eval_root: Path) -> tuple[list[dict[str, Any]], dict[str, 
             metadata = row.get("metadata")
             sample_id = str(row.get("sample_id") or "")
             if (
-                row.get("build_id") != SOURCE_BUILD_ID
+                row.get("build_id") != expected_source_build_id
                 or not isinstance(metadata, dict)
                 or metadata.get("split") != "test"
                 or row.get("language") != language
@@ -61,6 +66,29 @@ def load_locked_cases(eval_root: Path) -> tuple[list[dict[str, Any]], dict[str, 
             seen.add(sample_id)
             cases.append(row)
     return cases, hashes
+
+
+def locked_case_input_fingerprint(case: dict[str, Any]) -> str:
+    metadata = case.get("metadata")
+    messages = case.get("messages")
+    if not isinstance(metadata, dict) or not isinstance(messages, list):
+        raise PipelineError("locked case input identity is incomplete")
+    users = [item for item in messages if isinstance(item, dict) and item.get("role") == "user"]
+    if not users or not isinstance(users[-1].get("content"), str):
+        raise PipelineError("locked case input identity has no user message")
+    projection = {
+        "language": case.get("language"),
+        "user_message": normalize_eval_input_text(users[-1]["content"]),
+        "relationship_stage": metadata.get("relationship_stage"),
+        "outfit_code": metadata.get("outfit_code"),
+    }
+    if any(value in (None, "") for value in projection.values()):
+        raise PipelineError("locked case input identity fields are incomplete")
+    return sha256_text(canonical_json(projection))
+
+
+def normalize_eval_input_text(value: str) -> str:
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).casefold()
 
 
 class FrozenRag:

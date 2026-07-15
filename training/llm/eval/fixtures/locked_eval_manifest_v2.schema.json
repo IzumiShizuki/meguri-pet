@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.local/schemas/locked_eval_manifest_v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "source_build_id",
+    "counts",
+    "input_hashes",
+    "frozen_prompt_sha256",
+    "response_schema_sha256",
+    "rag_train_sha256",
+    "case_identity",
+    "isolation",
+    "independent_freeze",
+    "policy"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "suite_id": {"$ref": "#/$defs/id"},
+    "source_build_id": {"type": "string", "minLength": 3},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["jp", "zh", "total"],
+      "properties": {
+        "jp": {"const": 92},
+        "zh": {"const": 92},
+        "total": {"const": 184}
+      }
+    },
+    "input_hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exports/eval/cases_jp.jsonl", "exports/eval/cases_zh.jsonl"],
+      "properties": {
+        "exports/eval/cases_jp.jsonl": {"$ref": "#/$defs/sha256"},
+        "exports/eval/cases_zh.jsonl": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "frozen_prompt_sha256": {"$ref": "#/$defs/sha256"},
+    "response_schema_sha256": {"$ref": "#/$defs/sha256"},
+    "rag_train_sha256": {"$ref": "#/$defs/sha256"},
+    "case_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "unique_sample_ids",
+        "unique_input_fingerprints",
+        "unique_normalized_input_texts",
+        "unique_full_case_fingerprints",
+        "unique_scene_ids",
+        "sample_ids_sha256",
+        "input_fingerprints_sha256",
+        "normalized_input_texts_sha256",
+        "full_case_fingerprints_sha256",
+        "scene_ids_sha256"
+      ],
+      "properties": {
+        "total": {"const": 184},
+        "unique_sample_ids": {"const": 184},
+        "unique_input_fingerprints": {"const": 184},
+        "unique_normalized_input_texts": {"const": 184},
+        "unique_full_case_fingerprints": {"const": 184},
+        "unique_scene_ids": {"type": "integer", "minimum": 1, "maximum": 184},
+        "sample_ids_sha256": {"$ref": "#/$defs/sha256"},
+        "input_fingerprints_sha256": {"$ref": "#/$defs/sha256"},
+        "normalized_input_texts_sha256": {"$ref": "#/$defs/sha256"},
+        "full_case_fingerprints_sha256": {"$ref": "#/$defs/sha256"},
+        "scene_ids_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "checks",
+        "near_duplicate_threshold",
+        "train_validation_dataset_id",
+        "train_validation_manifest_sha256",
+        "train_jsonl_sha256",
+        "validation_jsonl_sha256",
+        "previous_locked_suite_id",
+        "previous_locked_manifest_sha256"
+      ],
+      "properties": {
+        "checks": {
+          "type": "object",
+          "additionalProperties": {"const": 0},
+          "minProperties": 12
+        },
+        "near_duplicate_threshold": {"const": 0.95},
+        "train_validation_dataset_id": {"type": "string", "minLength": 3},
+        "train_validation_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "train_jsonl_sha256": {"$ref": "#/$defs/sha256"},
+        "validation_jsonl_sha256": {"$ref": "#/$defs/sha256"},
+        "previous_locked_suite_id": {"$ref": "#/$defs/id"},
+        "previous_locked_manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "independent_freeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prepared_by",
+        "approved_by",
+        "frozen_at",
+        "source_authority",
+        "training_team_had_content_access_before_freeze",
+        "content_used_for_training_or_tuning",
+        "generated_by_commit"
+      ],
+      "properties": {
+        "prepared_by": {"type": "string", "minLength": 1},
+        "approved_by": {"type": "string", "minLength": 1},
+        "frozen_at": {"type": "string", "format": "date-time"},
+        "source_authority": {"type": "string", "minLength": 1},
+        "training_team_had_content_access_before_freeze": {"const": false},
+        "content_used_for_training_or_tuning": {"const": false},
+        "generated_by_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evaluation_only", "training", "prompt_tuning", "early_stopping", "checkpoint_selection"],
+      "properties": {
+        "evaluation_only": {"const": true},
+        "training": {"const": false},
+        "prompt_tuning": {"const": false},
+        "early_stopping": {"const": false},
+        "checkpoint_selection": {"const": false}
+      }
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,79}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

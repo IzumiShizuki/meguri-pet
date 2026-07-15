@@ -10,7 +10,14 @@ from typing import Any
 from services.meguri_core.schemas import LlmResponse
 from training.llm.eval.backends import LocalUnslothBackend
 from training.llm.generation_profile import GenerationProfile, load_generation_profile
-from training.llm.scripts.common import PipelineError, load_yaml, read_json, sha256_file, sha256_text
+from training.llm.scripts.common import (
+    PipelineError,
+    canonical_json,
+    load_yaml,
+    read_json,
+    sha256_file,
+    sha256_text,
+)
 from training.llm.scripts.export_adapter import adapter_hash
 
 
@@ -53,7 +60,12 @@ class RegistryModelManager:
             return config, {"max_new_tokens": 256}, None
         if any(value is None for value in profile_fields):
             raise PipelineError("registry generation profile identity is incomplete")
-        if not entry.get("locked_eval_suite_id") or not entry.get("locked_eval_manifest_sha256"):
+        if (
+            not entry.get("locked_eval_suite_id")
+            or not entry.get("locked_eval_source_build_id")
+            or not entry.get("locked_eval_manifest_sha256")
+            or not entry.get("independent_suite_validation_sha256")
+        ):
             raise PipelineError("registry locked-eval suite identity is incomplete")
         profile = load_generation_profile(
             Path(str(profile_fields[0])),
@@ -80,6 +92,7 @@ class RegistryModelManager:
             entry["generation_profile_id"],
             entry["generation_profile_sha256"],
             entry["locked_eval_suite_id"],
+            entry["locked_eval_source_build_id"],
             entry["locked_eval_manifest_sha256"],
         )
         for label, provenance in (
@@ -90,12 +103,24 @@ class RegistryModelManager:
                 provenance.get("generation_profile_id"),
                 provenance.get("generation_profile_sha256"),
                 provenance.get("locked_eval_suite_id"),
+                provenance.get("locked_eval_source_build_id"),
                 provenance.get("locked_eval_manifest_sha256"),
             )
             if actual_identity != expected_identity:
                 raise PipelineError(f"registered {label} runtime identity mismatch")
         if comparison_provenance.get("candidate_report") != sha256_file(locked_path):
             raise PipelineError("registered comparison does not bind the locked-eval report")
+        independent_validation = locked.get("independent_suite_validation")
+        if not isinstance(independent_validation, dict) or independent_validation.get("status") != "pass":
+            raise PipelineError("registered locked suite independence validation did not pass")
+        independent_validation_sha256 = sha256_text(canonical_json(independent_validation))
+        if independent_validation_sha256 != entry["independent_suite_validation_sha256"]:
+            raise PipelineError("registered locked suite independence digest mismatch")
+        if (
+            comparison_provenance.get("independent_suite_validation_sha256")
+            != independent_validation_sha256
+        ):
+            raise PipelineError("registered comparison suite independence digest mismatch")
         return config, profile.backend_kwargs(), profile
 
     def resolve_requested_model(self, requested: str) -> str:

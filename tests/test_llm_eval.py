@@ -13,6 +13,7 @@ from training.llm.eval.backends import (
 )
 from training.llm.eval.persona_eval import evaluate_persona
 from training.llm.eval.run_validation_eval import run as run_validation_eval
+from training.llm.eval.run_locked_eval import validate_run_contract
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
 from training.llm.scripts.common import PipelineError, require_clean_git_worktree
 
@@ -117,6 +118,30 @@ class LlmEvalTests(unittest.TestCase):
         self.assertEqual(tokenizer.asserted, ('{"', False))
         with self.assertRaisesRegex(PipelineError, "cannot encode"):
             json_object_start_token_ids(Tokenizer([]))
+
+    def test_locked_eval_run_kinds_fail_closed_on_incomparable_inputs(self) -> None:
+        base = SimpleNamespace(
+            run_kind="l0_base",
+            rag_jsonl=None,
+            train_jsonl=None,
+            backend="local",
+            adapter=None,
+        )
+        validate_run_contract(base)
+        base.adapter = "adapter"
+        with self.assertRaisesRegex(PipelineError, "must not load an adapter"):
+            validate_run_contract(base)
+        candidate = SimpleNamespace(
+            run_kind="post_train",
+            rag_jsonl="rag",
+            train_jsonl=None,
+            backend="local",
+            adapter="adapter",
+        )
+        with self.assertRaisesRegex(PipelineError, "train JSONL"):
+            validate_run_contract(candidate)
+        candidate.train_jsonl = "train"
+        validate_run_contract(candidate)
 
 
 if __name__ == "__main__":

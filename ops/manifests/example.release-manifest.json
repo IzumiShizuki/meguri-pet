@@ -20,7 +20,9 @@
   "llm_generation_profile_id": null,
   "llm_generation_profile_sha256": null,
   "llm_locked_eval_suite_id": null,
+  "llm_locked_eval_source_build_id": null,
   "llm_locked_eval_manifest_sha256": null,
+  "llm_independent_suite_validation_sha256": null,
   "model_registry_id": null,
   "tests": {
     "python": "passed",

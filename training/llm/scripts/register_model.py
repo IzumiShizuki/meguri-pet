@@ -118,10 +118,24 @@ def register(
         locked_manifest_sha256 = locked_provenance.get("locked_eval_manifest_sha256")
         if not locked_manifest_sha256:
             raise PipelineError("profile-bound registration requires a locked-eval manifest digest")
+        locked_source_build_id = locked_provenance.get("locked_eval_source_build_id")
+        if not locked_source_build_id:
+            raise PipelineError("profile-bound registration requires an evaluation source build")
         if comparison_provenance.get("locked_eval_suite_id") != locked_suite_id:
             raise PipelineError("comparison locked-eval suite identity mismatch")
         if comparison_provenance.get("locked_eval_manifest_sha256") != locked_manifest_sha256:
             raise PipelineError("comparison locked-eval manifest identity mismatch")
+        if comparison_provenance.get("locked_eval_source_build_id") != locked_source_build_id:
+            raise PipelineError("comparison evaluation source build identity mismatch")
+        independent_validation = locked.get("independent_suite_validation")
+        if not isinstance(independent_validation, dict) or independent_validation.get("status") != "pass":
+            raise PipelineError("profile-bound registration requires passing suite independence validation")
+        independent_validation_sha256 = sha256_text(canonical_json(independent_validation))
+        if (
+            comparison_provenance.get("independent_suite_validation_sha256")
+            != independent_validation_sha256
+        ):
+            raise PipelineError("comparison suite-independence evidence mismatch")
     elif locked.get("provenance", {}).get("generation_profile_sha256") is not None:
         raise PipelineError("registration must bind the generation profile used by locked eval")
     if status == "staging_candidate":
@@ -173,8 +187,18 @@ def register(
             if generation_profile is not None
             else None
         ),
+        "locked_eval_source_build_id": (
+            locked.get("provenance", {}).get("locked_eval_source_build_id")
+            if generation_profile is not None
+            else None
+        ),
         "locked_eval_manifest_sha256": (
             locked.get("provenance", {}).get("locked_eval_manifest_sha256")
+            if generation_profile is not None
+            else None
+        ),
+        "independent_suite_validation_sha256": (
+            sha256_text(canonical_json(locked.get("independent_suite_validation")))
             if generation_profile is not None
             else None
         ),
