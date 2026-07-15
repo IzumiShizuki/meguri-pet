@@ -32,6 +32,45 @@ class EvaluationBackend(Protocol):
     ) -> GenerationResult: ...
 
 
+def complete_json_object_end(text: str) -> int | None:
+    """Return the exclusive end of the first syntactically complete JSON object."""
+
+    for start, initial in enumerate(text):
+        if initial != "{":
+            continue
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(text)):
+            character = text[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+                continue
+            if character == '"':
+                in_string = True
+            elif character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth < 0:
+                    break
+                if depth == 0:
+                    end = index + 1
+                    try:
+                        value = json.loads(text[start:end])
+                    except json.JSONDecodeError:
+                        break
+                    if isinstance(value, dict):
+                        return end
+                    break
+    return None
+
+
 class OpenAIBackend:
     def __init__(
         self,
@@ -234,18 +273,27 @@ class LocalUnslothBackend:
         first_ms = (time.perf_counter() - first_start) * 1000
         torch.cuda.synchronize()
         start = time.perf_counter()
-        stopping_criteria = None
+        try:
+            from transformers import StoppingCriteria, StoppingCriteriaList
+        except ImportError as exc:
+            raise PipelineError("Transformers stopping criteria are unavailable") from exc
+
+        class JsonObjectComplete(StoppingCriteria):
+            def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
+                generated_ids = input_ids[0][input_length:]
+                text = self_tokenizer.decode(generated_ids, skip_special_tokens=True)
+                return complete_json_object_end(text) is not None
+
+        self_tokenizer = self.tokenizer
+        criteria: list[Any] = [JsonObjectComplete()]
         if cancel_event is not None:
-            try:
-                from transformers import StoppingCriteria, StoppingCriteriaList
-            except ImportError as exc:
-                raise PipelineError("Transformers stopping criteria are unavailable") from exc
 
             class CancelRequested(StoppingCriteria):
                 def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
                     return bool(cancel_event.is_set())
 
-            stopping_criteria = StoppingCriteriaList([CancelRequested()])
+            criteria.append(CancelRequested())
+        stopping_criteria = StoppingCriteriaList(criteria)
         with torch.inference_mode(), torch.autocast(
             device_type="cuda", dtype=self.autocast_dtype
         ):
@@ -261,6 +309,9 @@ class LocalUnslothBackend:
         elapsed = time.perf_counter() - start
         generated = output[0][input_length:]
         raw = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
+        complete_end = complete_json_object_end(raw)
+        if complete_end is not None:
+            raw = raw[:complete_end]
         if cancel_event is not None and cancel_event.is_set():
             raise PipelineError("generation cancelled")
         token_count = int(generated.numel())

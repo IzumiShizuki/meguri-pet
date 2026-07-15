@@ -6,6 +6,7 @@ from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from training.llm.eval.backends import complete_json_object_end
 from training.llm.eval.persona_eval import evaluate_persona
 from training.llm.eval.run_validation_eval import run as run_validation_eval
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
@@ -77,6 +78,19 @@ class LlmEvalTests(unittest.TestCase):
         args = SimpleNamespace(run_id="validation-test", progress_every=0)
         with self.assertRaisesRegex(PipelineError, "progress interval must be positive"):
             run_validation_eval(args)
+
+    def test_json_completion_ignores_braces_inside_strings(self) -> None:
+        raw = '{"reply":"brace } and escaped \\\"{ text","memory_candidates":[]}\nuser'
+        end = complete_json_object_end(raw)
+        self.assertEqual(raw[:end], raw.split("\nuser", 1)[0])
+
+    def test_json_completion_rejects_incomplete_object(self) -> None:
+        self.assertIsNone(complete_json_object_end('{"reply":"unfinished"'))
+
+    def test_json_completion_preserves_invalid_prefix(self) -> None:
+        raw = '```json\n{"reply":"ok","memory_candidates":[]}\n```'
+        end = complete_json_object_end(raw)
+        self.assertEqual(raw[:end], '```json\n{"reply":"ok","memory_candidates":[]}')
 
 
 if __name__ == "__main__":
