@@ -19,6 +19,8 @@ METADATA = {
     "adapter_sha256": "b" * 64,
     "prompt_sha256": "c" * 64,
     "response_schema_sha256": "d" * 64,
+    "generation_profile_id": "decode-v2",
+    "generation_profile_sha256": "e" * 64,
 }
 
 
@@ -81,6 +83,7 @@ class GatewayTests(unittest.TestCase):
         content = response.json()["choices"][0]["message"]["content"]
         self.assertEqual(json.loads(content)["reply"], "了解了")
         self.assertEqual(response.headers["X-Meguri-Adapter-Revision"], "b" * 16)
+        self.assertEqual(response.headers["X-Meguri-Generation-Profile-Id"], "decode-v2")
 
     def test_schema_failure_is_fail_closed(self) -> None:
         response = self.client(FakeManager(fail=True)).post(

@@ -143,6 +143,27 @@ def require_clean_git_worktree() -> str:
     return commit
 
 
+def require_git_tracked_file(path: Path) -> str:
+    """Return the digest only when path is a tracked file in this clean checkout."""
+
+    resolved = path.resolve()
+    try:
+        relative = resolved.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError as exc:
+        raise PipelineError("versioned evidence manifest must be inside the project checkout") from exc
+    try:
+        subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", relative],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PipelineError("versioned evidence manifest must be tracked by Git") from exc
+    return sha256_file(resolved)
+
+
 def package_versions(names: Iterable[str]) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     for name in names:

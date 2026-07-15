@@ -63,12 +63,20 @@ def validate_contracts(memory: dict[str, Any], llm: dict[str, Any]) -> list[str]
         errors.append("llm: unauthenticated public inference must be forbidden")
     if endpoint.get("cloud_model_weight_mount_allowed") is not False:
         errors.append("llm: private model weights must not be mounted on the cloud host")
+    if endpoint.get("generation_profile_id_variable") != "MEGURI_LLM_GENERATION_PROFILE_ID":
+        errors.append("llm: generation profile ID variable is invalid")
+    if endpoint.get("generation_profile_sha256_variable") != "MEGURI_LLM_GENERATION_PROFILE_SHA256":
+        errors.append("llm: generation profile digest variable is invalid")
     if llm.get("release_channels") != {"dev": "mock", "staging": "candidate", "production": "last-good"}:
         errors.append("llm: release channels are invalid")
     required_llm = {
         "llm_base_model",
         "llm_adapter_revision",
         "llm_adapter_sha256",
+        "llm_generation_profile_id",
+        "llm_generation_profile_sha256",
+        "llm_locked_eval_suite_id",
+        "llm_locked_eval_manifest_sha256",
         "model_registry_id",
         "prompt_sha256",
         "response_schema_sha256",

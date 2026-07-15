@@ -21,7 +21,9 @@
         "adapter_revision", "adapter_sha256", "artifact_path", "dataset_id", "data_build_id",
         "prompt_sha256", "response_schema_sha256", "chat_template_sha256", "training_commit",
         "framework_versions", "training_config", "experiment_manifest", "validation_selection",
-        "locked_eval_report", "comparison_report", "created_at", "parent_model_id", "rollback_model_id"
+        "locked_eval_report", "comparison_report", "generation_profile", "generation_profile_id",
+        "generation_profile_sha256", "locked_eval_suite_id", "locked_eval_manifest_sha256",
+        "created_at", "parent_model_id", "rollback_model_id"
       ],
       "properties": {
         "model_id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"},
@@ -49,6 +51,23 @@
         "validation_selection": {"type": "string"},
         "locked_eval_report": {"type": "string"},
         "comparison_report": {"type": "string"},
+        "generation_profile": {"type": ["string", "null"]},
+        "generation_profile_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"
+        },
+        "generation_profile_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "locked_eval_suite_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"
+        },
+        "locked_eval_manifest_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
         "created_at": {"type": "string"},
         "parent_model_id": {"type": ["string", "null"]},
         "rollback_model_id": {"type": ["string", "null"]}

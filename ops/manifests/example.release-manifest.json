@@ -17,6 +17,10 @@
   "llm_base_model": "mock-v1",
   "llm_adapter_revision": null,
   "llm_adapter_sha256": null,
+  "llm_generation_profile_id": null,
+  "llm_generation_profile_sha256": null,
+  "llm_locked_eval_suite_id": null,
+  "llm_locked_eval_manifest_sha256": null,
   "model_registry_id": null,
   "tests": {
     "python": "passed",

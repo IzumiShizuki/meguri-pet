@@ -125,6 +125,11 @@ The validation-selected profile is frozen in
 on a newly and independently frozen locked set, then pass the frozen-rubric
 human persona review. The previous 184-case locked result remains evidence for
 the default v1 decode path and must not be reused to tune or approve v2.
+The file is validated against the pinned generation-profile contract and binds
+the base/tokenizer revisions, adapter digest, generation controls, validation
+evidence, safety evidence, and previous locked-suite exclusion. Once frozen,
+evaluation and inference must use `--generation-profile` instead of repeating
+the controls as command-line overrides.
 
 ```powershell
 python -m training.llm.scripts.train --experiment-id <id> `
@@ -149,6 +154,73 @@ python -m training.llm.eval.run_locked_eval `
   --acknowledge-locked-eval-is-evaluation-only
 ```
 
+## Independent v2 locked evaluation and human review
+
+The next v2 measurement requires an independently created and committed
+manifest with a new `suite_id`; the profile explicitly excludes
+`meguri-locked-eval-v1` and its frozen input-hash identity, so merely renaming
+the old suite is rejected. A manifest supplied outside the checkout or left
+untracked is also rejected. The new suite is not comparable with the old L0 reports,
+so run all three paths against the same new manifest and inputs:
+
+1. Base L0 without RAG and without an adapter.
+2. Prompt+RAG L0 without an adapter.
+3. The exported adapter with the frozen v2 generation profile.
+
+Each command must pass the same `--locked-manifest`, `--eval-root`, fixed Prompt,
+Response Schema, and `--input-pad-length 1152`. The candidate command adds:
+
+```powershell
+python -m training.llm.eval.run_locked_eval `
+  --run-id <new-suite-candidate-run> --run-kind post_train `
+  --locked-manifest <committed-new-suite-manifest> `
+  --eval-root <independent-new-eval-root> --rag-jsonl <frozen-rag-jsonl> `
+  --train-jsonl <derived-train-jsonl> --backend local `
+  --config training\llm\configs\qwen35_4b_bf16_lora.yaml `
+  --adapter <exported-adapter> `
+  --generation-profile training\llm\configs\qwen35_4b_lora_decode_v2.yaml `
+  --input-pad-length 1152 --acknowledge-locked-eval-is-evaluation-only
+```
+
+Run the frozen safety suite with the same profile. Comparison fails closed
+unless the candidate and safety reports use the same profile and all L0 and
+candidate reports use the same locked-suite manifest and input hashes.
+
+After automatic gates pass, create the frozen-rubric review packet. The packet
+contains model outputs and coarse relationship/mode context but omits source
+sample IDs; its content remains measurement-only:
+
+```powershell
+python -m training.llm.eval.human_review prepare `
+  --locked-eval-dir <new-suite-candidate-output> `
+  --packet <review-packet.json> --review-template <review-form.json>
+python -m training.llm.eval.human_review finalize `
+  --packet <review-packet.json> --completed-review <completed-review-form.json> `
+  --output <human-review-result.json>
+```
+
+Finalization requires all 184 ratings, reviewer identity/timestamp, an
+independence declaration, and a declaration that locked content was not used
+for tuning. Approval requires persona score at least `0.90`, JP and ZH
+naturalness rates each at least `0.90`, and zero human safety rejections.
+
+Only after the comparison gate passes may the same adapter be registered under
+a distinct profile-bound deployment identity. Registration verifies the new
+suite, manifest, profile, adapter, human-review-backed comparison, and rollback
+target together:
+
+```powershell
+python -m training.llm.scripts.register_model `
+  --export-dir <exported-adapter> --experiment-manifest <experiment-manifest> `
+  --validation-selection <validation-selection> `
+  --locked-eval-report <new-suite-candidate-report> `
+  --comparison-report <new-suite-comparison-report> `
+  --generation-profile training\llm\configs\qwen35_4b_lora_decode_v2.yaml `
+  --model-id <distinct-profile-bound-model-id> `
+  --status staging_candidate --parent-model-id <evaluated-v1-model-id> `
+  --rollback-model-id <explicit-last-good-model-id>
+```
+
 The frozen 184-case suite currently ranges from 896 to 1143 input tokens when
 Prompt + RAG is assembled. Local comparisons use left padding to 1152 tokens
 so TorchInductor sees one input shape; the report retains each unpadded input
@@ -163,6 +235,12 @@ candidate/last-good routing. The checked-in routing state is intentionally
 unconfigured and fail-closed. It cannot become ready until evaluated model
 artifacts and a last-good registry entry exist. Switching back to last-good uses
 `training.llm.scripts.switch_staging_model` and does not rebuild a model.
+Profile-bound candidates receive a distinct deployment model ID. Registry and
+Gateway verify the profile ID and SHA-256 together with the adapter digest and
+base/tokenizer revisions; the Gateway executes the pinned controls and returns
+`X-Meguri-Generation-Profile-Id` and
+`X-Meguri-Generation-Profile-SHA256`. Existing v1 entries with null profile
+fields retain the original default decode behavior.
 
 The environment Agent supplied `ops/contracts/llm-agent.environment-contract.json`.
 The human-readable staging handoff now lives at

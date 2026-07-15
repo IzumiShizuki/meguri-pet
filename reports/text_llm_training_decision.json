@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T06:35:16+08:00",
+  "generated_at": "2026-07-16T07:08:01+08:00",
   "status": "EVALUATED_NO_GO_STAGING",
   "production_ready": false,
   "model": {
@@ -76,14 +76,18 @@
     "comparison_report": "0bdd667796a41b6bd9e0d2b297fc8060212c43179268077ff77fa5a360736e0e",
     "decode_v2_validation_report": "d9fca15d068d036a40c5ecfbeadedc27438bf798c9483fbe141defcf1c97e48c",
     "decode_v2_safety_report": "87aae409cd51e4d7d6ed17d96ea4253217982207cabc4067094d173a49688ce7",
-    "decode_v2_validation_diagnostic": "6cf6057878f132f423d78c15ac981373801b0d01a5fcfffecab42fb988cdcf5c"
+    "decode_v2_validation_diagnostic": "6cf6057878f132f423d78c15ac981373801b0d01a5fcfffecab42fb988cdcf5c",
+    "decode_v2_generation_profile": "3b36c58ddcb6a09499c7a5528054741d2f43f25c2b87c2a2b576cc5a1c170738"
   },
   "next_iteration_policy": {
     "use_train_and_validation_only": true,
     "locked_eval_failure_content_may_be_used_for_tuning": false,
     "decode_v2_profile_frozen": true,
     "new_independently_frozen_locked_eval_required": true,
+    "new_suite_base_and_prompt_rag_baselines_required": true,
     "frozen_rubric_human_review_required": true,
+    "generation_profile_runtime_binding_supported": true,
+    "frozen_human_review_tooling_ready": true,
     "registry_and_staging_route_must_remain_unchanged_until_both_pass": true
   }
 }

@@ -83,6 +83,7 @@ class SafetyGateTests(unittest.TestCase):
                 "provenance": {
                     "prompt_sha256": "prompt",
                     "response_schema_sha256": "schema",
+                    "eval_input_hashes": {"jp": "one", "zh": "two"},
                 },
             }
             baseline = root / "baseline.json"
@@ -115,6 +116,55 @@ class SafetyGateTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(PipelineError, "different adapters"):
+                compare([baseline], candidate, safety, None, root / "comparison.json")
+
+    def test_comparison_rejects_mixed_locked_eval_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            adapter = root / "adapter"
+            adapter.mkdir()
+            (adapter / "adapter_model.safetensors").write_bytes(b"same")
+            common = {
+                "status": "pass",
+                "counts": {"total": 184},
+                "model": {"input_pad_length": 1152},
+                "provenance": {
+                    "prompt_sha256": "prompt",
+                    "response_schema_sha256": "schema",
+                    "eval_input_hashes": {"jp": "one", "zh": "two"},
+                },
+            }
+            baseline = root / "baseline.json"
+            baseline.write_text(json.dumps({**common, "run_id": "baseline"}), encoding="utf-8")
+            candidate = root / "candidate.json"
+            candidate.write_text(
+                json.dumps(
+                    {
+                        **common,
+                        "run_id": "candidate",
+                        "model": {"input_pad_length": 1152, "adapter_path": str(adapter)},
+                        "locked_eval_policy": {"used_for_checkpoint_selection": False},
+                        "provenance": {
+                            **common["provenance"],
+                            "eval_input_hashes": {"jp": "different", "zh": "two"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            safety = root / "safety.json"
+            safety.write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "passed": 8,
+                        "total": 8,
+                        "model": {"adapter_path": str(adapter)},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PipelineError, "same frozen evaluation inputs"):
                 compare([baseline], candidate, safety, None, root / "comparison.json")
 
 

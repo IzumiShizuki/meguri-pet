@@ -31,6 +31,11 @@
       "validation_selection": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\reports\\qwen35-4b-l2-validation-selection-r851bf6e-20260716-v1.json",
       "locked_eval_report": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\eval\\qwen35-4b-l2-post-train-r851bf6e-20260716-v1\\report.json",
       "comparison_report": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\reports\\qwen35-4b-l2-comparison-r851bf6e-20260716-v1.json",
+      "generation_profile": null,
+      "generation_profile_id": null,
+      "generation_profile_sha256": null,
+      "locked_eval_suite_id": null,
+      "locked_eval_manifest_sha256": null,
       "created_at": "2026-07-15T21:43:52.240107+00:00",
       "parent_model_id": null,
       "rollback_model_id": null

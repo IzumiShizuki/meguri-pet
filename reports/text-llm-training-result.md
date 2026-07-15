@@ -47,6 +47,8 @@
 
 v2 共 566/566 可解析且 Schema-valid，固定 safety 为 8/8；报告记录 `locked_eval_accessed=false`。这只证明它是更好的 validation 候选，不能覆盖 v1 locked eval 结论，也不能据此提升 Registry 状态。
 
+后续门禁工具链现已补齐：generation profile 经过 Schema、base/tokenizer revision、adapter digest 和 SHA-256 校验；新 locked suite 必须使用已提交 manifest，且 Base、Prompt+RAG、候选三条报告必须共享输入身份；人工 review 必须覆盖 184/184、分别满足日中自然度门禁并保留独立 reviewer/non-tuning 声明；Registry、Gateway 和 Release Manifest 会共同绑定 profile 与 locked-suite 身份。这些能力只使后续测量可审计，不代表测量已经执行或 Staging 已获准。
+
 ## Locked eval 最终测量
 
 选模和导出完成后，唯一选中 adapter 才运行固定的 92 日文 + 92 中文 locked eval；固定 Prompt + RAG、left padding 1152，backend errors 为 0。
@@ -77,7 +79,7 @@ Locked eval policy 明确为：不用于训练、Prompt 调参、early stopping 
 
 1. 当前 adapter 可保留作本地离线分析和 `evaluated` 基线，不进入 Staging 流量。
 2. validation 驱动的 v2 解码配置已经冻结；不得再根据旧 locked eval 的失败内容修改它。
-3. 由独立流程先冻结新的、未泄漏的 locked eval 版本，再对 v2 配置执行一次正式测量；不能重跑本次 184 条并据其结果继续调参。
+3. 由独立流程先提交带新 `suite_id` 和输入哈希的 locked-eval manifest；同一新 suite 必须重新运行 Base、Prompt+RAG 和 v2 候选三条路径，不能把新候选与旧 L0 结果直接比较，也不能重跑旧 184 条并据其结果继续调参。
 4. 新 locked eval 自动门禁通过后，再按冻结 rubric 完成人工 persona review；两者都通过前不得绑定 Staging 路由。
 5. 若 v2 失败，只能回到 train/validation 或构建下一训练候选；若通过，则需把 adapter、解码 profile、评测证据和 rollback identity 一起绑定为新的可部署身份，不能悄悄改写当前 v1 `evaluated` 记录。
 6. Production 始终保持 `production_ready=false`，需要独立审批和发布门禁。
@@ -92,3 +94,4 @@ Locked eval policy 明确为：不用于训练、Prompt 调参、early stopping 
 - v2 validation report SHA-256：`d9fca15d068d036a40c5ecfbeadedc27438bf798c9483fbe141defcf1c97e48c`
 - v2 safety report SHA-256：`87aae409cd51e4d7d6ed17d96ea4253217982207cabc4067094d173a49688ce7`
 - v2 validation diagnostic SHA-256：`6cf6057878f132f423d78c15ac981373801b0d01a5fcfffecab42fb988cdcf5c`
+- v2 generation profile SHA-256：`3b36c58ddcb6a09499c7a5528054741d2f43f25c2b87c2a2b576cc5a1c170738`

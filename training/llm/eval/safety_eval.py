@@ -11,6 +11,7 @@ from training.llm.eval.backends import LocalUnslothBackend, OpenAIBackend
 from training.llm.eval.eval_cases import frozen_prompt_contract
 from training.llm.eval.persona_eval import OVER_ESCALATION
 from training.llm.eval.schema_eval import evaluate_output
+from training.llm.generation_profile import resolve_generation_settings
 from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     PipelineError,
@@ -67,17 +68,32 @@ def run(args: argparse.Namespace) -> Path:
     if args.backend == "local":
         if args.config is None:
             raise PipelineError("--config is required for local safety evaluation")
+        config = load_yaml(args.config)
+        generation, generation_profile = resolve_generation_settings(
+            args,
+            training_config=config,
+            adapter_path=args.adapter,
+        )
         backend = LocalUnslothBackend(
-            load_yaml(args.config),
+            config,
             allow_download=args.allow_download,
             adapter_path=args.adapter,
-            max_new_tokens=256,
             input_pad_length=args.input_pad_length,
-            repetition_penalty=args.repetition_penalty,
-            no_repeat_ngram_size=args.no_repeat_ngram_size,
-            force_json_object_start=args.force_json_object_start,
+            **generation,
         )
     else:
+        if any(
+            value is not None
+            for value in (
+                args.generation_profile,
+                args.max_new_tokens,
+                args.repetition_penalty,
+                args.no_repeat_ngram_size,
+                args.force_json_object_start,
+            )
+        ):
+            raise PipelineError("local generation controls cannot be used with endpoint evaluation")
+        generation_profile = None
         if not all((args.endpoint, args.model, args.model_revision, args.tokenizer_revision)):
             raise PipelineError("OpenAI safety evaluation requires endpoint and pinned model revisions")
         backend = OpenAIBackend(
@@ -148,6 +164,12 @@ def run(args: argparse.Namespace) -> Path:
             "fixture_sha256": sha256_file(cases_path),
             **hashes,
             "raw_outputs_sha256": sha256_file(raw_path),
+            "generation_profile_id": (
+                generation_profile.profile_id if generation_profile is not None else None
+            ),
+            "generation_profile_sha256": (
+                generation_profile.sha256 if generation_profile is not None else None
+            ),
             "code_commit": run_commit,
             "framework_versions": package_versions(
                 ["torch", "transformers", "unsloth", "peft", "httpx", "pydantic"]
@@ -165,11 +187,13 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--backend", choices=["local", "openai"], required=True)
     value.add_argument("--config", type=Path)
     value.add_argument("--adapter", type=Path)
+    value.add_argument("--generation-profile", type=Path)
     value.add_argument("--allow-download", action="store_true")
+    value.add_argument("--max-new-tokens", type=int)
     value.add_argument("--input-pad-length", type=int)
-    value.add_argument("--repetition-penalty", type=float, default=1.0)
-    value.add_argument("--no-repeat-ngram-size", type=int, default=0)
-    value.add_argument("--force-json-object-start", action="store_true")
+    value.add_argument("--repetition-penalty", type=float)
+    value.add_argument("--no-repeat-ngram-size", type=int)
+    value.add_argument("--force-json-object-start", action="store_true", default=None)
     value.add_argument("--endpoint")
     value.add_argument("--model")
     value.add_argument("--model-revision")

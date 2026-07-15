@@ -133,6 +133,19 @@ class ReadinessEvaluator:
             actual_adapter_sha256 = normalize_adapter_revision(self.env.get("MEGURI_LLM_ADAPTER_SHA256"))
             if normalize_adapter_revision(manifest.get("llm_adapter_sha256")) != actual_adapter_sha256:
                 raise RuntimeError("llm_adapter_sha256 does not match the release manifest")
+            actual_profile_id = normalize_adapter_revision(
+                self.env.get("MEGURI_LLM_GENERATION_PROFILE_ID")
+            )
+            if normalize_adapter_revision(manifest.get("llm_generation_profile_id")) != actual_profile_id:
+                raise RuntimeError("llm_generation_profile_id does not match the release manifest")
+            actual_profile_sha256 = normalize_adapter_revision(
+                self.env.get("MEGURI_LLM_GENERATION_PROFILE_SHA256")
+            )
+            if (
+                normalize_adapter_revision(manifest.get("llm_generation_profile_sha256"))
+                != actual_profile_sha256
+            ):
+                raise RuntimeError("llm_generation_profile_sha256 does not match the release manifest")
             if self.build_id != expected["data_build_id"]:
                 raise RuntimeError("mounted data build does not match MEGURI_DATA_BUILD_ID")
 

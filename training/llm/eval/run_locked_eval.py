@@ -18,6 +18,7 @@ from training.llm.eval.memorization_eval import (
 )
 from training.llm.eval.persona_eval import aggregate_persona_metrics, evaluate_persona
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
+from training.llm.generation_profile import resolve_generation_settings
 from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     PipelineError,
@@ -26,6 +27,7 @@ from training.llm.scripts.common import (
     package_versions,
     read_json,
     require_clean_git_worktree,
+    require_git_tracked_file,
     sha256_file,
     utc_now,
     write_json,
@@ -87,7 +89,14 @@ def run(args: argparse.Namespace) -> Path:
     prompt, response_schema, contract_hashes = frozen_prompt_contract()
     allowed_tags = list(response_schema["properties"]["expression_tag"]["enum"])
     rag = FrozenRag(args.rag_jsonl)
-    frozen = read_json(Path(__file__).parent / "fixtures" / "locked_eval_manifest.json")
+    manifest_path = args.locked_manifest.resolve()
+    manifest_sha256 = require_git_tracked_file(manifest_path)
+    frozen = read_json(manifest_path)
+    suite_id = frozen.get("suite_id")
+    if not isinstance(suite_id, str) or not RUN_ID.fullmatch(suite_id):
+        raise PipelineError("locked-eval manifest requires a safe suite ID")
+    if frozen.get("counts") != {"jp": 92, "zh": 92, "total": 184}:
+        raise PipelineError("locked-eval manifest must freeze exactly 92 JP and 92 ZH cases")
     if eval_hashes != frozen.get("input_hashes"):
         raise PipelineError("locked eval hashes differ from the committed frozen manifest")
     if contract_hashes["prompt_sha256"] != frozen.get("frozen_prompt_sha256"):
@@ -110,18 +119,32 @@ def run(args: argparse.Namespace) -> Path:
         if args.config is None:
             raise PipelineError("--config is required for local evaluation")
         config = load_yaml(args.config)
+        generation, generation_profile = resolve_generation_settings(
+            args,
+            training_config=config,
+            adapter_path=args.adapter,
+        )
         backend = LocalUnslothBackend(
             config,
             allow_download=args.allow_download,
             adapter_path=args.adapter,
-            max_new_tokens=args.max_new_tokens,
             input_pad_length=args.input_pad_length,
-            repetition_penalty=args.repetition_penalty,
-            no_repeat_ngram_size=args.no_repeat_ngram_size,
-            force_json_object_start=args.force_json_object_start,
+            **generation,
         )
         config_hash = sha256_file(args.config)
     else:
+        if any(
+            value is not None
+            for value in (
+                args.generation_profile,
+                args.max_new_tokens,
+                args.repetition_penalty,
+                args.no_repeat_ngram_size,
+                args.force_json_object_start,
+            )
+        ):
+            raise PipelineError("local generation controls cannot be used with endpoint evaluation")
+        generation_profile = None
         required = (args.endpoint, args.model, args.model_revision, args.tokenizer_revision)
         if any(not value for value in required):
             raise PipelineError(
@@ -228,9 +251,17 @@ def run(args: argparse.Namespace) -> Path:
         },
         "provenance": {
             "eval_input_hashes": eval_hashes,
+            "locked_eval_suite_id": suite_id,
+            "locked_eval_manifest_sha256": manifest_sha256,
             "rag_sha256": rag.source_hash,
             "train_jsonl_sha256_for_memorization_only": train_hash,
             "training_config_sha256": config_hash,
+            "generation_profile_id": (
+                generation_profile.profile_id if generation_profile is not None else None
+            ),
+            "generation_profile_sha256": (
+                generation_profile.sha256 if generation_profile is not None else None
+            ),
             **contract_hashes,
             "raw_outputs_sha256": sha256_file(raw_path),
             "code_commit": run_commit,
@@ -249,17 +280,23 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--run-id", required=True)
     value.add_argument("--run-kind", choices=["l0_base", "l0_prompt_rag", "post_train"], required=True)
     value.add_argument("--eval-root", type=Path, required=True)
+    value.add_argument(
+        "--locked-manifest",
+        type=Path,
+        default=Path(__file__).parent / "fixtures" / "locked_eval_manifest.json",
+    )
     value.add_argument("--rag-jsonl", type=Path)
     value.add_argument("--train-jsonl", type=Path, help="Used only for output memorization comparison")
     value.add_argument("--backend", choices=["local", "openai"], required=True)
     value.add_argument("--config", type=Path)
     value.add_argument("--adapter", type=Path)
+    value.add_argument("--generation-profile", type=Path)
     value.add_argument("--allow-download", action="store_true")
-    value.add_argument("--max-new-tokens", type=int, default=256)
+    value.add_argument("--max-new-tokens", type=int)
     value.add_argument("--input-pad-length", type=int)
-    value.add_argument("--repetition-penalty", type=float, default=1.0)
-    value.add_argument("--no-repeat-ngram-size", type=int, default=0)
-    value.add_argument("--force-json-object-start", action="store_true")
+    value.add_argument("--repetition-penalty", type=float)
+    value.add_argument("--no-repeat-ngram-size", type=int)
+    value.add_argument("--force-json-object-start", action="store_true", default=None)
     value.add_argument("--endpoint")
     value.add_argument("--model")
     value.add_argument("--model-revision")

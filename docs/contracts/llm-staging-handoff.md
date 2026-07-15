@@ -18,6 +18,15 @@ rollback target:
 - `tokenizer_revision`
 - `llm_adapter_revision`
 - `llm_adapter_sha256`
+- `generation_profile`
+- `generation_profile_id`
+- `generation_profile_sha256`
+- `locked_eval_suite_id`
+- `locked_eval_manifest_sha256`
+- `llm_generation_profile_id`
+- `llm_generation_profile_sha256`
+- `llm_locked_eval_suite_id`
+- `llm_locked_eval_manifest_sha256`
 - `prompt_sha256`
 - `response_schema_sha256`
 - `data_build_id`
@@ -41,12 +50,18 @@ Attach evidence for each item below before any staging promotion claim:
 2. Passing derived dataset manifest and `quality_report.json` for the approved
    `data_build_id`.
 3. Passing validation checkpoint selection report.
-4. Passing frozen 184-case locked evaluation report for the exported adapter.
+4. Passing Base, Prompt+RAG, and exported-adapter locked evaluation reports on
+   the same independently frozen 184-case suite, with one committed manifest
+   identity and identical input hashes. A validation-selected profile must not
+   reuse its excluded previous suite.
 5. Passing comparison report whose `staging_gate.status` is `pass` and whose
    `production_ready` field remains `false`.
-6. Passing human review artifact with persona approval score at or above `0.90`.
-7. Release Manifest whose `model_registry_id`, adapter digest, Prompt hash,
-   Response Schema hash, and `data_build_id` match the candidate exactly.
+6. Passing human review artifact with persona approval score at or above
+   `0.90`, JP and ZH naturalness rates each at or above `0.90`, and no human
+   safety rejection.
+7. Release Manifest whose `model_registry_id`, adapter digest, generation
+   profile identity, locked-suite identity, Prompt hash, Response Schema hash,
+   and `data_build_id` match the candidate exactly.
 8. Staging acceptance artifact that replaces
    `ops/acceptance/blocked.staging-acceptance.json` with checksummed
    all-passed evidence.
@@ -61,6 +76,9 @@ The staging runtime must prove all of the following:
 - candidate and last-good routing from `training/llm/gateway/routing_state.json`
 - schema-invalid provider output remains fail closed
 - `/ready` reflects the active registered model and adapter digest
+- `/ready` verifies the generation profile ID/digest and the endpoint returns
+  `X-Meguri-Generation-Profile-Id` plus
+  `X-Meguri-Generation-Profile-SHA256`
 - rollback to last-good does not rebuild the model
 
 The staging runtime must not:
@@ -81,6 +99,9 @@ Record the exact evidence paths or URLs for:
 - dataset manifest:
 - quality report:
 - validation selection:
+- generation profile:
+- generation profile SHA-256:
+- locked-eval suite ID and manifest SHA-256:
 - locked eval report:
 - comparison report:
 - human review:

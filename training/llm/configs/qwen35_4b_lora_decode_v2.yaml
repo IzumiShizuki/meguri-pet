@@ -33,4 +33,6 @@ policy:
   production_ready: false
   requires_new_independently_frozen_locked_eval: true
   requires_frozen_rubric_human_review: true
+  previous_locked_eval_suite_id: meguri-locked-eval-v1
+  previous_locked_eval_input_hashes_sha256: 976df16cc1b2c509bf6932d62baf29c1cf97e6796c19912dc03529a9ef722980
   previous_locked_eval_must_not_be_reused_for_tuning: true

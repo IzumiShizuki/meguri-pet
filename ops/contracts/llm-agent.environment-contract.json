@@ -10,6 +10,8 @@
     "api_key_file": "/run/secrets/llm_api_key",
     "timeout_variable": "MEGURI_LLM_TIMEOUT_SECONDS",
     "max_concurrency_variable": "MEGURI_LLM_MAX_CONCURRENCY",
+    "generation_profile_id_variable": "MEGURI_LLM_GENERATION_PROFILE_ID",
+    "generation_profile_sha256_variable": "MEGURI_LLM_GENERATION_PROFILE_SHA256",
     "non_loopback_tls_required": true,
     "unauthenticated_public_endpoint_allowed": false,
     "cloud_model_weight_mount_allowed": false
@@ -23,6 +25,10 @@
     "llm_base_model",
     "llm_adapter_revision",
     "llm_adapter_sha256",
+    "llm_generation_profile_id",
+    "llm_generation_profile_sha256",
+    "llm_locked_eval_suite_id",
+    "llm_locked_eval_manifest_sha256",
     "model_registry_id",
     "prompt_sha256",
     "response_schema_sha256"
@@ -31,6 +37,7 @@
     "provider name equals runtime configuration",
     "candidate or last-good model ID is registered",
     "adapter revision and SHA-256 agree with the Release Manifest",
+    "generation profile ID and SHA-256 agree with the Release Manifest",
     "Prompt and Response Schema hashes agree with the Release Manifest",
     "schema-invalid provider output remains fail closed"
   ],

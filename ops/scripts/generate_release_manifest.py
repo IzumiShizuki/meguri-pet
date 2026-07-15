@@ -83,6 +83,10 @@ def build_manifest(args: argparse.Namespace) -> dict:
         "llm_base_model": args.llm_base_model,
         "llm_adapter_revision": None if args.llm_adapter_revision in {None, "none", "null"} else args.llm_adapter_revision,
         "llm_adapter_sha256": args.llm_adapter_sha256,
+        "llm_generation_profile_id": args.llm_generation_profile_id,
+        "llm_generation_profile_sha256": args.llm_generation_profile_sha256,
+        "llm_locked_eval_suite_id": args.llm_locked_eval_suite_id,
+        "llm_locked_eval_manifest_sha256": args.llm_locked_eval_manifest_sha256,
         "model_registry_id": None if args.model_registry_id in {None, "none", "null"} else args.model_registry_id,
         "tests": {
             "python": args.python_tests,
@@ -112,6 +116,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--llm-base-model", required=True)
     result.add_argument("--llm-adapter-revision")
     result.add_argument("--llm-adapter-sha256")
+    result.add_argument("--llm-generation-profile-id")
+    result.add_argument("--llm-generation-profile-sha256")
+    result.add_argument("--llm-locked-eval-suite-id")
+    result.add_argument("--llm-locked-eval-manifest-sha256")
     result.add_argument("--model-registry-id")
     for name in ("python", "typescript", "integration"):
         result.add_argument(
