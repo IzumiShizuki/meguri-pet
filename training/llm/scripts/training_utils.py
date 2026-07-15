@@ -278,7 +278,12 @@ def token_normalized_causal_lm_loss(
     if labels is None:
         raise PipelineError("token-normalized causal loss requires labels")
     if num_items_in_batch is None:
-        raise PipelineError("token-normalized causal loss requires num_items_in_batch")
+        try:
+            num_items_in_batch = labels.ne(-100).sum()
+        except (AttributeError, TypeError) as exc:
+            raise PipelineError(
+                "token-normalized causal loss cannot count evaluation labels"
+            ) from exc
     logits = getattr(outputs, "logits", None)
     if logits is None or not hasattr(logits, "shape"):
         raise PipelineError("token-normalized causal loss requires model logits")

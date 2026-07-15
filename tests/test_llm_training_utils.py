@@ -263,15 +263,32 @@ class TrainingUtilsTests(unittest.TestCase):
         self.assertEqual(result, "normalized-loss")
         self.assertEqual(calls, [(outputs.logits, labels, 17, 123)])
 
-    def test_token_normalized_loss_requires_accumulated_item_count(self) -> None:
+    def test_token_normalized_loss_counts_current_evaluation_batch(self) -> None:
+        calls = []
+
+        class Count:
+            def sum(self):
+                return 7
+
+        class Labels:
+            def ne(self, ignored):
+                self.ignored = ignored
+                return Count()
+
+        def fake_loss(logits, labels, *, vocab_size, num_items_in_batch):
+            calls.append((vocab_size, num_items_in_batch, labels.ignored))
+            return "evaluation-loss"
+
         outputs = SimpleNamespace(logits=SimpleNamespace(shape=(1, 8, 17)))
-        with self.assertRaisesRegex(PipelineError, "num_items_in_batch"):
-            token_normalized_causal_lm_loss(
-                outputs,
-                object(),
-                num_items_in_batch=None,
-                loss_function=lambda *args, **kwargs: None,
-            )
+        labels = Labels()
+        result = token_normalized_causal_lm_loss(
+            outputs,
+            labels,
+            num_items_in_batch=None,
+            loss_function=fake_loss,
+        )
+        self.assertEqual(result, "evaluation-loss")
+        self.assertEqual(calls, [(17, 7, -100)])
 
 
 if __name__ == "__main__":
