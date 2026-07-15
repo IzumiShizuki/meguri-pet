@@ -18,9 +18,9 @@ from .common import (
     CONFIG_ROOT,
     PROJECT_ROOT,
     PipelineError,
-    git_commit,
     load_yaml,
     package_versions,
+    require_clean_git_worktree,
     sha256_text,
     utc_now,
     write_json,
@@ -353,11 +353,12 @@ def run_probe(
     allow_download: bool,
     report_path: Path,
 ) -> tuple[int, dict[str, Any]]:
+    probe_commit = require_clean_git_worktree()
     config = load_yaml(config_path)
     report: dict[str, Any] = {
         "schema_version": 1,
         "generated_at": utc_now(),
-        "git_commit": git_commit(),
+        "git_commit": probe_commit,
         "config_path": str(config_path.resolve()),
         "experiment_family": config.get("experiment_family"),
         "model": config.get("model"),
@@ -390,6 +391,8 @@ def run_probe(
     else:
         report["status"] = "pass"
         report["full"] = {"status": "not_run", "reason": "static mode"}
+    if require_clean_git_worktree() != probe_commit:
+        raise PipelineError("Git commit changed while the environment probe was running")
     write_json(report_path, report)
     return exit_code, report
 

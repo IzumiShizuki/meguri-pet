@@ -48,6 +48,8 @@ def validate_probe_report(path: Path, config: dict[str, Any]) -> dict[str, Any]:
     report = read_json(path)
     if report.get("status") != "pass" or report.get("mode") != "full":
         raise PipelineError("a passing full L-001 probe report is required before training")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(report.get("git_commit") or "")):
+        raise PipelineError("the L-001 report is missing a pinned Git commit")
     static = report.get("static") or {}
     if static.get("status") != "pass":
         raise PipelineError("the L-001 static probe section is not passing")

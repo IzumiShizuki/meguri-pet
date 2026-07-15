@@ -83,6 +83,7 @@ def passing_probe_report() -> dict:
     return {
         "status": "pass",
         "mode": "full",
+        "git_commit": "c" * 40,
         "model": {
             "repo_id": "Qwen/Qwen3.5-4B",
             "revision": "a" * 40,
@@ -183,6 +184,16 @@ class TrainingUtilsTests(unittest.TestCase):
             report["static"]["environment_lock"] = {"status": "pass"}
             path.write_text(json.dumps(report), encoding="utf-8")
             with self.assertRaisesRegex(PipelineError, "complete pip freeze environment lock"):
+                validate_probe_report(path, config)
+
+    def test_probe_report_requires_pinned_git_commit(self) -> None:
+        config = {"model": passing_probe_report()["model"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.json"
+            report = passing_probe_report()
+            report["git_commit"] = "unknown"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            with self.assertRaisesRegex(PipelineError, "pinned Git commit"):
                 validate_probe_report(path, config)
 
     def test_probe_report_rejects_tampered_environment_lock(self) -> None:

@@ -46,7 +46,9 @@ The full probe requires a dedicated LLM environment and an explicit
 `--allow-download`. It must pass before smoke or full training is allowed.
 Every successful L-001 report also records the exact `python -m pip freeze`
 environment lock inside the probe evidence; a probe without that snapshot is
-not considered complete.
+not considered complete. Versioned probes, evaluations, and training runs fail
+closed unless the Git worktree is clean and the recorded commit remains stable
+for the complete operation.
 
 ## Reproducible commands
 
