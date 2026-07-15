@@ -36,6 +36,8 @@ from training.llm.scripts.training_utils import (
     validate_enablement_gate_report,
     validate_input_padding,
     validate_probe_report,
+    validate_smoke_report,
+    validate_training_peak_memory,
     validate_training_config,
 )
 
@@ -96,6 +98,19 @@ def run(args: argparse.Namespace) -> Path:
     validate_training_config(config, allow_disabled=args.enablement_gate_report is not None)
     probe = validate_probe_report(args.probe_report, config)
     manifest, _ = validate_dataset_for_training(args.dataset_dir)
+    if args.smoke:
+        if args.smoke_report is not None:
+            raise PipelineError("L-006 smoke must not consume a prior smoke report")
+        smoke_gate = None
+    else:
+        if args.smoke_report is None:
+            raise PipelineError("full training requires --smoke-report from a passing L-006 run")
+        smoke_gate = validate_smoke_report(
+            args.smoke_report,
+            config=config,
+            dataset_manifest=manifest,
+            training_config_sha256=sha256_file(args.config),
+        )
     output_dir = args.experiment_root.resolve() / args.experiment_id
     resume_checkpoint = args.resume_from_checkpoint.resolve() if args.resume_from_checkpoint else None
     if resume_checkpoint is None and output_dir.exists():
@@ -231,6 +246,8 @@ def run(args: argparse.Namespace) -> Path:
             write_json(output_dir / "failure_report.json", failure)
         raise PipelineError("training stopped on CUDA OOM; no data or model fallback was applied") from exc
     duration = time.perf_counter() - start
+    peak_vram_bytes = int(torch.cuda.max_memory_allocated())
+    validate_training_peak_memory(peak_vram_bytes, config)
     trainer.save_state()
     final_adapter = output_dir / "final_adapter"
     if final_adapter.exists():
@@ -277,7 +294,7 @@ def run(args: argparse.Namespace) -> Path:
         "validation_samples": len(validation_rows),
         "train_metrics": result.metrics,
         "parameter_counts": parameter_counts,
-        "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
+        "peak_vram_bytes": peak_vram_bytes,
         "started_at": started_at,
         "finished_at": utc_now(),
         "duration_seconds": round(duration, 3),
@@ -287,6 +304,7 @@ def run(args: argparse.Namespace) -> Path:
         "final_adapter": str(final_adapter.resolve()),
         "post_training_json_smoke": smoke_result,
         "locked_eval_accessed": False,
+        "smoke_gate_report_sha256": sha256_file(args.smoke_report) if smoke_gate else None,
     }
     write_json(output_dir / "experiment_manifest.json", experiment)
     return output_dir
@@ -298,6 +316,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--config", type=Path, default=CONFIG_ROOT / "qwen35_4b_bf16_lora.yaml")
     value.add_argument("--dataset-dir", type=Path, required=True)
     value.add_argument("--probe-report", type=Path, required=True)
+    value.add_argument("--smoke-report", type=Path)
     value.add_argument("--experiment-root", type=Path, default=ARTIFACT_ROOT / "checkpoints")
     value.add_argument("--allow-download", action="store_true")
     value.add_argument("--enablement-gate-report", type=Path)

@@ -14,6 +14,8 @@ from training.llm.scripts.training_utils import (
     validate_enablement_gate_report,
     validate_input_padding,
     validate_probe_report,
+    validate_smoke_report,
+    validate_training_peak_memory,
     validate_training_config,
 )
 
@@ -289,6 +291,73 @@ class TrainingUtilsTests(unittest.TestCase):
         )
         self.assertEqual(result, "evaluation-loss")
         self.assertEqual(calls, [(17, 7, -100)])
+
+    def test_smoke_report_gate_accepts_complete_l1_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            adapter = root / "adapter"
+            adapter.mkdir()
+            (adapter / "adapter_model.safetensors").write_bytes(b"adapter")
+            config = {
+                "model": {
+                    "repo_id": "Qwen/Qwen3.5-4B",
+                    "revision": "a" * 40,
+                    "tokenizer_revision": "a" * 40,
+                },
+                "hardware": {"maximum_training_peak_gib": 14.5},
+            }
+            dataset = {"dataset_id": "dataset-1", "source_build_id": "build-1"}
+            report = {
+                "status": "pass",
+                "stage": "L1_smoke",
+                "training_commit": "b" * 40,
+                "base_model_repo": "Qwen/Qwen3.5-4B",
+                "base_model_revision": "a" * 40,
+                "tokenizer_revision": "a" * 40,
+                "dataset_id": "dataset-1",
+                "data_build_id": "build-1",
+                "training_config_sha256": "config-hash",
+                "train_samples": 160,
+                "training_parameters": {"max_steps": 75},
+                "locked_eval_accessed": False,
+                "post_training_json_smoke": {"status": "pass"},
+                "loss_normalization": "assistant_tokens_across_gradient_accumulation",
+                "input_padding": {"enabled": True, "input_pad_length": 768},
+                "peak_vram_bytes": 11 * (1024**3),
+                "final_adapter": str(adapter),
+            }
+            path = root / "smoke.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            validated = validate_smoke_report(
+                path,
+                config=config,
+                dataset_manifest=dataset,
+                training_config_sha256="config-hash",
+            )
+            self.assertEqual(validated["stage"], "L1_smoke")
+
+    def test_smoke_report_gate_rejects_locked_eval_access(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "smoke.json"
+            path.write_text(json.dumps({"status": "pass", "stage": "L1_smoke"}), encoding="utf-8")
+            config = {
+                "model": {"repo_id": "x", "revision": "a" * 40, "tokenizer_revision": "a" * 40},
+                "hardware": {"maximum_training_peak_gib": 14.5},
+            }
+            with self.assertRaises(PipelineError):
+                validate_smoke_report(
+                    path,
+                    config=config,
+                    dataset_manifest={"dataset_id": "d", "source_build_id": "b"},
+                    training_config_sha256="hash",
+                )
+
+    def test_peak_memory_gate_fails_closed(self) -> None:
+        config = {"hardware": {"maximum_training_peak_gib": 14.5}}
+        validate_training_peak_memory(14 * (1024**3), config)
+        with self.assertRaisesRegex(PipelineError, "exceeds configured limit"):
+            validate_training_peak_memory(15 * (1024**3), config)
 
 
 if __name__ == "__main__":

@@ -111,7 +111,9 @@ suite; locked eval is structurally excluded from selection:
 
 ```powershell
 python -m training.llm.scripts.train --experiment-id <id> `
-  --dataset-dir <dataset> --probe-report <probe> --allow-download
+  --dataset-dir <dataset> --probe-report <probe> `
+  --smoke-report <passing-L-006-experiment-manifest> `
+  --input-pad-length 768 --allow-download
 python -m training.llm.scripts.resume --experiment-id <id> `
   --dataset-dir <dataset> --probe-report <probe> `
   --resume-from-checkpoint <experiment-checkpoint>
