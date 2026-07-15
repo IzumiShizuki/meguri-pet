@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import unittest
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from training.llm.eval.persona_eval import evaluate_persona
+from training.llm.eval.run_validation_eval import run as run_validation_eval
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
 from training.llm.scripts.common import PipelineError, require_clean_git_worktree
 
@@ -70,6 +72,11 @@ class LlmEvalTests(unittest.TestCase):
         ]
         with patch("training.llm.scripts.common.subprocess.run", side_effect=results):
             self.assertEqual(require_clean_git_worktree(), commit)
+
+    def test_validation_progress_interval_must_be_positive(self) -> None:
+        args = SimpleNamespace(run_id="validation-test", progress_every=0)
+        with self.assertRaisesRegex(PipelineError, "progress interval must be positive"):
+            run_validation_eval(args)
 
 
 if __name__ == "__main__":

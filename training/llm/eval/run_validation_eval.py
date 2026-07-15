@@ -11,6 +11,7 @@ from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_out
 from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     PipelineError,
+    canonical_json,
     load_yaml,
     package_versions,
     read_json,
@@ -19,7 +20,6 @@ from training.llm.scripts.common import (
     sha256_file,
     utc_now,
     write_json,
-    write_jsonl,
 )
 from training.llm.scripts.export_adapter import adapter_hash
 from training.llm.scripts.training_utils import EXPERIMENT_ID
@@ -73,6 +73,8 @@ def _composite(schema: dict[str, Any], persona: dict[str, Any], safety_rate: flo
 def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.run_id):
         raise PipelineError("validation run ID must be a safe identifier")
+    if args.progress_every <= 0:
+        raise PipelineError("progress interval must be positive")
     run_commit = require_clean_git_worktree()
     manifest = read_json(args.dataset_dir / "dataset_manifest.json")
     validation_path = args.dataset_dir / "validation.jsonl"
@@ -95,21 +97,35 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError(f"refusing to overwrite validation evaluation: {output}")
     output.mkdir(parents=True, exist_ok=False)
     results: list[dict[str, Any]] = []
-    for row in rows:
-        messages = row["messages"]
-        expected = _expected(row)
-        generated = backend.generate(messages[0]["content"], messages[1]["content"])
-        results.append(
-            {
+    raw_path = output / "raw_outputs.jsonl"
+    with raw_path.open("x", encoding="utf-8", newline="\n") as raw_handle:
+        for index, row in enumerate(rows, 1):
+            messages = row["messages"]
+            expected = _expected(row)
+            generated = backend.generate(messages[0]["content"], messages[1]["content"])
+            result = {
                 "sample_id": row["metadata"]["sample_id"],
                 "raw_output": generated.raw_output,
                 "expected": expected,
                 "metrics": evaluate_output(generated.raw_output, expected),
                 "persona_metrics": evaluate_persona(generated.raw_output, expected),
             }
-        )
-    raw_path = output / "raw_outputs.jsonl"
-    write_jsonl(raw_path, results)
+            results.append(result)
+            raw_handle.write(canonical_json(result) + "\n")
+            raw_handle.flush()
+            if index % args.progress_every == 0 or index == len(rows):
+                print(
+                    json.dumps(
+                        {
+                            "event": "validation_eval.progress",
+                            "run_id": args.run_id,
+                            "completed": index,
+                            "total": len(rows),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
     schema = aggregate_schema_metrics(results)
     persona = aggregate_persona_metrics(results)
     digest, _ = adapter_hash(args.adapter)
@@ -153,6 +169,7 @@ def main() -> int:
     parser.add_argument("--safety-report", type=Path, required=True)
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--input-pad-length", type=int)
+    parser.add_argument("--progress-every", type=int, default=10)
     parser.add_argument("--output-root", type=Path, default=ARTIFACT_ROOT / "validation_eval")
     args = parser.parse_args()
     try:
