@@ -9,7 +9,14 @@ from training.llm.scripts.common import PipelineError
 from training.llm.scripts.select_checkpoint import select
 
 
-def report(score: float, adapter: str, digest: str, *, locked: bool = False) -> dict:
+def report(
+    score: float,
+    adapter: str,
+    digest: str,
+    *,
+    locked: bool = False,
+    code_commit: str = "evaluation-commit",
+) -> dict:
     return {
         "status": "pass",
         "selection_eligible": True,
@@ -18,7 +25,10 @@ def report(score: float, adapter: str, digest: str, *, locked: bool = False) -> 
         "adapter_sha256": digest,
         "model": {"adapter_path": adapter},
         "composite": {"score": score},
-        "provenance": {"training_config_sha256": "config-one"},
+        "provenance": {
+            "training_config_sha256": "config-one",
+            "code_commit": code_commit,
+        },
     }
 
 
@@ -47,6 +57,27 @@ class CheckpointSelectionTests(unittest.TestCase):
                 )
                 paths.append(path)
             with self.assertRaises(PipelineError):
+                select(paths, root / "selection.json")
+
+    def test_rejects_mixed_evaluation_commits(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            paths = []
+            for index in (1, 2):
+                path = root / f"report-{index}.json"
+                path.write_text(
+                    json.dumps(
+                        report(
+                            0.7,
+                            f"adapter-{index}",
+                            f"hash-{index}",
+                            code_commit=f"evaluation-{index}",
+                        )
+                    ),
+                    encoding="utf-8",
+                )
+                paths.append(path)
+            with self.assertRaisesRegex(PipelineError, "pinned evaluation commit"):
                 select(paths, root / "selection.json")
 
 
