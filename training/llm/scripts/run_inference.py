@@ -17,6 +17,8 @@ def main() -> int:
     parser.add_argument("--message", required=True)
     parser.add_argument("--language", choices=["jp", "zh"], default="zh")
     parser.add_argument("--allow-download", action="store_true")
+    parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=0)
     args = parser.parse_args()
     try:
         prompt, _, _ = frozen_prompt_contract()
@@ -25,6 +27,8 @@ def main() -> int:
             allow_download=args.allow_download,
             adapter_path=args.adapter,
             max_new_tokens=256,
+            repetition_penalty=args.repetition_penalty,
+            no_repeat_ngram_size=args.no_repeat_ngram_size,
         )
         context = {
             "runtime_state": {

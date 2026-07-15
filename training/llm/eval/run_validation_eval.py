@@ -90,6 +90,8 @@ def run(args: argparse.Namespace) -> Path:
         adapter_path=args.adapter,
         max_new_tokens=256,
         input_pad_length=args.input_pad_length,
+        repetition_penalty=args.repetition_penalty,
+        no_repeat_ngram_size=args.no_repeat_ngram_size,
     )
     rows = [row for _, row in read_jsonl(validation_path)]
     output = args.output_root.resolve() / args.run_id
@@ -169,6 +171,8 @@ def main() -> int:
     parser.add_argument("--safety-report", type=Path, required=True)
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--input-pad-length", type=int)
+    parser.add_argument("--repetition-penalty", type=float, default=1.0)
+    parser.add_argument("--no-repeat-ngram-size", type=int, default=0)
     parser.add_argument("--progress-every", type=int, default=10)
     parser.add_argument("--output-root", type=Path, default=ARTIFACT_ROOT / "validation_eval")
     args = parser.parse_args()

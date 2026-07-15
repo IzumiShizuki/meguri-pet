@@ -71,6 +71,17 @@ def complete_json_object_end(text: str) -> int | None:
     return None
 
 
+def validate_generation_controls(
+    repetition_penalty: float,
+    no_repeat_ngram_size: int,
+) -> tuple[float, int]:
+    if not 1.0 <= repetition_penalty <= 2.0:
+        raise PipelineError("repetition penalty must be between 1.0 and 2.0")
+    if not 0 <= no_repeat_ngram_size <= 32:
+        raise PipelineError("no-repeat ngram size must be between 0 and 32")
+    return float(repetition_penalty), int(no_repeat_ngram_size)
+
+
 class OpenAIBackend:
     def __init__(
         self,
@@ -168,6 +179,8 @@ class LocalUnslothBackend:
         adapter_path: Path | None,
         max_new_tokens: int,
         input_pad_length: int | None = None,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 0,
     ) -> None:
         try:
             import torch
@@ -196,6 +209,10 @@ class LocalUnslothBackend:
         self.processor = processor
         self.tokenizer = tokenizer
         self.max_new_tokens = max_new_tokens
+        self.repetition_penalty, self.no_repeat_ngram_size = validate_generation_controls(
+            repetition_penalty,
+            no_repeat_ngram_size,
+        )
         if input_pad_length is not None and input_pad_length <= 0:
             raise PipelineError("evaluation input pad length must be positive")
         if input_pad_length is not None and tokenizer.pad_token_id is None:
@@ -210,6 +227,8 @@ class LocalUnslothBackend:
             "chat_template_sha256": sha256_text(template),
             "adapter_path": str(adapter_path.resolve()) if adapter_path else None,
             "input_pad_length": input_pad_length,
+            "repetition_penalty": self.repetition_penalty,
+            "no_repeat_ngram_size": self.no_repeat_ngram_size,
         }
 
     def _inputs(self, system_prompt: str, user_content: str) -> tuple[dict[str, Any], int]:
@@ -304,6 +323,8 @@ class LocalUnslothBackend:
                 use_cache=True,
                 pad_token_id=self.tokenizer.eos_token_id,
                 stopping_criteria=stopping_criteria,
+                repetition_penalty=self.repetition_penalty,
+                no_repeat_ngram_size=self.no_repeat_ngram_size,
             )
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - start

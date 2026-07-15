@@ -112,6 +112,9 @@ suite; locked eval is structurally excluded from selection:
 Local validation and safety runs require an explicit fixed
 `--input-pad-length`. Both refuse dirty or changing Git worktrees, and their
 reports record the exact evaluation commit and framework versions.
+Validation-only v2 decoding experiments may additionally set bounded
+`--repetition-penalty` and `--no-repeat-ngram-size`; both values are recorded
+in backend metadata. They must not be tuned from locked-eval failure content.
 
 ```powershell
 python -m training.llm.scripts.train --experiment-id <id> `

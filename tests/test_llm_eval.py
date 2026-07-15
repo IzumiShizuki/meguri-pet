@@ -6,7 +6,7 @@ from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from training.llm.eval.backends import complete_json_object_end
+from training.llm.eval.backends import complete_json_object_end, validate_generation_controls
 from training.llm.eval.persona_eval import evaluate_persona
 from training.llm.eval.run_validation_eval import run as run_validation_eval
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
@@ -91,6 +91,13 @@ class LlmEvalTests(unittest.TestCase):
         raw = '```json\n{"reply":"ok","memory_candidates":[]}\n```'
         end = complete_json_object_end(raw)
         self.assertEqual(raw[:end], '```json\n{"reply":"ok","memory_candidates":[]}')
+
+    def test_generation_controls_are_bounded(self) -> None:
+        self.assertEqual(validate_generation_controls(1.05, 4), (1.05, 4))
+        with self.assertRaisesRegex(PipelineError, "repetition penalty"):
+            validate_generation_controls(0.99, 4)
+        with self.assertRaisesRegex(PipelineError, "no-repeat ngram"):
+            validate_generation_controls(1.05, 33)
 
 
 if __name__ == "__main__":
