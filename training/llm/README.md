@@ -114,7 +114,10 @@ Local validation and safety runs require an explicit fixed
 reports record the exact evaluation commit and framework versions.
 Validation-only v2 decoding experiments may additionally set bounded
 `--repetition-penalty` and `--no-repeat-ngram-size`; both values are recorded
-in backend metadata. They must not be tuned from locked-eval failure content.
+in backend metadata. `--force-json-object-start` may constrain the first
+generated token to the tokenizer's single `{` token without repairing output
+after generation. These controls must not be tuned from locked-eval failure
+content.
 
 ```powershell
 python -m training.llm.scripts.train --experiment-id <id> `

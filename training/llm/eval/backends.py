@@ -82,6 +82,13 @@ def validate_generation_controls(
     return float(repetition_penalty), int(no_repeat_ngram_size)
 
 
+def json_object_start_token_id(tokenizer: Any) -> int:
+    token_ids = tokenizer.encode("{", add_special_tokens=False)
+    if len(token_ids) != 1:
+        raise PipelineError("pinned tokenizer must encode the JSON object start as one token")
+    return int(token_ids[0])
+
+
 class OpenAIBackend:
     def __init__(
         self,
@@ -181,6 +188,7 @@ class LocalUnslothBackend:
         input_pad_length: int | None = None,
         repetition_penalty: float = 1.0,
         no_repeat_ngram_size: int = 0,
+        force_json_object_start: bool = False,
     ) -> None:
         try:
             import torch
@@ -213,6 +221,10 @@ class LocalUnslothBackend:
             repetition_penalty,
             no_repeat_ngram_size,
         )
+        self.force_json_object_start = bool(force_json_object_start)
+        self.json_start_token_id = (
+            json_object_start_token_id(tokenizer) if self.force_json_object_start else None
+        )
         if input_pad_length is not None and input_pad_length <= 0:
             raise PipelineError("evaluation input pad length must be positive")
         if input_pad_length is not None and tokenizer.pad_token_id is None:
@@ -229,6 +241,7 @@ class LocalUnslothBackend:
             "input_pad_length": input_pad_length,
             "repetition_penalty": self.repetition_penalty,
             "no_repeat_ngram_size": self.no_repeat_ngram_size,
+            "force_json_object_start": self.force_json_object_start,
         }
 
     def _inputs(self, system_prompt: str, user_content: str) -> tuple[dict[str, Any], int]:
@@ -277,6 +290,29 @@ class LocalUnslothBackend:
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
+        try:
+            from transformers import (
+                LogitsProcessor,
+                LogitsProcessorList,
+                StoppingCriteria,
+                StoppingCriteriaList,
+            )
+        except ImportError as exc:
+            raise PipelineError("Transformers generation controls are unavailable") from exc
+
+        logits_processor = None
+        if self.force_json_object_start:
+            json_start_token = self.json_start_token_id
+
+            class ForceJsonObjectStart(LogitsProcessor):
+                def __call__(self, input_ids: Any, scores: Any) -> Any:
+                    if int(input_ids.shape[-1]) == input_length:
+                        allowed = scores[:, json_start_token].clone()
+                        scores.fill_(float("-inf"))
+                        scores[:, json_start_token] = allowed
+                    return scores
+
+            logits_processor = LogitsProcessorList([ForceJsonObjectStart()])
         first_start = time.perf_counter()
         with torch.inference_mode(), torch.autocast(
             device_type="cuda", dtype=self.autocast_dtype
@@ -287,16 +323,12 @@ class LocalUnslothBackend:
                 do_sample=False,
                 use_cache=True,
                 pad_token_id=self.tokenizer.eos_token_id,
+                logits_processor=logits_processor,
             )
         torch.cuda.synchronize()
         first_ms = (time.perf_counter() - first_start) * 1000
         torch.cuda.synchronize()
         start = time.perf_counter()
-        try:
-            from transformers import StoppingCriteria, StoppingCriteriaList
-        except ImportError as exc:
-            raise PipelineError("Transformers stopping criteria are unavailable") from exc
-
         class JsonObjectComplete(StoppingCriteria):
             def __call__(self, input_ids: Any, scores: Any, **kwargs: Any) -> bool:
                 generated_ids = input_ids[0][input_length:]
@@ -325,6 +357,7 @@ class LocalUnslothBackend:
                 stopping_criteria=stopping_criteria,
                 repetition_penalty=self.repetition_penalty,
                 no_repeat_ngram_size=self.no_repeat_ngram_size,
+                logits_processor=logits_processor,
             )
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - start

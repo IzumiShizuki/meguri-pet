@@ -19,6 +19,7 @@ def main() -> int:
     parser.add_argument("--allow-download", action="store_true")
     parser.add_argument("--repetition-penalty", type=float, default=1.0)
     parser.add_argument("--no-repeat-ngram-size", type=int, default=0)
+    parser.add_argument("--force-json-object-start", action="store_true")
     args = parser.parse_args()
     try:
         prompt, _, _ = frozen_prompt_contract()
@@ -29,6 +30,7 @@ def main() -> int:
             max_new_tokens=256,
             repetition_penalty=args.repetition_penalty,
             no_repeat_ngram_size=args.no_repeat_ngram_size,
+            force_json_object_start=args.force_json_object_start,
         )
         context = {
             "runtime_state": {

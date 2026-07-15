@@ -6,7 +6,11 @@ from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from training.llm.eval.backends import complete_json_object_end, validate_generation_controls
+from training.llm.eval.backends import (
+    complete_json_object_end,
+    json_object_start_token_id,
+    validate_generation_controls,
+)
 from training.llm.eval.persona_eval import evaluate_persona
 from training.llm.eval.run_validation_eval import run as run_validation_eval
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
@@ -98,6 +102,21 @@ class LlmEvalTests(unittest.TestCase):
             validate_generation_controls(0.99, 4)
         with self.assertRaisesRegex(PipelineError, "no-repeat ngram"):
             validate_generation_controls(1.05, 33)
+
+    def test_json_object_start_must_be_one_token(self) -> None:
+        class Tokenizer:
+            def __init__(self, token_ids):
+                self.token_ids = token_ids
+
+            def encode(self, value, *, add_special_tokens):
+                self.asserted = (value, add_special_tokens)
+                return self.token_ids
+
+        tokenizer = Tokenizer([42])
+        self.assertEqual(json_object_start_token_id(tokenizer), 42)
+        self.assertEqual(tokenizer.asserted, ("{", False))
+        with self.assertRaisesRegex(PipelineError, "one token"):
+            json_object_start_token_id(Tokenizer([4, 2]))
 
 
 if __name__ == "__main__":

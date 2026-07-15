@@ -75,6 +75,7 @@ def run(args: argparse.Namespace) -> Path:
             input_pad_length=args.input_pad_length,
             repetition_penalty=args.repetition_penalty,
             no_repeat_ngram_size=args.no_repeat_ngram_size,
+            force_json_object_start=args.force_json_object_start,
         )
     else:
         if not all((args.endpoint, args.model, args.model_revision, args.tokenizer_revision)):
@@ -168,6 +169,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--input-pad-length", type=int)
     value.add_argument("--repetition-penalty", type=float, default=1.0)
     value.add_argument("--no-repeat-ngram-size", type=int, default=0)
+    value.add_argument("--force-json-object-start", action="store_true")
     value.add_argument("--endpoint")
     value.add_argument("--model")
     value.add_argument("--model-revision")
