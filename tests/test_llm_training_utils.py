@@ -4,10 +4,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from training.llm.scripts.common import PipelineError, sha256_text
 from training.llm.scripts.training_utils import (
     deterministic_stratified_subset,
+    token_normalized_causal_lm_loss,
     tokenize_assistant_only,
     validate_enablement_gate_report,
     validate_input_padding,
@@ -238,6 +240,37 @@ class TrainingUtilsTests(unittest.TestCase):
                 train_lengths=[747],
                 validation_lengths=[755],
                 required=True,
+            )
+
+    def test_token_normalized_loss_uses_accumulated_item_count(self) -> None:
+        calls = []
+
+        class FakeLogits:
+            shape = (1, 8, 17)
+
+        def fake_loss(logits, labels, *, vocab_size, num_items_in_batch):
+            calls.append((logits, labels, vocab_size, num_items_in_batch))
+            return "normalized-loss"
+
+        outputs = SimpleNamespace(logits=FakeLogits())
+        labels = object()
+        result = token_normalized_causal_lm_loss(
+            outputs,
+            labels,
+            num_items_in_batch=123,
+            loss_function=fake_loss,
+        )
+        self.assertEqual(result, "normalized-loss")
+        self.assertEqual(calls, [(outputs.logits, labels, 17, 123)])
+
+    def test_token_normalized_loss_requires_accumulated_item_count(self) -> None:
+        outputs = SimpleNamespace(logits=SimpleNamespace(shape=(1, 8, 17)))
+        with self.assertRaisesRegex(PipelineError, "num_items_in_batch"):
+            token_normalized_causal_lm_loss(
+                outputs,
+                object(),
+                num_items_in_batch=None,
+                loss_function=lambda *args, **kwargs: None,
             )
 
 

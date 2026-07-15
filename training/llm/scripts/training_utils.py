@@ -268,6 +268,34 @@ def validate_input_padding(
     }
 
 
+def token_normalized_causal_lm_loss(
+    outputs: Any,
+    labels: Any,
+    *,
+    num_items_in_batch: Any,
+    loss_function: Any | None = None,
+) -> Any:
+    if labels is None:
+        raise PipelineError("token-normalized causal loss requires labels")
+    if num_items_in_batch is None:
+        raise PipelineError("token-normalized causal loss requires num_items_in_batch")
+    logits = getattr(outputs, "logits", None)
+    if logits is None or not hasattr(logits, "shape"):
+        raise PipelineError("token-normalized causal loss requires model logits")
+    if loss_function is None:
+        try:
+            from transformers.loss.loss_utils import ForCausalLMLoss
+        except ImportError as exc:
+            raise PipelineError("Transformers causal loss is unavailable") from exc
+        loss_function = ForCausalLMLoss
+    return loss_function(
+        logits,
+        labels,
+        vocab_size=int(logits.shape[-1]),
+        num_items_in_batch=num_items_in_batch,
+    )
+
+
 def smoke_manifest(
     rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],

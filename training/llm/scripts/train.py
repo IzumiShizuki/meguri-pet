@@ -30,6 +30,7 @@ from training.llm.scripts.training_utils import (
     EXPERIMENT_ID,
     deterministic_stratified_subset,
     smoke_manifest,
+    token_normalized_causal_lm_loss,
     tokenize_assistant_only,
     validate_dataset_for_training,
     validate_enablement_gate_report,
@@ -209,6 +210,7 @@ def run(args: argparse.Namespace) -> Path:
         eval_dataset=Dataset.from_list(encoded_validation),
         processing_class=tokenizer,
         data_collator=collator,
+        compute_loss_func=token_normalized_causal_lm_loss,
     )
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
@@ -269,6 +271,7 @@ def run(args: argparse.Namespace) -> Path:
         "seed": seed,
         "lora": config["lora"],
         "training_parameters": kwargs,
+        "loss_normalization": "assistant_tokens_across_gradient_accumulation",
         "input_padding": input_padding,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),

@@ -97,6 +97,11 @@ shape; the observed maxima and requested pad length are recorded in the smoke
 dataset and experiment manifests. The command fails rather than truncating a
 sample or silently returning to variable shapes.
 
+Training uses the Transformers causal-LM loss with the accumulated assistant
+token count supplied by `SFTTrainer`. This keeps loss normalization correct
+across eight microbatches even though Qwen3.5's forward signature does not
+accept `num_items_in_batch` directly.
+
 Full training uses the same entry point without `--smoke`. Resume is explicit
 and only accepts a checkpoint below the same experiment directory. Checkpoints
 are ranked by frozen validation composite score plus the fixed synthetic safety
