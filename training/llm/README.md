@@ -119,6 +119,13 @@ generated tokens to the tokenizer's encoded `{"` prefix without repairing
 output after generation. These controls must not be tuned from locked-eval
 failure content.
 
+The validation-selected profile is frozen in
+`configs/qwen35_4b_lora_decode_v2.yaml`. Its status is deliberately
+`validation_selected`, not Staging-eligible: the profile must be measured once
+on a newly and independently frozen locked set, then pass the frozen-rubric
+human persona review. The previous 184-case locked result remains evidence for
+the default v1 decode path and must not be reused to tune or approve v2.
+
 ```powershell
 python -m training.llm.scripts.train --experiment-id <id> `
   --dataset-dir <dataset> --probe-report <probe> `

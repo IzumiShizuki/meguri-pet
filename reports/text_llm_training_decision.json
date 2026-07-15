@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T05:43:52+08:00",
+  "generated_at": "2026-07-16T06:35:16+08:00",
   "status": "EVALUATED_NO_GO_STAGING",
   "production_ready": false,
   "model": {
@@ -31,6 +31,30 @@
     "memory_candidate_error_rate": 0.0,
     "evaluation_only": true
   },
+  "validation_only_decode_v2": {
+    "profile_id": "qwen35-4b-l2-decode-v2-r851bf6e-20260716-v1",
+    "status": "validation_selected_pending_independent_locked_eval",
+    "generation": {
+      "max_new_tokens": 256,
+      "repetition_penalty": 1.05,
+      "no_repeat_ngram_size": 4,
+      "force_json_object_start": true
+    },
+    "validation_count": 566,
+    "composite_score": 0.937279,
+    "json_parse_rate": 1.0,
+    "schema_valid_rate": 1.0,
+    "extra_field_rate": 0.0,
+    "language_match_rate": 0.939929,
+    "expression_tag_accuracy": 0.805654,
+    "expression_intensity_accuracy": 0.70318,
+    "voice_style_accuracy": 0.416961,
+    "safety_passed": 8,
+    "safety_total": 8,
+    "locked_eval_accessed": false,
+    "human_review_status": "pending_new_locked_eval_automatic_gate",
+    "staging_eligible": false
+  },
   "staging_gate": {
     "status": "fail",
     "failed_checks": [
@@ -49,11 +73,17 @@
     "validation_selection": "f37cf14154dde640354e754c07921c83dd007d932c4d681e73769d2cb78bbbf9",
     "export_manifest": "184e61764698022b4eaaa0eb40ec2a74c940dc4195a662172fb2f56e53a5eeee",
     "locked_eval_report": "294ae54550e889578b90597c7239fb361a893148f63c37684aa8d27e85da5d56",
-    "comparison_report": "0bdd667796a41b6bd9e0d2b297fc8060212c43179268077ff77fa5a360736e0e"
+    "comparison_report": "0bdd667796a41b6bd9e0d2b297fc8060212c43179268077ff77fa5a360736e0e",
+    "decode_v2_validation_report": "d9fca15d068d036a40c5ecfbeadedc27438bf798c9483fbe141defcf1c97e48c",
+    "decode_v2_safety_report": "87aae409cd51e4d7d6ed17d96ea4253217982207cabc4067094d173a49688ce7",
+    "decode_v2_validation_diagnostic": "6cf6057878f132f423d78c15ac981373801b0d01a5fcfffecab42fb988cdcf5c"
   },
   "next_iteration_policy": {
     "use_train_and_validation_only": true,
     "locked_eval_failure_content_may_be_used_for_tuning": false,
-    "new_independently_frozen_locked_eval_required": true
+    "decode_v2_profile_frozen": true,
+    "new_independently_frozen_locked_eval_required": true,
+    "frozen_rubric_human_review_required": true,
+    "registry_and_staging_route_must_remain_unchanged_until_both_pass": true
   }
 }

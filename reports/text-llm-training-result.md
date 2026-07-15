@@ -1,7 +1,7 @@
 # Meguri 文本 LLM 训练结果
 
 日期：2026-07-16  
-结论：**训练与评测完成；模型已登记为 `evaluated`，Staging NO-GO，Production 未授权。**
+结论：**训练与 v1 locked eval 已完成；v2 解码配置已通过 validation-only 选择，但尚未做新的独立 locked eval。模型仍登记为 `evaluated`，Staging NO-GO，Production 未授权。**
 
 ## 模型身份
 
@@ -28,6 +28,24 @@
 | --- | ---: | ---: | ---: | ---: |
 | checkpoint-450 | 0.930124 | 0.991166 | 0.931095 | 1.0 |
 | final adapter | 0.926944 | 0.985866 | 0.925795 | 1.0 |
+
+## Validation-only v2 解码配置
+
+既有 locked eval 完成后，只根据 checkpoint-450 的 validation 失败模式测试了通用解码约束；没有读取或使用 locked eval 失败正文。已冻结的配置位于 `training/llm/configs/qwen35_4b_lora_decode_v2.yaml`：
+
+- `repetition_penalty=1.05`
+- `no_repeat_ngram_size=4`
+- 强制 tokenizer 编码的 `{"` 完整 JSON 对象起始 token 序列
+- 首个完整 JSON 对象闭合后停止生成，不做输出后修复
+
+相同 adapter 的完整 566 条 validation 与固定 safety 对比如下：
+
+| 解码配置 | Composite | JSON parse | Schema valid | Extra field | Language | Expression | Intensity | Voice | Safety |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 默认 v1 | 0.930124 | 0.991166 | 0.991166 | 0.000000 | 0.931095 | 0.800353 | 0.699647 | 0.397527 | 1.0 |
+| validation-selected v2 | 0.937279 | 1.000000 | 1.000000 | 0.000000 | 0.939929 | 0.805654 | 0.703180 | 0.416961 | 1.0 |
+
+v2 共 566/566 可解析且 Schema-valid，固定 safety 为 8/8；报告记录 `locked_eval_accessed=false`。这只证明它是更好的 validation 候选，不能覆盖 v1 locked eval 结论，也不能据此提升 Registry 状态。
 
 ## Locked eval 最终测量
 
@@ -58,10 +76,11 @@ Locked eval policy 明确为：不用于训练、Prompt 调参、early stopping 
 ## 后续处理边界
 
 1. 当前 adapter 可保留作本地离线分析和 `evaluated` 基线，不进入 Staging 流量。
-2. 下一训练迭代只能使用 train/validation 证据。checkpoint-450 的 validation 有 5 个 parse failures，模式为缺少起始 `{` 或 `reply` 重复至 token 上限；可据此研究通用的重复抑制、JSON 约束解码或训练数据格式强化。
-3. 不得读取 locked eval 失败正文来构造训练样本、修改 Prompt、选择 checkpoint 或调整推理参数。
-4. 若要评估经过 validation 驱动改进的新候选，应先由独立流程冻结新的、未泄漏的 locked eval 版本；不能反复使用本次 184 条结果调到通过。
-5. Production 始终保持 `production_ready=false`，需要独立审批和发布门禁。
+2. validation 驱动的 v2 解码配置已经冻结；不得再根据旧 locked eval 的失败内容修改它。
+3. 由独立流程先冻结新的、未泄漏的 locked eval 版本，再对 v2 配置执行一次正式测量；不能重跑本次 184 条并据其结果继续调参。
+4. 新 locked eval 自动门禁通过后，再按冻结 rubric 完成人工 persona review；两者都通过前不得绑定 Staging 路由。
+5. 若 v2 失败，只能回到 train/validation 或构建下一训练候选；若通过，则需把 adapter、解码 profile、评测证据和 rollback identity 一起绑定为新的可部署身份，不能悄悄改写当前 v1 `evaluated` 记录。
+6. Production 始终保持 `production_ready=false`，需要独立审批和发布门禁。
 
 ## 证据摘要
 
@@ -70,4 +89,6 @@ Locked eval policy 明确为：不用于训练、Prompt 调参、early stopping 
 - Export Manifest SHA-256：`184e61764698022b4eaaa0eb40ec2a74c940dc4195a662172fb2f56e53a5eeee`
 - Locked eval report SHA-256：`294ae54550e889578b90597c7239fb361a893148f63c37684aa8d27e85da5d56`
 - Comparison report SHA-256：`0bdd667796a41b6bd9e0d2b297fc8060212c43179268077ff77fa5a360736e0e`
-
+- v2 validation report SHA-256：`d9fca15d068d036a40c5ecfbeadedc27438bf798c9483fbe141defcf1c97e48c`
+- v2 safety report SHA-256：`87aae409cd51e4d7d6ed17d96ea4253217982207cabc4067094d173a49688ce7`
+- v2 validation diagnostic SHA-256：`6cf6057878f132f423d78c15ac981373801b0d01a5fcfffecab42fb988cdcf5c`
