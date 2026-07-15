@@ -44,6 +44,9 @@ python -m training.llm.scripts.probe_environment --mode static
 
 The full probe requires a dedicated LLM environment and an explicit
 `--allow-download`. It must pass before smoke or full training is allowed.
+Every successful L-001 report also records the exact `python -m pip freeze`
+environment lock inside the probe evidence; a probe without that snapshot is
+not considered complete.
 
 ## Reproducible commands
 
@@ -57,6 +60,12 @@ D:\environment\anaconda3\envs\meguri-llm\python.exe -m pip install `
 D:\environment\anaconda3\envs\meguri-llm\python.exe -m pip install `
   -r training\llm\environment\requirements-windows-blackwell.txt
 ```
+
+On Windows the pipeline automatically places TorchInductor and Triton caches
+below `D:\environment\cache\meguri-llm` to avoid the native path-length limit.
+Set `MEGURI_LLM_COMPILE_CACHE_ROOT` before launch only when a different short,
+writable cache root is required. The resolved cache paths are recorded in the
+L-001 report.
 
 Run the exact-model probe and build the read-only-source-derived dataset:
 
@@ -102,9 +111,14 @@ python -m training.llm.eval.run_locked_eval `
   --eval-root D:\program\meguri-pet\datasets\meguri\exports\eval `
   --rag-jsonl D:\program\meguri-pet\datasets\meguri\exports\rag\chunks_train.jsonl `
   --train-jsonl <derived-train-jsonl> --backend local --config <config> `
-  --adapter <selected-adapter> --allow-download `
+  --adapter <selected-adapter> --allow-download --input-pad-length 1152 `
   --acknowledge-locked-eval-is-evaluation-only
 ```
+
+The frozen 184-case suite currently ranges from 896 to 1143 input tokens when
+Prompt + RAG is assembled. Local comparisons use left padding to 1152 tokens
+so TorchInductor sees one input shape; the report retains each unpadded input
+length. Base, Prompt + RAG, and adapter runs must use the same pad length.
 
 ## Staging boundary
 
@@ -117,5 +131,6 @@ artifacts and a last-good registry entry exist. Switching back to last-good uses
 `training.llm.scripts.switch_staging_model` and does not rebuild a model.
 
 The environment Agent supplied `ops/contracts/llm-agent.environment-contract.json`.
-The separately named `docs/contracts/llm-staging-handoff.md` is still absent, so
-no code in this branch marks a candidate `staging_active` or Production-ready.
+The human-readable staging handoff now lives at
+`docs/contracts/llm-staging-handoff.md`. It gates candidate staging routing
+only; no code in this branch marks a model Production-ready.

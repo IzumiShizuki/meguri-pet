@@ -20,7 +20,12 @@ from training.llm.scripts.common import (
     utc_now,
     write_json,
 )
-from training.llm.scripts.modeling import assert_text_only_trainable_parameters, load_model_with_lora
+from training.llm.scripts.modeling import (
+    assert_text_only_trainable_parameters,
+    autocast_dtype,
+    configure_compile_cache,
+    load_model_with_lora,
+)
 from training.llm.scripts.training_utils import (
     EXPERIMENT_ID,
     deterministic_stratified_subset,
@@ -43,7 +48,14 @@ def _last_checkpoint(checkpoint_root: Path) -> str | None:
     return str(max(values)[1].resolve()) if values else None
 
 
-def _smoke_inference(model: Any, tokenizer: Any, row: dict[str, Any], max_new_tokens: int = 256) -> dict[str, Any]:
+def _smoke_inference(
+    model: Any,
+    tokenizer: Any,
+    row: dict[str, Any],
+    *,
+    generation_dtype: Any,
+    max_new_tokens: int = 256,
+) -> dict[str, Any]:
     import torch
 
     messages = row["messages"][:-1]
@@ -57,7 +69,7 @@ def _smoke_inference(model: Any, tokenizer: Any, row: dict[str, Any], max_new_to
     encoded = {name: value.to("cuda") for name, value in encoded.items()}
     input_length = int(encoded["input_ids"].shape[-1])
     model.eval()
-    with torch.inference_mode():
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=generation_dtype):
         output = model.generate(
             **encoded,
             do_sample=False,
@@ -104,16 +116,21 @@ def run(args: argparse.Namespace) -> Path:
             size=min(args.smoke_validation_samples, len(validation_rows)),
             seed=seed + 1,
         )
+    configure_compile_cache()
     try:
         import torch
-        from datasets import Dataset
-        from transformers import DataCollatorForSeq2Seq
-        from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
         raise PipelineError("the pinned Unsloth/TRL training environment is incomplete") from exc
 
     torch.manual_seed(seed)
     model, processor, _ = load_model_with_lora(config, allow_download=args.allow_download)
+    # Loading Unsloth first is required for its Transformers and PEFT patches.
+    try:
+        from datasets import Dataset
+        from transformers import DataCollatorForSeq2Seq
+        from trl import SFTConfig, SFTTrainer
+    except ImportError as exc:
+        raise PipelineError("the pinned Unsloth/TRL training environment is incomplete") from exc
     parameter_counts = assert_text_only_trainable_parameters(model)
     tokenizer = getattr(processor, "tokenizer", processor)
     max_length = int(training["max_seq_length"])
@@ -207,7 +224,12 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError(f"refusing to overwrite final adapter: {final_adapter}")
     model.save_pretrained(final_adapter)
     tokenizer.save_pretrained(final_adapter)
-    smoke_result = _smoke_inference(model, tokenizer, validation_rows[0])
+    smoke_result = _smoke_inference(
+        model,
+        tokenizer,
+        validation_rows[0],
+        generation_dtype=autocast_dtype(config, torch),
+    )
     experiment = {
         "schema_version": 1,
         "experiment_id": args.experiment_id,

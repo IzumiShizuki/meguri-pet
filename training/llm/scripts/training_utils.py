@@ -48,6 +48,22 @@ def validate_probe_report(path: Path, config: dict[str, Any]) -> dict[str, Any]:
     report = read_json(path)
     if report.get("status") != "pass" or report.get("mode") != "full":
         raise PipelineError("a passing full L-001 probe report is required before training")
+    static = report.get("static") or {}
+    if static.get("status") != "pass":
+        raise PipelineError("the L-001 static probe section is not passing")
+    environment_lock = static.get("environment_lock") or {}
+    packages = environment_lock.get("packages")
+    if (
+        environment_lock.get("status") != "pass"
+        or not isinstance(packages, list)
+        or not packages
+        or any(not isinstance(item, str) or not item.strip() for item in packages)
+        or environment_lock.get("line_count") != len(packages)
+    ):
+        raise PipelineError("the L-001 report is missing a complete pip freeze environment lock")
+    normalized_lock = "\n".join(item.strip() for item in packages) + "\n"
+    if environment_lock.get("sha256") != sha256_text(normalized_lock):
+        raise PipelineError("the L-001 pip freeze environment lock hash is invalid")
     expected = config["model"]
     identity = report.get("model") or {}
     for field in ("repo_id", "revision", "tokenizer_revision"):
@@ -184,9 +200,26 @@ def tokenize_assistant_only(
         raise PipelineError(
             f"tokenized sample exceeds max_seq_length without safe JSON truncation: {len(full_ids)}>{max_seq_length}"
         )
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is None or not full_ids or full_ids[-1] != eos_token_id:
-        raise PipelineError("chat template does not terminate the assistant response with EOS")
+    eos_value = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(eos_value, int):
+        eos_token_ids = {eos_value}
+    elif isinstance(eos_value, (list, tuple, set)):
+        eos_token_ids = {int(value) for value in eos_value}
+    else:
+        eos_token_ids = set()
+    terminal_eos = next(
+        (index for index in range(len(full_ids) - 1, len(prefix_ids) - 1, -1) if full_ids[index] in eos_token_ids),
+        None,
+    )
+    trailing_text = (
+        tokenizer.decode(full_ids[terminal_eos + 1 :], skip_special_tokens=True)
+        if terminal_eos is not None
+        else ""
+    )
+    if terminal_eos is None or trailing_text.strip():
+        raise PipelineError(
+            "chat template does not terminate the assistant response with EOS followed only by whitespace"
+        )
     labels = [-100] * len(prefix_ids) + full_ids[len(prefix_ids) :]
     if not any(label != -100 for label in labels) or any(label != -100 for label in labels[: len(prefix_ids)]):
         raise PipelineError("assistant-only loss mask is invalid")

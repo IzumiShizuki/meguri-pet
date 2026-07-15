@@ -25,7 +25,13 @@ from .common import (
     utc_now,
     write_json,
 )
-from .modeling import assert_text_only_trainable_parameters, load_base_model, load_model_with_lora
+from .modeling import (
+    assert_text_only_trainable_parameters,
+    autocast_dtype,
+    configure_compile_cache,
+    load_base_model,
+    load_model_with_lora,
+)
 from .training_utils import tokenize_assistant_only
 
 
@@ -72,6 +78,35 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     return errors
 
 
+def pip_freeze_snapshot(python_executable: str = sys.executable) -> dict[str, Any]:
+    command = [python_executable, "-m", "pip", "freeze"]
+    try:
+        output = subprocess.run(command, check=True, capture_output=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return {
+            "status": "fail",
+            "command": command,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+    packages = [line.strip() for line in output.splitlines() if line.strip()]
+    if not packages:
+        return {
+            "status": "fail",
+            "command": command,
+            "error_type": "RuntimeError",
+            "error": "pip freeze returned no installed packages",
+        }
+    normalized = "\n".join(packages) + "\n"
+    return {
+        "status": "pass",
+        "command": command,
+        "line_count": len(packages),
+        "sha256": sha256_text(normalized),
+        "packages": packages,
+    }
+
+
 def nvidia_smi() -> dict[str, Any]:
     command = [
         "nvidia-smi",
@@ -106,6 +141,7 @@ def static_probe(config: dict[str, Any]) -> dict[str, Any]:
         required.discard("bitsandbytes")
     missing = sorted(name for name in required if versions.get(name) is None)
     gpu = nvidia_smi()
+    environment_lock = pip_freeze_snapshot()
     hardware_errors: list[str] = []
     if not gpu.get("available"):
         hardware_errors.append("nvidia-smi did not report a GPU")
@@ -118,6 +154,8 @@ def static_probe(config: dict[str, Any]) -> dict[str, Any]:
         if first["memory_total_mib"] < minimum_mib:
             hardware_errors.append("GPU total VRAM is below the configured minimum")
     errors = config_errors + hardware_errors
+    if environment_lock.get("status") != "pass":
+        errors.append("pip freeze environment snapshot is unavailable")
     if missing:
         errors.append("missing packages: " + ", ".join(missing))
     return {
@@ -126,6 +164,7 @@ def static_probe(config: dict[str, Any]) -> dict[str, Any]:
         "python": {"version": sys.version, "executable": sys.executable},
         "platform": {"system": platform.system(), "release": platform.release(), "version": platform.version()},
         "packages": versions,
+        "environment_lock": environment_lock,
         "gpu": gpu,
     }
 
@@ -135,9 +174,9 @@ def _text_tokenizer(processor: Any) -> Any:
 
 
 def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Path) -> dict[str, Any]:
+    configure_compile_cache()
     try:
         import torch
-        from peft import PeftModel
     except ImportError as exc:
         raise PipelineError("full probe dependencies are unavailable") from exc
     if not torch.cuda.is_available():
@@ -148,6 +187,11 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     model, processor, model_api = load_model_with_lora(config, allow_download=allow_download)
+    # Unsloth must patch Transformers before PEFT is imported.
+    try:
+        from peft import PeftModel
+    except ImportError as exc:
+        raise PipelineError("PEFT is required for the adapter reload probe") from exc
     parameter_counts = assert_text_only_trainable_parameters(model)
     tokenizer = _text_tokenizer(processor)
     system_prompt = (PROJECT_ROOT / "configs" / "meguri_system_prompt.txt").read_text(encoding="utf-8").strip()
@@ -179,7 +223,8 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
     labels = torch.tensor([encoded["labels"]], device="cuda")
 
     model.train()
-    output = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+    with torch.autocast(device_type="cuda", dtype=autocast_dtype(config, torch)):
+        output = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
     if output.loss is None or not torch.isfinite(output.loss):
         raise PipelineError("single-batch forward did not produce a finite loss")
     output.loss.backward()
@@ -228,7 +273,12 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
                         "screen_context_enabled": False,
                         "allowed_expression_tags": ["neutral", "happy", "worried"],
                     },
-                    "user_message": "请用 JSON 确认环境正常。",
+                    "user_message": (
+                        "严格按这个 JSON 形状回答，只替换 reply 文本："
+                        '{"reply":"环境正常。","expression_tag":"neutral",'
+                        '"expression_intensity":"low","voice_style":"neutral",'
+                        '"memory_candidates":[]}'
+                    ),
                     "canon_examples": [],
                     "long_term_memories": [],
                     "recent_context": [],
@@ -247,7 +297,9 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
     inference_inputs = inference_tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
     inference_inputs = {name: value.to("cuda") for name, value in inference_inputs.items()}
     inference_length = int(inference_inputs["input_ids"].shape[-1])
-    with torch.inference_mode():
+    with torch.inference_mode(), torch.autocast(
+        device_type="cuda", dtype=autocast_dtype(config, torch)
+    ):
         generated = reloaded.generate(
             **inference_inputs,
             do_sample=False,
@@ -311,6 +363,7 @@ def run_probe(
         "model": config.get("model"),
         "mode": mode,
         "allow_download": allow_download,
+        "compile_cache": configure_compile_cache(),
     }
     static = static_probe(config)
     report["static"] = static

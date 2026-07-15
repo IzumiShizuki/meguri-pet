@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from training.llm.scripts.common import PipelineError
+from training.llm.scripts.common import PipelineError, sha256_text
 from training.llm.scripts.training_utils import (
     deterministic_stratified_subset,
     tokenize_assistant_only,
     validate_enablement_gate_report,
+    validate_probe_report,
     validate_training_config,
 )
 
@@ -38,6 +41,17 @@ class FakeTokenizer:
         return "".join(chr(item) for item in values if item != self.eos_token_id)
 
 
+class TrailingWhitespaceTokenizer(FakeTokenizer):
+    def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, enable_thinking):
+        rendered = super().apply_chat_template(
+            messages,
+            tokenize=tokenize,
+            add_generation_prompt=add_generation_prompt,
+            enable_thinking=enable_thinking,
+        )
+        return rendered if add_generation_prompt else rendered + "\n"
+
+
 def row(sample_id: str, language: str, stage: str, mode: str) -> dict:
     assistant = json.dumps(
         {
@@ -64,6 +78,43 @@ def row(sample_id: str, language: str, stage: str, mode: str) -> dict:
     }
 
 
+def passing_probe_report() -> dict:
+    packages = ["alpha==1.0", "beta==2.0"]
+    return {
+        "status": "pass",
+        "mode": "full",
+        "model": {
+            "repo_id": "Qwen/Qwen3.5-4B",
+            "revision": "a" * 40,
+            "tokenizer_revision": "a" * 40,
+        },
+        "static": {
+            "status": "pass",
+            "environment_lock": {
+                "status": "pass",
+                "line_count": len(packages),
+                "sha256": sha256_text("\n".join(packages) + "\n"),
+                "packages": packages,
+            },
+        },
+        "full": {
+            "status": "pass",
+            "checks": {
+                "cuda_available": True,
+                "bf16_supported": True,
+                "model_loaded": True,
+                "assistant_mask": True,
+                "forward": True,
+                "backward": True,
+                "gradient_checkpointing": True,
+                "adapter_save": True,
+                "adapter_reload": True,
+                "json_inference": True,
+            },
+        },
+    }
+
+
 class TrainingUtilsTests(unittest.TestCase):
     def test_assistant_only_mask_keeps_complete_json_and_eos(self) -> None:
         encoded = tokenize_assistant_only(row("one", "zh", "sibling", "work"), FakeTokenizer(), max_seq_length=2048)
@@ -71,6 +122,16 @@ class TrainingUtilsTests(unittest.TestCase):
         self.assertTrue(all(value == -100 for value in encoded["labels"][:first_supervised]))
         self.assertEqual(encoded["input_ids"][-1], FakeTokenizer.eos_token_id)
         self.assertEqual(encoded["labels"][-1], FakeTokenizer.eos_token_id)
+
+    def test_assistant_only_mask_allows_template_whitespace_after_eos(self) -> None:
+        encoded = tokenize_assistant_only(
+            row("one", "zh", "sibling", "work"),
+            TrailingWhitespaceTokenizer(),
+            max_seq_length=2048,
+        )
+        supervised = [value for value in encoded["labels"] if value != -100]
+        self.assertIn(TrailingWhitespaceTokenizer.eos_token_id, supervised)
+        self.assertEqual(supervised[-1], ord("\n"))
 
     def test_stratified_subset_is_reproducible(self) -> None:
         rows = [row(str(index), "ja" if index % 2 else "zh", "sibling", "work") for index in range(20)]
@@ -113,6 +174,27 @@ class TrainingUtilsTests(unittest.TestCase):
         }
         with self.assertRaises(PipelineError):
             validate_enablement_gate_report(None, config)
+
+    def test_probe_report_requires_verified_environment_lock(self) -> None:
+        config = {"model": passing_probe_report()["model"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.json"
+            report = passing_probe_report()
+            report["static"]["environment_lock"] = {"status": "pass"}
+            path.write_text(json.dumps(report), encoding="utf-8")
+            with self.assertRaisesRegex(PipelineError, "complete pip freeze environment lock"):
+                validate_probe_report(path, config)
+
+    def test_probe_report_rejects_tampered_environment_lock(self) -> None:
+        config = {"model": passing_probe_report()["model"]}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "probe.json"
+            report = passing_probe_report()
+            report["static"]["environment_lock"]["packages"].append("gamma==3.0")
+            report["static"]["environment_lock"]["line_count"] = 3
+            path.write_text(json.dumps(report), encoding="utf-8")
+            with self.assertRaisesRegex(PipelineError, "environment lock hash is invalid"):
+                validate_probe_report(path, config)
 
 
 if __name__ == "__main__":

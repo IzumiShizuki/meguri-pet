@@ -29,7 +29,6 @@ from training.llm.scripts.common import (
     sha256_file,
     utc_now,
     write_json,
-    write_jsonl,
 )
 
 
@@ -45,11 +44,15 @@ def _percentile(values: list[float], quantile: float) -> float | None:
 
 
 def _performance(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    inputs = [int(row["performance"]["input_tokens"]) for row in rows if row["performance"]["input_tokens"] is not None]
     first = [float(row["performance"]["first_token_latency_ms"]) for row in rows if row["performance"]["first_token_latency_ms"] is not None]
     total = [float(row["performance"]["total_latency_ms"]) for row in rows if row["performance"]["total_latency_ms"] is not None]
     speed = [float(row["performance"]["tokens_per_second"]) for row in rows if row["performance"]["tokens_per_second"] is not None]
     peaks = [int(row["performance"]["peak_vram_bytes"]) for row in rows if row["performance"]["peak_vram_bytes"] is not None]
     return {
+        "input_tokens_median": round(statistics.median(inputs), 3) if inputs else None,
+        "input_tokens_p95": _percentile([float(value) for value in inputs], 0.95),
+        "input_tokens_max": max(inputs, default=None),
         "first_token_latency_ms_median": round(statistics.median(first), 3) if first else None,
         "first_token_latency_ms_p95": _percentile(first, 0.95),
         "total_latency_ms_median": round(statistics.median(total), 3) if total else None,
@@ -73,6 +76,8 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError("explicit locked-eval usage acknowledgement is required")
     if not RUN_ID.fullmatch(args.run_id):
         raise PipelineError("run ID must be a safe 3-80 character identifier")
+    if args.progress_every <= 0:
+        raise PipelineError("progress interval must be positive")
     output_dir = args.output_root.resolve() / args.run_id
     if output_dir.exists():
         raise PipelineError(f"refusing to overwrite locked-eval run: {output_dir}")
@@ -109,6 +114,7 @@ def run(args: argparse.Namespace) -> Path:
             allow_download=args.allow_download,
             adapter_path=args.adapter,
             max_new_tokens=args.max_new_tokens,
+            input_pad_length=args.input_pad_length,
         )
         config_hash = sha256_file(args.config)
     else:
@@ -131,32 +137,35 @@ def run(args: argparse.Namespace) -> Path:
     output_dir.mkdir(parents=True, exist_ok=False)
     rows: list[dict[str, Any]] = []
     errors = 0
-    for index, case in enumerate(cases, 1):
-        request = case_request(case, rag, allowed_tags)
-        try:
-            generated = backend.generate(prompt, canonical_json(request["context"]))
-            raw_output = generated.raw_output
-            performance = {
-                "first_token_latency_ms": generated.first_token_latency_ms,
-                "total_latency_ms": generated.total_latency_ms,
-                "generated_tokens": generated.generated_tokens,
-                "tokens_per_second": generated.tokens_per_second,
-                "peak_vram_bytes": generated.peak_vram_bytes,
-            }
-            backend_error = None
-        except PipelineError as exc:
-            errors += 1
-            raw_output = ""
-            performance = {
-                "first_token_latency_ms": None,
-                "total_latency_ms": None,
-                "generated_tokens": None,
-                "tokens_per_second": None,
-                "peak_vram_bytes": None,
-            }
-            backend_error = str(exc)
-        rows.append(
-            {
+    raw_path = output_dir / "raw_outputs.jsonl"
+    with raw_path.open("x", encoding="utf-8", newline="\n") as raw_handle:
+        for index, case in enumerate(cases, 1):
+            request = case_request(case, rag, allowed_tags)
+            try:
+                generated = backend.generate(prompt, canonical_json(request["context"]))
+                raw_output = generated.raw_output
+                performance = {
+                    "input_tokens": generated.input_tokens,
+                    "first_token_latency_ms": generated.first_token_latency_ms,
+                    "total_latency_ms": generated.total_latency_ms,
+                    "generated_tokens": generated.generated_tokens,
+                    "tokens_per_second": generated.tokens_per_second,
+                    "peak_vram_bytes": generated.peak_vram_bytes,
+                }
+                backend_error = None
+            except PipelineError as exc:
+                errors += 1
+                raw_output = ""
+                performance = {
+                    "input_tokens": None,
+                    "first_token_latency_ms": None,
+                    "total_latency_ms": None,
+                    "generated_tokens": None,
+                    "tokens_per_second": None,
+                    "peak_vram_bytes": None,
+                }
+                backend_error = str(exc)
+            row = {
                 "sequence": index,
                 "sample_id": case["sample_id"],
                 "case_fingerprint": request["case_fingerprint"],
@@ -168,9 +177,23 @@ def run(args: argparse.Namespace) -> Path:
                 "performance": performance,
                 "backend_error": backend_error,
             }
-        )
-    raw_path = output_dir / "raw_outputs.jsonl"
-    write_jsonl(raw_path, rows)
+            rows.append(row)
+            raw_handle.write(canonical_json(row) + "\n")
+            raw_handle.flush()
+            if index % args.progress_every == 0 or index == len(cases):
+                print(
+                    json.dumps(
+                        {
+                            "event": "locked_eval.progress",
+                            "run_id": args.run_id,
+                            "completed": index,
+                            "total": len(cases),
+                            "backend_errors": errors,
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
     by_language = {
         language: _subset_metrics([row for row in rows if row["expected"]["language"] == language])
         for language in ("jp", "zh")
@@ -227,12 +250,14 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--adapter", type=Path)
     value.add_argument("--allow-download", action="store_true")
     value.add_argument("--max-new-tokens", type=int, default=256)
+    value.add_argument("--input-pad-length", type=int)
     value.add_argument("--endpoint")
     value.add_argument("--model")
     value.add_argument("--model-revision")
     value.add_argument("--tokenizer-revision")
     value.add_argument("--api-key-env", default="MEGURI_LLM_API_KEY")
     value.add_argument("--timeout-seconds", type=float, default=60.0)
+    value.add_argument("--progress-every", type=int, default=10)
     value.add_argument("--output-root", type=Path, default=ARTIFACT_ROOT / "eval")
     value.add_argument("--acknowledge-locked-eval-is-evaluation-only", action="store_true")
     return value

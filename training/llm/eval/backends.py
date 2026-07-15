@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from training.llm.scripts.common import PipelineError, canonical_json, sha256_text
-from training.llm.scripts.modeling import load_base_model
+from training.llm.scripts.modeling import autocast_dtype, configure_compile_cache, load_base_model
 
 
 @dataclass(frozen=True)
 class GenerationResult:
     raw_output: str
+    input_tokens: int | None
     first_token_latency_ms: float | None
     total_latency_ms: float
     generated_tokens: int | None
@@ -43,6 +44,7 @@ class OpenAIBackend:
         api_key: str | None,
         timeout_seconds: float,
     ) -> None:
+        configure_compile_cache()
         try:
             import httpx
         except ImportError as exc:
@@ -106,8 +108,10 @@ class OpenAIBackend:
         elapsed = (time.perf_counter() - start) * 1000
         usage = payload.get("usage") or {}
         tokens = usage.get("completion_tokens")
+        prompt_tokens = usage.get("prompt_tokens")
         return GenerationResult(
             raw_output=content,
+            input_tokens=int(prompt_tokens) if isinstance(prompt_tokens, int) else None,
             first_token_latency_ms=None,
             total_latency_ms=round(elapsed, 3),
             generated_tokens=int(tokens) if isinstance(tokens, int) else None,
@@ -124,6 +128,7 @@ class LocalUnslothBackend:
         allow_download: bool,
         adapter_path: Path | None,
         max_new_tokens: int,
+        input_pad_length: int | None = None,
     ) -> None:
         try:
             import torch
@@ -152,6 +157,12 @@ class LocalUnslothBackend:
         self.processor = processor
         self.tokenizer = tokenizer
         self.max_new_tokens = max_new_tokens
+        if input_pad_length is not None and input_pad_length <= 0:
+            raise PipelineError("evaluation input pad length must be positive")
+        if input_pad_length is not None and tokenizer.pad_token_id is None:
+            raise PipelineError("pinned tokenizer has no pad token for fixed-shape evaluation")
+        self.input_pad_length = input_pad_length
+        self.autocast_dtype = autocast_dtype(config, torch)
         self.metadata = {
             "backend": "local-unsloth",
             "model_repo_or_id": config["model"]["repo_id"],
@@ -159,9 +170,10 @@ class LocalUnslothBackend:
             "tokenizer_revision": config["model"]["tokenizer_revision"],
             "chat_template_sha256": sha256_text(template),
             "adapter_path": str(adapter_path.resolve()) if adapter_path else None,
+            "input_pad_length": input_pad_length,
         }
 
-    def _inputs(self, system_prompt: str, user_content: str) -> dict[str, Any]:
+    def _inputs(self, system_prompt: str, user_content: str) -> tuple[dict[str, Any], int]:
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
@@ -175,8 +187,25 @@ class LocalUnslothBackend:
             )
         except Exception as exc:
             raise PipelineError("pinned chat template cannot render the frozen text request") from exc
-        inputs = self.tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
-        return {key: value.to("cuda") for key, value in inputs.items()}
+        unpadded = self.tokenizer(rendered, return_tensors="pt", add_special_tokens=False)
+        input_tokens = int(unpadded["input_ids"].shape[-1])
+        if self.input_pad_length is not None:
+            if input_tokens > self.input_pad_length:
+                raise PipelineError(
+                    f"evaluation input exceeds fixed pad length: {input_tokens}>{self.input_pad_length}"
+                )
+            self.tokenizer.padding_side = "left"
+            inputs = self.tokenizer(
+                rendered,
+                return_tensors="pt",
+                add_special_tokens=False,
+                padding="max_length",
+                max_length=self.input_pad_length,
+                truncation=False,
+            )
+        else:
+            inputs = unpadded
+        return {key: value.to("cuda") for key, value in inputs.items()}, input_tokens
 
     def generate(
         self,
@@ -185,13 +214,15 @@ class LocalUnslothBackend:
         cancel_event: Any | None = None,
     ) -> GenerationResult:
         torch = self.torch
-        inputs = self._inputs(system_prompt, user_content)
+        inputs, input_tokens = self._inputs(system_prompt, user_content)
         input_length = int(inputs["input_ids"].shape[-1])
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         torch.cuda.synchronize()
         first_start = time.perf_counter()
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.autocast(
+            device_type="cuda", dtype=self.autocast_dtype
+        ):
             self.model.generate(
                 **inputs,
                 max_new_tokens=1,
@@ -215,7 +246,9 @@ class LocalUnslothBackend:
                     return bool(cancel_event.is_set())
 
             stopping_criteria = StoppingCriteriaList([CancelRequested()])
-        with torch.inference_mode():
+        with torch.inference_mode(), torch.autocast(
+            device_type="cuda", dtype=self.autocast_dtype
+        ):
             output = self.model.generate(
                 **inputs,
                 max_new_tokens=self.max_new_tokens,
@@ -233,6 +266,7 @@ class LocalUnslothBackend:
         token_count = int(generated.numel())
         return GenerationResult(
             raw_output=raw,
+            input_tokens=input_tokens,
             first_token_latency_ms=round(first_ms, 3),
             total_latency_ms=round(elapsed * 1000, 3),
             generated_tokens=token_count,
