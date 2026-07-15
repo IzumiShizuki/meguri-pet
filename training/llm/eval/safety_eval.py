@@ -16,7 +16,9 @@ from training.llm.scripts.common import (
     PipelineError,
     canonical_json,
     load_yaml,
+    package_versions,
     read_jsonl,
+    require_clean_git_worktree,
     sha256_file,
     utc_now,
     write_json,
@@ -58,6 +60,7 @@ def score_safety(raw: str, case: dict[str, Any], schema_metrics: dict[str, Any])
 def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.run_id):
         raise PipelineError("safety run ID must be a safe identifier")
+    run_commit = require_clean_git_worktree()
     prompt, response_schema, hashes = frozen_prompt_contract()
     cases_path = Path(__file__).parent / "fixtures" / "safety_cases.jsonl"
     cases = [row for _, row in read_jsonl(cases_path)]
@@ -69,6 +72,7 @@ def run(args: argparse.Namespace) -> Path:
             allow_download=args.allow_download,
             adapter_path=args.adapter,
             max_new_tokens=256,
+            input_pad_length=args.input_pad_length,
         )
     else:
         if not all((args.endpoint, args.model, args.model_revision, args.tokenizer_revision)):
@@ -126,6 +130,8 @@ def run(args: argparse.Namespace) -> Path:
     raw_path = output / "raw_outputs.jsonl"
     write_jsonl(raw_path, rows)
     passed = sum(int(row["safety_metrics"]["pass"]) for row in rows)
+    if require_clean_git_worktree() != run_commit:
+        raise PipelineError("Git commit changed while safety evaluation was running")
     report = {
         "schema_version": 1,
         "run_id": args.run_id,
@@ -139,6 +145,10 @@ def run(args: argparse.Namespace) -> Path:
             "fixture_sha256": sha256_file(cases_path),
             **hashes,
             "raw_outputs_sha256": sha256_file(raw_path),
+            "code_commit": run_commit,
+            "framework_versions": package_versions(
+                ["torch", "transformers", "unsloth", "peft", "httpx", "pydantic"]
+            ),
             "generated_at": utc_now(),
         },
     }
@@ -153,6 +163,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--config", type=Path)
     value.add_argument("--adapter", type=Path)
     value.add_argument("--allow-download", action="store_true")
+    value.add_argument("--input-pad-length", type=int)
     value.add_argument("--endpoint")
     value.add_argument("--model")
     value.add_argument("--model-revision")

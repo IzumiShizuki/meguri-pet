@@ -109,6 +109,10 @@ and only accepts a checkpoint below the same experiment directory. Checkpoints
 are ranked by frozen validation composite score plus the fixed synthetic safety
 suite; locked eval is structurally excluded from selection:
 
+Local validation and safety runs require an explicit fixed
+`--input-pad-length`. Both refuse dirty or changing Git worktrees, and their
+reports record the exact evaluation commit and framework versions.
+
 ```powershell
 python -m training.llm.scripts.train --experiment-id <id> `
   --dataset-dir <dataset> --probe-report <probe> `

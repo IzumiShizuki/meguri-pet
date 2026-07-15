@@ -12,8 +12,10 @@ from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     PipelineError,
     load_yaml,
+    package_versions,
     read_json,
     read_jsonl,
+    require_clean_git_worktree,
     sha256_file,
     utc_now,
     write_json,
@@ -71,6 +73,7 @@ def _composite(schema: dict[str, Any], persona: dict[str, Any], safety_rate: flo
 def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.run_id):
         raise PipelineError("validation run ID must be a safe identifier")
+    run_commit = require_clean_git_worktree()
     manifest = read_json(args.dataset_dir / "dataset_manifest.json")
     validation_path = args.dataset_dir / "validation.jsonl"
     if sha256_file(validation_path) != manifest.get("files", {}).get("validation.jsonl"):
@@ -84,6 +87,7 @@ def run(args: argparse.Namespace) -> Path:
         allow_download=args.allow_download,
         adapter_path=args.adapter,
         max_new_tokens=256,
+        input_pad_length=args.input_pad_length,
     )
     rows = [row for _, row in read_jsonl(validation_path)]
     output = args.output_root.resolve() / args.run_id
@@ -109,6 +113,8 @@ def run(args: argparse.Namespace) -> Path:
     schema = aggregate_schema_metrics(results)
     persona = aggregate_persona_metrics(results)
     digest, _ = adapter_hash(args.adapter)
+    if require_clean_git_worktree() != run_commit:
+        raise PipelineError("Git commit changed while validation evaluation was running")
     report = {
         "schema_version": 1,
         "run_id": args.run_id,
@@ -127,6 +133,10 @@ def run(args: argparse.Namespace) -> Path:
             "validation_jsonl_sha256": sha256_file(validation_path),
             "raw_outputs_sha256": sha256_file(raw_path),
             "training_config_sha256": sha256_file(args.config),
+            "code_commit": run_commit,
+            "framework_versions": package_versions(
+                ["torch", "transformers", "unsloth", "peft", "pydantic"]
+            ),
             "generated_at": utc_now(),
         },
     }
@@ -142,6 +152,7 @@ def main() -> int:
     parser.add_argument("--dataset-dir", type=Path, required=True)
     parser.add_argument("--safety-report", type=Path, required=True)
     parser.add_argument("--allow-download", action="store_true")
+    parser.add_argument("--input-pad-length", type=int)
     parser.add_argument("--output-root", type=Path, default=ARTIFACT_ROOT / "validation_eval")
     args = parser.parse_args()
     try:
