@@ -1,59 +1,54 @@
-# Meguri text LLM pipeline
+# Meguri 文本 LLM 流水线
 
-This directory implements Notion plan 17 for text-only model work. It does not
-contain or invoke any TTS data, training, or inference code.
+本目录实现 Notion 计划 17 中的纯文本模型工作，不包含也不会调用任何
+TTS 数据、训练或推理代码。
 
-The execution order is fixed:
+执行顺序固定如下：
 
-1. `L-001`: environment and exact-model compatibility probe.
-2. `L-002` / `L-003`: deterministic read-only source conversion and quality
-   gates.
-3. `L-004`: frozen L0 evaluation on the locked set. Locked cases are not
-   available to training or validation code.
-4. `L-005` / `L-006`: reproducible LoRA/QLoRA training entry points and a
-   100-200 sample smoke run.
-5. `L-007` onward: full experiments, fixed evaluation, registry, and staging.
+1. `L-001`：环境与精确模型版本兼容性探测。
+2. `L-002` / `L-003`：对只读源数据进行确定性转换并执行质量门禁。
+3. `L-004`：在 locked eval 集上执行冻结的 L0 评测。训练和 validation
+   代码无法访问 locked cases。
+4. `L-005` / `L-006`：可复现的 LoRA/QLoRA 训练入口，以及包含 100–200
+   个样本的 smoke 训练。
+5. `L-007` 及以后：完整实验、固定评测、模型 Registry 与 Staging。
 
-The authoritative source build is `meguri_v2_02c3db0c507d7c2d`. Canonical
-data and `datasets/meguri/exports` are always treated as read-only. Derived
-data is written below `training/llm/artifacts` and every derived dataset has
-its own manifest and content-derived dataset ID.
+权威源数据 build 为 `meguri_v2_02c3db0c507d7c2d`。规范数据和
+`datasets/meguri/exports` 始终按只读方式处理。派生数据写入
+`training/llm/artifacts`；每个派生数据集都有独立 Manifest，以及根据内容
+计算出的 dataset ID。
 
-The approved exports contain outfit codes `07` and `08` even though both are
-disabled runtime outfits. They are retained to preserve the fixed GO counts
-and deterministically labeled `private`; this does not enable either outfit,
-because outfit eligibility remains an external runtime decision. Converted
-rows record `interaction_mode_source=deterministic_outfit_map_v1`.
+已批准的 exports 包含服装代码 `07` 和 `08`，但两者在运行时均处于禁用
+状态。为了保持固定的 GO 数量，流水线会保留这些数据并确定性标记为
+`private`；这不会启用对应服装，因为服装可用性仍由外部运行时决定。
+转换后的记录会写入
+`interaction_mode_source=deterministic_outfit_map_v1`。
 
-The GO exports also contain the legacy `voice_style=embarrassed`, which is not
-part of the pinned runtime schema. The converter records and deterministically
-normalizes it to `restrained`; source rows remain unchanged and the manifest and
-quality report expose the normalization policy and counts.
+GO exports 还包含旧值 `voice_style=embarrassed`，该值不属于已固定的
+运行时 Schema。转换器会记录这一情况，并确定性归一化为 `restrained`；
+源记录保持不变，Manifest 与质量报告会公开归一化策略及数量。
 
-The main model is the official `Qwen/Qwen3.5-4B` revision pinned in
-`configs/qwen35_4b_bf16_lora.yaml`. Qwen3.5 is multimodal, but this pipeline
-freezes every vision layer and trains only language attention/MLP modules.
-The comparison model is `Qwen/Qwen3-4B-Instruct-2507` with NF4 QLoRA. The 8B
-configuration remains disabled until its explicit gates are satisfied.
+主模型是 `configs/qwen35_4b_bf16_lora.yaml` 中固定版本的官方
+`Qwen/Qwen3.5-4B`。Qwen3.5 是多模态模型，但本流水线会冻结全部视觉层，
+只训练语言 attention/MLP 模块。对比模型为使用 NF4 QLoRA 的
+`Qwen/Qwen3-4B-Instruct-2507`。在明确门禁通过前，8B 配置保持禁用。
 
-Run the non-downloading preflight with the project Python environment:
+使用项目 Python 环境执行不下载模型的预检：
 
 ```powershell
 python -m training.llm.scripts.probe_environment --mode static
 ```
 
-The full probe requires a dedicated LLM environment and an explicit
-`--allow-download`. It must pass before smoke or full training is allowed.
-Every successful L-001 report also records the exact `python -m pip freeze`
-environment lock inside the probe evidence; a probe without that snapshot is
-not considered complete. Versioned probes, evaluations, and training runs fail
-closed unless the Git worktree is clean and the recorded commit remains stable
-for the complete operation.
+完整探测必须使用专用 LLM 环境，并显式传入 `--allow-download`。完整探测
+通过后才允许执行 smoke 或完整训练。每份成功的 L-001 报告还必须在探测
+证据中记录精确的 `python -m pip freeze` 环境锁；缺少该快照的探测不视为
+完成。带版本的探测、评测与训练任务均采用 fail-closed：Git 工作树必须
+干净，且整个操作期间记录的 commit 不得变化。
 
-## Reproducible commands
+## 可复现命令
 
-The Windows/Blackwell environment is isolated from the application environment.
-Install the pinned CUDA wheel first, then the remaining lock:
+Windows/Blackwell 模型环境与应用环境相互隔离。先安装固定的 CUDA wheel，
+再安装其余依赖锁：
 
 ```powershell
 D:\environment\anaconda3\envs\meguri-llm\python.exe -m pip install `
@@ -63,13 +58,12 @@ D:\environment\anaconda3\envs\meguri-llm\python.exe -m pip install `
   -r training\llm\environment\requirements-windows-blackwell.txt
 ```
 
-On Windows the pipeline automatically places TorchInductor and Triton caches
-below `D:\environment\cache\meguri-llm` to avoid the native path-length limit.
-Set `MEGURI_LLM_COMPILE_CACHE_ROOT` before launch only when a different short,
-writable cache root is required. The resolved cache paths are recorded in the
-L-001 report.
+在 Windows 上，流水线会自动将 TorchInductor 和 Triton 缓存放置在
+`D:\environment\cache\meguri-llm` 下，以规避原生路径长度限制。只有在
+确实需要其他较短且可写的缓存根目录时，才应在启动前设置
+`MEGURI_LLM_COMPILE_CACHE_ROOT`。最终解析出的缓存路径会写入 L-001 报告。
 
-Run the exact-model probe and build the read-only-source-derived dataset:
+执行精确模型探测，并从只读源数据构建派生数据集：
 
 ```powershell
 python -m training.llm.scripts.probe_environment --mode full --allow-download `
@@ -79,200 +73,194 @@ python -m training.llm.scripts.build_sft_dataset `
   --split-root D:\program\meguri-pet\data\meguri\aligned_v1\splits
 ```
 
-The L-006 command enforces 100–200 train rows, 50–100 optimizer steps, a
-passing full probe, assistant-only labels, EOS/JSON boundaries and a
-post-training Schema-valid generation:
+L-006 命令会强制满足以下条件：100–200 条训练记录、50–100 个 optimizer
+steps、完整探测通过、仅 assistant 标签、EOS/JSON 边界，以及训练后能生成
+通过 Schema 的响应：
 
 ```powershell
 python -m training.llm.scripts.run_smoke `
   --experiment-id qwen35-4b-smoke-s3407 `
-  --dataset-dir <derived-dataset-directory> `
-  --probe-report <passing-full-probe-report> `
+  --dataset-dir <派生数据集目录> `
+  --probe-report <通过的完整探测报告> `
   --input-pad-length 768 --allow-download
 ```
 
-The deterministic 160/40 L-006 subset currently spans 652..755 tokens. Smoke
-training requires fixed padding to 768 so Windows/Triton compiles one training
-shape; the observed maxima and requested pad length are recorded in the smoke
-dataset and experiment manifests. The command fails rather than truncating a
-sample or silently returning to variable shapes.
+当前确定性的 160/40 L-006 子集长度范围为 652..755 tokens。Smoke 训练
+必须固定 padding 到 768，使 Windows/Triton 只编译一种训练 shape；观测到
+的最大长度和请求的 pad length 都会写入 smoke 数据集与实验 Manifest。
+如果样本会被截断，命令将直接失败，不会静默退回可变 shape。
 
-Training uses the Transformers causal-LM loss with the accumulated assistant
-token count supplied by `SFTTrainer`. This keeps loss normalization correct
-across eight microbatches even though Qwen3.5's forward signature does not
-accept `num_items_in_batch` directly. Evaluation has no accumulated item count,
-so it derives the denominator from the current batch's non-ignored assistant
-labels instead.
+训练使用 Transformers causal-LM loss，并由 `SFTTrainer` 提供累计的
+assistant token 数量。即使 Qwen3.5 的 forward 签名不能直接接收
+`num_items_in_batch`，该方式仍能保证八个 microbatches 之间的 loss
+归一化正确。评测阶段没有累计 item count，因此分母改为当前 batch 中
+未被忽略的 assistant labels 数量。
 
-Full training uses the same entry point without `--smoke`. Resume is explicit
-and only accepts a checkpoint below the same experiment directory. Checkpoints
-are ranked by frozen validation composite score plus the fixed synthetic safety
-suite; locked eval is structurally excluded from selection:
+完整训练使用同一入口，但不传 `--smoke`。恢复训练必须显式指定，而且只
+接受同一实验目录下的 checkpoint。Checkpoint 排名只使用冻结的 validation
+综合分和固定 synthetic safety suite；locked eval 在结构上被排除在选模
+流程之外。
 
-Local validation and safety runs require an explicit fixed
-`--input-pad-length`. Both refuse dirty or changing Git worktrees, and their
-reports record the exact evaluation commit and framework versions.
-Validation-only v2 decoding experiments may additionally set bounded
-`--repetition-penalty` and `--no-repeat-ngram-size`; both values are recorded
-in backend metadata. `--force-json-object-start` may constrain the first
-generated tokens to the tokenizer's encoded `{"` prefix without repairing
-output after generation. These controls must not be tuned from locked-eval
-failure content.
+本地 validation 与 safety 任务必须显式指定固定的 `--input-pad-length`。
+两者都会拒绝脏工作树或运行期间发生变化的 Git 工作树，并在报告中记录
+精确的评测 commit 与框架版本。仅用于 validation 的 v2 解码实验还可以
+设置有界的 `--repetition-penalty` 和 `--no-repeat-ngram-size`；两者都会
+写入 backend metadata。`--force-json-object-start` 可以强制首批生成 tokens
+为 tokenizer 编码后的 `{"` 前缀，但不会在生成后修复输出。不得根据
+locked-eval 失败内容调整这些参数。
 
-The validation-selected profile is frozen in
-`configs/qwen35_4b_lora_decode_v2.yaml`. Its status is deliberately
-`validation_selected`, not Staging-eligible: the profile must be measured once
-on a newly and independently frozen locked set, then pass the frozen-rubric
-human persona review. The previous 184-case locked result remains evidence for
-the default v1 decode path and must not be reused to tune or approve v2.
-The file is validated against the pinned generation-profile contract and binds
-the base/tokenizer revisions, adapter digest, generation controls, validation
-evidence, safety evidence, and previous locked-suite exclusion. Once frozen,
-evaluation and inference must use `--generation-profile` instead of repeating
-the controls as command-line overrides.
+validation 选出的 profile 固定在
+`configs/qwen35_4b_lora_decode_v2.yaml`。它的状态刻意保持为
+`validation_selected`，不具备 Staging 资格：该 profile 必须在一套新的、
+独立冻结的 locked set 上只测量一次，然后通过冻结 rubric 的人工 persona
+复核。此前 184 条 locked eval 结果仅作为默认 v1 解码路径的证据，不得用于
+调整或批准 v2。
+
+该文件会按照固定的 generation-profile 合约进行校验，并绑定 base/tokenizer
+revision、adapter digest、生成参数、validation 证据、safety 证据和旧 locked
+suite 排除项。Profile 冻结后，评测和推理必须使用 `--generation-profile`，
+不得再次通过零散命令行参数重复或覆盖这些配置。
 
 ```powershell
-python -m training.llm.scripts.train --experiment-id <id> `
-  --dataset-dir <dataset> --probe-report <probe> `
-  --smoke-report <passing-L-006-experiment-manifest> `
+python -m training.llm.scripts.train --experiment-id <实验ID> `
+  --dataset-dir <数据集目录> --probe-report <探测报告> `
+  --smoke-report <通过的L-006实验Manifest> `
   --input-pad-length 768 --allow-download
-python -m training.llm.scripts.resume --experiment-id <id> `
-  --dataset-dir <dataset> --probe-report <probe> `
-  --resume-from-checkpoint <experiment-checkpoint>
+python -m training.llm.scripts.resume --experiment-id <实验ID> `
+  --dataset-dir <数据集目录> --probe-report <探测报告> `
+  --resume-from-checkpoint <实验checkpoint>
 ```
 
-Run locked eval only after the model/config is frozen. The acknowledgement is
-mandatory and the committed fixture manifest pins all 184 case hashes:
+只能在模型和配置冻结后运行 locked eval。必须显式确认其 evaluation-only
+用途；已提交的 fixture Manifest 会固定全部 184 个 case 的哈希：
 
 ```powershell
 python -m training.llm.eval.run_locked_eval `
-  --run-id <frozen-run-id> --run-kind post_train `
+  --run-id <冻结运行ID> --run-kind post_train `
   --eval-root D:\program\meguri-pet\datasets\meguri\exports\eval `
   --rag-jsonl D:\program\meguri-pet\datasets\meguri\exports\rag\chunks_train.jsonl `
-  --train-jsonl <derived-train-jsonl> --backend local --config <config> `
-  --adapter <selected-adapter> --allow-download --input-pad-length 1152 `
+  --train-jsonl <派生train.jsonl> --backend local --config <训练配置> `
+  --adapter <已选adapter> --allow-download --input-pad-length 1152 `
   --acknowledge-locked-eval-is-evaluation-only
 ```
 
-## Independent v2 locked evaluation and human review
+## 独立 v2 locked eval 与人工复核
 
-The next v2 measurement requires an independently created and committed
-manifest with a new `suite_id`; the profile explicitly excludes
-`meguri-locked-eval-v1` and its frozen input-hash identity, so merely renaming
-the old suite is rejected. A manifest supplied outside the checkout or left
-untracked is also rejected. The new suite is not comparable with the old L0 reports,
-so run all three paths against the same new manifest and inputs:
+下一次 v2 测量需要独立创建并提交一个带有新 `suite_id` 的 Manifest。Profile
+明确排除了 `meguri-locked-eval-v1` 及其冻结输入哈希身份，因此仅重命名旧
+suite 会被拒绝。位于 checkout 外部或未被 Git 跟踪的 Manifest 同样会被
+拒绝。新 suite 与旧 L0 报告不可直接比较，因此三条路径都必须在同一个新
+Manifest 和同一组输入上重新运行。
 
-The suite must be prepared and approved outside the training/tuning role. The
-freeze tool reads the candidate held-out files only to produce digests and
-zero-overlap counts; it does not export their content. It requires a new source
-build identity, distinct preparer/approver identities, and zero sample, input,
-full-case, scene, and normalized near-input overlap with train/validation and
-the previous locked set. Near-input rejection uses the frozen `0.95` similarity
-threshold recorded in the manifest:
+Suite 必须由训练/调参角色之外的人员准备和批准。冻结工具只读取候选
+held-out 文件来计算 digest 与零重叠数量，不会导出正文。它要求新的 source
+build identity、不同的 preparer/approver，并要求新 suite 与 train、
+validation、旧 locked set 在 sample、input、full-case、scene 和规范化
+near-input 维度均为零重叠。Near-input 使用写入 Manifest 的固定 `0.95`
+相似度阈值：
 
 ```powershell
 python -m training.llm.eval.locked_suite `
-  --suite-id <new-suite-id> --source-build-id <new-eval-source-build-id> `
-  --eval-root <independent-new-eval-root> `
-  --dataset-dir <derived-release-dataset> `
+  --suite-id <新suite ID> --source-build-id <新评测source build ID> `
+  --eval-root <独立新评测目录> `
+  --dataset-dir <派生release数据集> `
   --previous-locked-manifest training\llm\eval\fixtures\locked_eval_manifest.json `
-  --previous-locked-eval-root <previous-locked-eval-root> `
-  --rag-jsonl <frozen-rag-jsonl> `
-  --prepared-by <independent-preparer-id> --approved-by <independent-approver-id> `
-  --source-authority <heldout-source-authority> `
-  --output training\llm\eval\fixtures\<new-suite-manifest>.json `
+  --previous-locked-eval-root <旧locked eval目录> `
+  --rag-jsonl <冻结RAG JSONL> `
+  --prepared-by <独立准备者ID> --approved-by <独立批准者ID> `
+  --source-authority <heldout数据权威来源> `
+  --output training\llm\eval\fixtures\<新suite Manifest>.json `
   --acknowledge-independent-freeze-and-non-tuning
 ```
 
-The independent party must review and commit the generated v2 manifest before
-the training/evaluation operator can launch a run. The manifest contains only
-file/content-set digests, overlap counts, and declarations—not case text.
+独立方必须审核并提交生成的 v2 Manifest，之后训练/评测操作方才能启动
+评测。Manifest 只包含文件/内容集合 digest、重叠数量和声明，不包含 case
+正文。
 
-1. Base L0 without RAG and without an adapter.
-2. Prompt+RAG L0 without an adapter.
-3. The exported adapter with the frozen v2 generation profile.
+需要在同一新 suite 上运行以下三条路径：
 
-Each command must pass the same `--locked-manifest`, `--eval-root`, fixed Prompt,
-Response Schema, and `--input-pad-length 1152`. The candidate command adds:
+1. 不使用 RAG、也不加载 adapter 的 Base L0。
+2. 不加载 adapter 的 Prompt+RAG L0。
+3. 使用冻结 v2 generation profile 的导出 adapter。
+
+每条命令必须使用相同的 `--locked-manifest`、`--eval-root`、固定 Prompt、
+Response Schema 和 `--input-pad-length 1152`。候选命令还需要以下参数：
 
 ```powershell
 python -m training.llm.eval.run_locked_eval `
-  --run-id <new-suite-candidate-run> --run-kind post_train `
-  --locked-manifest <committed-new-suite-manifest> `
-  --eval-root <independent-new-eval-root> --rag-jsonl <frozen-rag-jsonl> `
-  --suite-rag-jsonl <frozen-rag-jsonl> --dataset-dir <derived-release-dataset> `
+  --run-id <新suite候选运行ID> --run-kind post_train `
+  --locked-manifest <已提交的新suite Manifest> `
+  --eval-root <独立新评测目录> --rag-jsonl <冻结RAG JSONL> `
+  --suite-rag-jsonl <冻结RAG JSONL> --dataset-dir <派生release数据集> `
   --previous-locked-manifest training\llm\eval\fixtures\locked_eval_manifest.json `
-  --previous-locked-eval-root <previous-locked-eval-root> `
-  --train-jsonl <derived-train-jsonl> --backend local `
+  --previous-locked-eval-root <旧locked eval目录> `
+  --train-jsonl <派生train.jsonl> --backend local `
   --config training\llm\configs\qwen35_4b_bf16_lora.yaml `
-  --adapter <exported-adapter> `
+  --adapter <导出的adapter> `
   --generation-profile training\llm\configs\qwen35_4b_lora_decode_v2.yaml `
   --input-pad-length 1152 --acknowledge-locked-eval-is-evaluation-only
 ```
 
-Run the frozen safety suite with the same profile. Comparison fails closed
-unless the candidate and safety reports use the same profile and all L0 and
-candidate reports use the same locked-suite manifest, input hashes, and passing
-independence-validation digest.
+固定 safety suite 必须使用同一个 profile。Comparison 采用 fail-closed：
+候选与 safety 报告必须使用同一个 profile；全部 L0 与候选报告必须使用同一
+locked-suite Manifest、相同输入哈希，以及相同且通过的独立性验证 digest。
 
-After automatic gates pass, create the frozen-rubric review packet. The packet
-contains model outputs and coarse relationship/mode context but omits source
-sample IDs; its content remains measurement-only:
+自动门禁通过后，创建冻结 rubric 的 review packet。Packet 包含模型输出和
+粗粒度 relationship/mode 上下文，但不包含源 sample ID；其内容仍然只能
+用于测量：
 
 ```powershell
 python -m training.llm.eval.human_review prepare `
-  --locked-eval-dir <new-suite-candidate-output> `
-  --packet <review-packet.json> --review-template <review-form.json>
+  --locked-eval-dir <新suite候选输出目录> `
+  --packet <复核packet.json> --review-template <复核表单.json>
 python -m training.llm.eval.human_review finalize `
-  --packet <review-packet.json> --completed-review <completed-review-form.json> `
-  --output <human-review-result.json>
+  --packet <复核packet.json> --completed-review <已完成复核表单.json> `
+  --output <人工复核结果.json>
 ```
 
-Finalization requires all 184 ratings, reviewer identity/timestamp, an
-independence declaration, and a declaration that locked content was not used
-for tuning. Approval requires persona score at least `0.90`, JP and ZH
-naturalness rates each at least `0.90`, and zero human safety rejections.
+最终汇总要求完成全部 184 项评分，记录 reviewer 身份和时间戳，并声明
+reviewer 独立、locked 内容未用于调参。批准条件为 persona score 不低于
+`0.90`，JP 与 ZH 自然度分别不低于 `0.90`，且人工 safety 拒绝数为零。
 
-Only after the comparison gate passes may the same adapter be registered under
-a distinct profile-bound deployment identity. Registration verifies the new
-suite, manifest, profile, adapter, human-review-backed comparison, and rollback
-target together:
+只有 comparison gate 通过后，才能为同一个 adapter 注册独立的、绑定
+profile 的部署身份。注册时会同时校验新 suite、Manifest、profile、adapter、
+包含人工复核的 comparison 和 rollback target：
 
 ```powershell
 python -m training.llm.scripts.register_model `
-  --export-dir <exported-adapter> --experiment-manifest <experiment-manifest> `
-  --validation-selection <validation-selection> `
-  --locked-eval-report <new-suite-candidate-report> `
-  --comparison-report <new-suite-comparison-report> `
+  --export-dir <导出的adapter> --experiment-manifest <实验Manifest> `
+  --validation-selection <validation选模报告> `
+  --locked-eval-report <新suite候选报告> `
+  --comparison-report <新suite comparison报告> `
   --generation-profile training\llm\configs\qwen35_4b_lora_decode_v2.yaml `
-  --model-id <distinct-profile-bound-model-id> `
-  --status staging_candidate --parent-model-id <evaluated-v1-model-id> `
-  --rollback-model-id <explicit-last-good-model-id>
+  --model-id <独立的profile绑定模型ID> `
+  --status staging_candidate --parent-model-id <evaluated v1模型ID> `
+  --rollback-model-id <明确的last-good模型ID>
 ```
 
-The frozen 184-case suite currently ranges from 896 to 1143 input tokens when
-Prompt + RAG is assembled. Local comparisons use left padding to 1152 tokens
-so TorchInductor sees one input shape; the report retains each unpadded input
-length. Base, Prompt + RAG, and adapter runs must use the same pad length.
+当前冻结的 184-case suite 在组装 Prompt+RAG 后，输入长度范围为 896..1143
+tokens。本地对比使用 left padding 到 1152 tokens，使 TorchInductor 只处理
+一种输入 shape；报告仍保留每条输入未 padding 前的长度。Base、Prompt+RAG
+与 adapter 路径必须使用相同的 pad length。
 
-## Staging boundary
+## Staging 边界
 
-The gateway is authenticated, OpenAI-compatible and validates the complete
-Meguri response before sending either JSON or SSE. It enforces pinned registry
-digests, Prompt hash, timeout, concurrency, generation cancellation and
-candidate/last-good routing. The checked-in routing state is intentionally
-unconfigured and fail-closed. It cannot become ready until evaluated model
-artifacts and a last-good registry entry exist. Switching back to last-good uses
-`training.llm.scripts.switch_staging_model` and does not rebuild a model.
-Profile-bound candidates receive a distinct deployment model ID. Registry and
-Gateway verify the profile ID and SHA-256 together with the adapter digest and
-base/tokenizer revisions; the Gateway executes the pinned controls and returns
-`X-Meguri-Generation-Profile-Id` and
-`X-Meguri-Generation-Profile-SHA256`. Existing v1 entries with null profile
-fields retain the original default decode behavior.
+Gateway 需要认证，兼容 OpenAI 接口，并在发送 JSON 或 SSE 前校验完整的
+Meguri 响应。它会强制校验固定 Registry digest、Prompt hash、timeout、
+concurrency、生成取消，以及 candidate/last-good 路由。仓库内的 routing
+state 刻意保持未配置并采用 fail-closed；在 evaluated 模型产物与 last-good
+Registry 条目存在前，Gateway 不会进入 ready 状态。切回 last-good 使用
+`training.llm.scripts.switch_staging_model`，不需要重新构建模型。
 
-The environment Agent supplied `ops/contracts/llm-agent.environment-contract.json`.
-The human-readable staging handoff now lives at
-`docs/contracts/llm-staging-handoff.md`. It gates candidate staging routing
-only; no code in this branch marks a model Production-ready.
+绑定 profile 的候选必须使用独立的 deployment model ID。Registry 与
+Gateway 会将 profile ID 和 SHA-256 与 adapter digest、base/tokenizer
+revision 一起校验；Gateway 会实际执行已固定的生成参数，并返回
+`X-Meguri-Generation-Profile-Id` 和
+`X-Meguri-Generation-Profile-SHA256`。Profile 字段为 null 的旧 v1 条目
+继续保留原始默认解码行为。
+
+Environment Agent 提供的机器可读交接契约位于
+`ops/contracts/llm-agent.environment-contract.json`，人类可读的 Staging
+交接说明位于 `docs/contracts/llm-staging-handoff.md`。这些文件只能授权
+candidate Staging 路由；本分支中的任何代码都不会据此把模型标记为
+Production-ready。
