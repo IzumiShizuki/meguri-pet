@@ -12,13 +12,13 @@ import yaml
 from .config import BUILD_ID, DATA_ROOT, DEFAULT_TIMEZONE
 from .memory import (
     CompanionMemoryPolicy,
-    FakeMemoryProvider,
     MemoryExtractionInput,
     MemoryProvider,
     MemorySearchInput,
     SessionContextStore,
     SessionMessage,
 )
+from .memory_provider_factory import create_memory_provider_from_env
 from .providers import LlmProvider, MockRagProvider, create_llm_provider_from_env
 from .schemas import (
     ChatResponse, EventEnvelope, EventMetadata, LlmResponse, ResolvedExpression, RuntimeOverride,
@@ -145,7 +145,7 @@ class TurnOrchestrator:
     ):
         self.state_machine = RuntimeStateMachine()
         self.rag = MockRagProvider(DATA_ROOT)
-        self.memory: MemoryProvider = memory_provider or FakeMemoryProvider()
+        self.memory: MemoryProvider = memory_provider or create_memory_provider_from_env()
         self.memory_policy = CompanionMemoryPolicy()
         self.sessions = SessionContextStore()
         self.llm = llm_provider or create_llm_provider_from_env()
@@ -197,12 +197,15 @@ class TurnOrchestrator:
         try:
             await self._event(turn_id, request, "turn.started", {"runtime_state": state.model_dump(mode="json")}, trace_id)
             canon = self.rag.search(request.message, state)
-            memory_available = True
-            try:
-                memory_hits = await self.memory.search(MemorySearchInput(user_id=request.user_id, query=request.message))
-            except Exception:
+            memory_available = request.formal_memory_allowed
+            if memory_available:
+                try:
+                    memory_hits = await self.memory.search(MemorySearchInput(user_id=request.user_id, query=request.message))
+                except Exception:
+                    memory_hits = []
+                    memory_available = False
+            else:
                 memory_hits = []
-                memory_available = False
             recent_messages = self.sessions.recent(request.user_id, request.client_id, request.session_id)
             response = await self.llm.respond(
                 request,
@@ -264,7 +267,33 @@ class TurnOrchestrator:
                         candidates=candidates,
                         existing=existing,
                     )
-                    for decision in decisions:
+                    submit_runtime_candidate = getattr(
+                        self.memory, "submit_runtime_candidate", None
+                    )
+                    memory_write_data["candidate_ids"] = []
+                    authoritative_pending = False
+                    for index, decision in enumerate(decisions):
+                        authoritative_candidate = None
+                        if (
+                            callable(submit_runtime_candidate)
+                            and decision.status != "duplicate"
+                        ):
+                            authoritative_candidate = await submit_runtime_candidate(
+                                decision.candidate,
+                                user_id=request.user_id,
+                                source_client=request.client_id,
+                                source_session=request.session_id,
+                                source_turn_id=turn_id,
+                                request_id=f"{trace_id}:candidate:{index}",
+                            )
+                            memory_write_data["candidate_ids"].append(
+                                str(authoritative_candidate.candidate_id)
+                            )
+                            authoritative_pending = (
+                                authoritative_pending
+                                or authoritative_candidate.status.value
+                                == "pending_review"
+                            )
                         await self._event(
                             turn_id,
                             request,
@@ -273,14 +302,26 @@ class TurnOrchestrator:
                                 "candidate": decision.candidate.model_dump(mode="json"),
                                 "review_status": decision.status,
                                 "reason": decision.reason,
+                                "authoritative_candidate_id": (
+                                    str(authoritative_candidate.candidate_id)
+                                    if authoritative_candidate is not None
+                                    else None
+                                ),
                             },
                             trace_id,
                         )
-                        if decision.status == "accepted" and decision.upsert is not None:
+                        if (
+                            authoritative_candidate is None
+                            and decision.status == "accepted"
+                            and decision.upsert is not None
+                        ):
                             written = await self.memory.upsert(decision.upsert)
                             memory_write_data["written_ids"].append(written.memory_id)
                     memory_write_data["decisions"] = [decision.status for decision in decisions]
-                    if any(decision.status == "pending_review" for decision in decisions):
+                    if any(
+                        decision.status == "pending_review"
+                        for decision in decisions
+                    ) or authoritative_pending:
                         memory_status = "pending"
                     memory_write_data["status"] = memory_status
                 except Exception as exc:

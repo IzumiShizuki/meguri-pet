@@ -27,8 +27,15 @@ def read_secret(
         if required:
             raise SecretConfigurationError(f"{file_variable} is required")
         return None
+    path = Path(file_name)
+    if not path.is_absolute():
+        raise SecretConfigurationError(f"{file_variable} must be an absolute path")
     try:
-        value = Path(file_name).read_text(encoding="utf-8").strip()
+        if not path.is_file():
+            raise SecretConfigurationError(f"{file_variable} is unreadable")
+        if path.stat().st_size > 8192:
+            raise SecretConfigurationError(f"{file_variable} is unexpectedly large")
+        value = path.read_text(encoding="utf-8").strip()
     except OSError as exc:
         raise SecretConfigurationError(f"{file_variable} is unreadable") from exc
     if not value:

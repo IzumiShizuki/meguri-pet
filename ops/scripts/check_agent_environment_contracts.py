@@ -57,6 +57,8 @@ def validate_contracts(memory: dict[str, Any], llm: dict[str, Any]) -> list[str]
     endpoint = llm.get("endpoint") or {}
     if endpoint.get("api_key_file") != "/run/secrets/llm_api_key":
         errors.append("llm: API key must use the file-secret mount")
+    if endpoint.get("model_registry_variable") != "MEGURI_MODEL_REGISTRY_ID":
+        errors.append("llm: runtime model registry identity variable is missing")
     if endpoint.get("non_loopback_tls_required") is not True:
         errors.append("llm: non-loopback TLS must be required")
     if endpoint.get("unauthenticated_public_endpoint_allowed") is not False:

@@ -1,4 +1,6 @@
 import unittest
+from types import SimpleNamespace
+from uuid import uuid4
 
 from services.meguri_core.memory import (
     CompanionMemoryPolicy,
@@ -11,8 +13,10 @@ from services.meguri_core.memory import (
     SessionSummaryInput,
 )
 from services.meguri_core.schemas import MemoryCandidate
+from services.meguri_core.schemas import LlmResponse
 from services.meguri_core.runtime import TurnOrchestrator
 from services.meguri_core.schemas import TurnRequest
+from services.meguri_core.memory_service.enums import CandidateStatus
 
 
 def upsert_input(**overrides):
@@ -186,3 +190,126 @@ class MemoryFailureIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("text.completed", event_types)
         self.assertIn("turn.completed", event_types)
         self.assertNotIn("turn.failed", event_types)
+
+
+class RuntimeCandidateQueueTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_runtime_queues_llm_candidate_without_auto_approval(self):
+        class CandidateLlm:
+            provider_name = "test"
+
+            async def respond(self, *_args):
+                return LlmResponse(
+                    reply="I will remember that as a candidate.",
+                    memory_candidates=[
+                        MemoryCandidate(
+                            type="preference",
+                            summary="User prefers unsweetened tea",
+                            confidence=0.95,
+                        )
+                    ],
+                )
+
+        class AuthoritativeRuntimeMemory:
+            def __init__(self):
+                self.submitted = []
+
+            async def search(self, _input):
+                return []
+
+            async def list_records(self, _user_id):
+                return []
+
+            async def extract_candidates(self, _input):
+                return []
+
+            async def submit_runtime_candidate(self, candidate, **kwargs):
+                self.submitted.append((candidate, kwargs))
+                return SimpleNamespace(
+                    candidate_id=uuid4(),
+                    status=CandidateStatus.PENDING_REVIEW,
+                )
+
+            async def upsert(self, _input):
+                raise AssertionError("runtime must not auto-approve native candidates")
+
+        memory = AuthoritativeRuntimeMemory()
+        runtime = TurnOrchestrator(
+            stream_interval=0,
+            memory_provider=memory,  # type: ignore[arg-type]
+            llm_provider=CandidateLlm(),
+        )
+        result = await runtime.run_inline(
+            TurnRequest(
+                user_id="user-a",
+                client_id="website",
+                session_id="session-a",
+                message="remember my preference",
+            )
+        )
+
+        self.assertEqual(result.memory_status, "pending")
+        self.assertEqual(len(memory.submitted), 1)
+        self.assertEqual(memory.submitted[0][1]["source_client"], "website")
+        completed = [
+            event
+            for event in runtime.events["session-a"]
+            if event.type == "memory.write.completed"
+        ][0]
+        self.assertEqual(completed.data["written_ids"], [])
+        self.assertEqual(len(completed.data["candidate_ids"]), 1)
+
+    async def test_unverified_identity_cannot_read_or_write_formal_memory(self):
+        class CandidateLlm:
+            provider_name = "test"
+
+            async def respond(self, *_args):
+                return LlmResponse(
+                    reply="I can answer without formal memory.",
+                    memory_candidates=[
+                        MemoryCandidate(
+                            type="preference",
+                            summary="User prefers unsweetened tea",
+                            confidence=0.95,
+                        )
+                    ],
+                )
+
+        class FormalMemoryMustRemainUnused:
+            async def search(self, _input):
+                raise AssertionError("unverified identity must not read formal memory")
+
+            async def extract_candidates(self, _input):
+                raise AssertionError("unverified identity must not extract formal memory")
+
+            async def list_records(self, _user_id):
+                raise AssertionError("unverified identity must not list formal memory")
+
+            async def submit_runtime_candidate(self, _candidate, **_kwargs):
+                raise AssertionError("unverified identity must not write formal memory")
+
+        runtime = TurnOrchestrator(
+            stream_interval=0,
+            memory_provider=FormalMemoryMustRemainUnused(),  # type: ignore[arg-type]
+            llm_provider=CandidateLlm(),
+        )
+        result = await runtime.run_inline(
+            TurnRequest(
+                user_id="isolated-user",
+                client_id="airi",
+                session_id="isolated-session",
+                message="remember my preference",
+                formal_memory_allowed=False,
+            )
+        )
+
+        self.assertEqual(result.memory_status, "unavailable")
+        completed = [
+            event
+            for event in runtime.events["isolated-session"]
+            if event.type == "memory.write.completed"
+        ][0]
+        self.assertEqual(completed.data, {
+            "status": "unavailable",
+            "written_ids": [],
+            "decisions": [],
+        })

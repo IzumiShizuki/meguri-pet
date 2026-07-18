@@ -261,7 +261,7 @@
     "risk_note": "Targets are source-work dialogue; exact/near-match checks remain mandatory during model evaluation."
   },
   "schema_version": 1,
-  "dataset_id": "meguri-text-sft-v1-df808b5d667d",
+  "dataset_id": "meguri-text-sft-v1-532aca8b1a5d",
   "source_build_id": "meguri_v2_02c3db0c507d7c2d",
-  "generated_at": "2026-07-14T13:45:55.417407+00:00"
+  "generated_at": "2026-07-14T14:37:21.208243+00:00"
 }

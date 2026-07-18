@@ -3,6 +3,8 @@
 ## Current result
 
 - Runtime staging rehearsal: **not executed**.
+- Live dev memory recovery validator: **passed** against the loopback pgvector
+  container with one required exact-vector recall case at recall@k `1.0`.
 - Repository simulation: **passed** on 2026-07-14.
 - Production restore authorization: **blocked**.
 
@@ -11,7 +13,7 @@ and the current process does not have the server-side release directory and
 secret-file access needed to create an isolated staging database safely.
 Therefore this report does not claim a real backup, restore, RPO, or RTO result.
 
-A second read-only Docker check at 2026-07-14 22:01 +08:00 confirmed all 22
+A final read-only Docker check at 2026-07-14 22:37:12 +08:00 confirmed all 22
 protected containers were still running, the protected networks and named
 volumes remained present, and no Meguri environment object had appeared.
 

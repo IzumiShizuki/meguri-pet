@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -79,6 +80,11 @@ class OpenAICompatibleLlmProvider:
         model: str,
         api_key: str | None = None,
         timeout_seconds: float = 30.0,
+        max_concurrency: int = 4,
+        expected_model_id: str | None = None,
+        expected_base_revision: str | None = None,
+        expected_adapter_revision: str | None = None,
+        expected_adapter_sha256: str | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
         system_prompt_path: Path = SYSTEM_PROMPT_PATH,
         response_schema_path: Path = RESPONSE_SCHEMA_PATH,
@@ -95,10 +101,29 @@ class OpenAICompatibleLlmProvider:
             raise LlmConfigurationError("remote LLM endpoints require MEGURI_LLM_API_KEY")
         if timeout_seconds <= 0:
             raise LlmConfigurationError("MEGURI_LLM_TIMEOUT_SECONDS must be positive")
+        if max_concurrency <= 0:
+            raise LlmConfigurationError("MEGURI_LLM_MAX_CONCURRENCY must be positive")
         self.base_url = base_url.rstrip("/") + "/"
         self.model = model
         self.api_key = api_key
         self.timeout = httpx.Timeout(timeout_seconds)
+        self.max_concurrency = max_concurrency
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self.expected_release_headers: dict[str, str] = {}
+        if expected_model_id:
+            expected = {
+                "X-Meguri-Model-Id": expected_model_id,
+                "X-Meguri-Base-Revision": expected_base_revision,
+                "X-Meguri-Adapter-Revision": expected_adapter_revision,
+                "X-Meguri-Adapter-SHA256": expected_adapter_sha256,
+            }
+            if any(not value for value in expected.values()):
+                raise LlmConfigurationError(
+                    "registered LLM releases require base and adapter identity metadata"
+                )
+            self.expected_release_headers = {
+                key: str(value) for key, value in expected.items()
+            }
         self.transport = transport
         try:
             self.system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
@@ -133,14 +158,16 @@ class OpenAICompatibleLlmProvider:
             "stream": False,
         }
         try:
-            async with httpx.AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout,
-                transport=self.transport,
-                headers=headers,
-            ) as client:
-                response = await client.post("chat/completions", json=payload)
-                response.raise_for_status()
+            async with self._semaphore:
+                async with httpx.AsyncClient(
+                    base_url=self.base_url,
+                    timeout=self.timeout,
+                    transport=self.transport,
+                    headers=headers,
+                ) as client:
+                    response = await client.post("chat/completions", json=payload)
+                    response.raise_for_status()
+                    self._validate_release_headers(response)
         except httpx.TimeoutException as exc:
             raise LlmProviderError("LLM provider timed out") from exc
         except httpx.HTTPError as exc:
@@ -185,6 +212,17 @@ class OpenAICompatibleLlmProvider:
         if self.response_schema.get("additionalProperties") is not False:
             raise LlmConfigurationError("Meguri response schema must reject additional properties")
 
+    def _validate_release_headers(self, response: httpx.Response) -> None:
+        if not self.expected_release_headers:
+            return
+        if any(
+            response.headers.get(header) != expected
+            for header, expected in self.expected_release_headers.items()
+        ):
+            raise LlmProviderError(
+                "LLM gateway release metadata does not match the configured release"
+            )
+
 
 def create_llm_provider_from_env(
     env: Mapping[str, str] | None = None,
@@ -204,6 +242,10 @@ def create_llm_provider_from_env(
     except ValueError as exc:
         raise LlmConfigurationError("MEGURI_LLM_TIMEOUT_SECONDS must be a number") from exc
     try:
+        max_concurrency = int(values.get("MEGURI_LLM_MAX_CONCURRENCY", "4"))
+    except ValueError as exc:
+        raise LlmConfigurationError("MEGURI_LLM_MAX_CONCURRENCY must be an integer") from exc
+    try:
         api_key = read_secret(values, "MEGURI_LLM_API_KEY", required=True)
     except SecretConfigurationError as exc:
         raise LlmConfigurationError(str(exc)) from exc
@@ -212,12 +254,29 @@ def create_llm_provider_from_env(
         model=model,
         api_key=api_key,
         timeout_seconds=timeout,
+        max_concurrency=max_concurrency,
+        expected_model_id=_optional_release_value(values.get("MEGURI_MODEL_REGISTRY_ID")),
+        expected_base_revision=_optional_release_value(
+            values.get("MEGURI_LLM_BASE_MODEL_REVISION")
+        ),
+        expected_adapter_revision=_optional_release_value(
+            values.get("MEGURI_LLM_ADAPTER_REVISION")
+        ),
+        expected_adapter_sha256=_optional_release_value(
+            values.get("MEGURI_LLM_ADAPTER_SHA256")
+        ),
         transport=transport,
     )
 
 
 def _bounded(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[:limit]
+
+
+def _optional_release_value(value: str | None) -> str | None:
+    if value is None or value.strip().casefold() in {"", "none", "null"}:
+        return None
+    return value.strip()
 
 
 class MockRagProvider:

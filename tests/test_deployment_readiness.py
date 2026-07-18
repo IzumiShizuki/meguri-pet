@@ -34,6 +34,15 @@ class SecretFileTests(unittest.TestCase):
                 "MEGURI_SAMPLE",
             )
 
+    def test_secret_file_must_be_absolute_and_bounded(self) -> None:
+        with self.assertRaisesRegex(SecretConfigurationError, "absolute path"):
+            read_secret({"MEGURI_SAMPLE_FILE": "relative-secret.txt"}, "MEGURI_SAMPLE")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "oversized-secret.txt"
+            path.write_bytes(b"x" * 8193)
+            with self.assertRaisesRegex(SecretConfigurationError, "unexpectedly large"):
+                read_secret({"MEGURI_SAMPLE_FILE": str(path)}, "MEGURI_SAMPLE")
+
 
 class ReadinessEvaluatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_managed_environment_passes_only_with_matching_identity(self) -> None:
@@ -60,7 +69,7 @@ class ReadinessEvaluatorTests(unittest.IsolatedAsyncioTestCase):
                 "environment": "dev",
                 "release_id": "meguri-dev-test-r001",
                 "data_build_id": "meguri_test_build",
-                "database_revision": "20260714_0001",
+                "database_revision": "20260714_0004",
                 "embedding_model_revision": "embedding-r1",
                 "llm_base_model": "mock-v1",
                 "llm_adapter_revision": None,
@@ -76,7 +85,7 @@ class ReadinessEvaluatorTests(unittest.IsolatedAsyncioTestCase):
                 "MEGURI_ENV": "dev",
                 "MEGURI_RELEASE_ID": "meguri-dev-test-r001",
                 "MEGURI_DATA_BUILD_ID": "meguri_test_build",
-                "MEGURI_DATABASE_REVISION": "20260714_0001",
+                "MEGURI_DATABASE_REVISION": "20260714_0004",
                 "MEGURI_EMBEDDING_MODEL_REVISION": "embedding-r1",
                 "MEGURI_LLM_BASE_MODEL_REVISION": "mock-v1",
                 "MEGURI_LLM_ADAPTER_REVISION": "none",
@@ -91,7 +100,7 @@ class ReadinessEvaluatorTests(unittest.IsolatedAsyncioTestCase):
             }
 
             async def database_probe(_url: str) -> str:
-                return "20260714_0001"
+                return "20260714_0004"
 
             evaluator = ReadinessEvaluator(
                 FakeOrchestrator(),

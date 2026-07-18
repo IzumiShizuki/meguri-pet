@@ -7,6 +7,7 @@ from training.llm.scripts.common import PipelineError
 from training.llm.scripts.training_utils import (
     deterministic_stratified_subset,
     tokenize_assistant_only,
+    validate_enablement_gate_report,
     validate_training_config,
 )
 
@@ -104,6 +105,14 @@ class TrainingUtilsTests(unittest.TestCase):
         }
         with self.assertRaises(PipelineError):
             validate_training_config(config)
+
+    def test_disabled_route_requires_gate_report(self) -> None:
+        config = {
+            "enabled": False,
+            "enablement_gates": ["four_b_pipeline_stable", "project_lead_approved_training_time"],
+        }
+        with self.assertRaises(PipelineError):
+            validate_enablement_gate_report(None, config)
 
 
 if __name__ == "__main__":

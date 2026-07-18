@@ -22,7 +22,7 @@ class FakeTransport:
         self.commands.append(command)
         joined = " ".join(command)
         if "SELECT version_num FROM alembic_version" in joined:
-            return "20260714_0001"
+            return "20260714_0004"
         if "SHOW server_version" in joined:
             return "16.9"
         if "SELECT extversion FROM pg_extension" in joined:
@@ -71,7 +71,7 @@ class PostgresBackupTests(unittest.TestCase):
             archive = backups / metadata["archive_file"]
 
             self.assertTrue(archive.is_file())
-            self.assertEqual(metadata["database_revision"], "20260714_0001")
+            self.assertEqual(metadata["database_revision"], "20260714_0004")
             self.assertEqual(metadata["restore_rehearsal"], {"status": "pending"})
             self.assertEqual(metadata["archive_bytes"], archive.stat().st_size)
             self.assertTrue(any("pg_dump" in command for command in transport.commands))

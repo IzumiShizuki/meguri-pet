@@ -10,6 +10,7 @@ from .enums import (
     ActorType,
     CandidateStatus,
     ConflictAction,
+    FeedbackKind,
     IdentityBindingStatus,
     MemoryScope,
     MemoryStatus,
@@ -167,10 +168,29 @@ class MemoryHit(StrictModel):
     )
 
 
+class MemoryFeedbackCreate(StrictModel):
+    tenant_id: str = Field(min_length=1, max_length=100)
+    user_id: str = Field(min_length=1, max_length=200)
+    memory_id: UUID
+    version_id: UUID
+    feedback_kind: FeedbackKind
+    query_text: str | None = Field(default=None, max_length=4000)
+    hit_rank: int | None = Field(default=None, ge=1)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryFeedback(MemoryFeedbackCreate):
+    feedback_id: UUID
+    created_at: datetime
+
+    _validate_created_at = field_validator("created_at")(_timezone_required)
+
+
 class MemorySearchQuery(StrictModel):
     tenant_id: str = Field(min_length=1, max_length=100)
     user_id: str = Field(min_length=1, max_length=200)
     query: str = Field(min_length=1, max_length=4000)
+    canonical_key: str | None = Field(default=None, min_length=1, max_length=500)
     limit: int = Field(default=5, ge=1, le=50)
     memory_types: list[MemoryType] = Field(default_factory=list)
     scopes: list[MemoryScope] = Field(
@@ -196,9 +216,19 @@ class MemoryExport(StrictModel):
     format: Literal["jsonl"] = "jsonl"
     generated_at: datetime = Field(default_factory=utc_now)
     items: list[MemoryItem]
+    versions: list[MemoryVersion]
     audit_events: list[dict[str, Any]] = Field(default_factory=list)
 
     _validate_generated_at = field_validator("generated_at")(_timezone_required)
+
+
+class HardDeleteResult(StrictModel):
+    memory_id: UUID
+    tenant_id: str
+    user_id: str
+    deleted_versions: int = Field(ge=0)
+    deleted_candidates: int = Field(ge=0)
+    audit_retained: bool = True
 
 
 class IdentityBindingCreate(StrictModel):

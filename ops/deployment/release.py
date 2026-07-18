@@ -114,6 +114,8 @@ def preflight_release(env_file: Path, manifest_file: Path) -> dict[str, Any]:
         raise DeploymentError("adapter revision requires llm_adapter_sha256")
     if not manifest.get("model_registry_id") or placeholder(manifest.get("model_registry_id")):
         raise DeploymentError("staging release requires model_registry_id")
+    if env.get("MEGURI_MODEL_REGISTRY_ID") != manifest.get("model_registry_id"):
+        raise DeploymentError("model registry ID differs between env and manifest")
     for name, status in (manifest.get("tests") or {}).items():
         if status != "passed":
             raise DeploymentError(f"manifest test is not passed: {name}")

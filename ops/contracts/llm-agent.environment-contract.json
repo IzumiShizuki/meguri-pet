@@ -1,7 +1,7 @@
 {
   "contract_version": 1,
   "agent": "llm",
-  "status": "model-artifacts-required-before-staging",
+  "status": "pipeline-and-gateway-complete-model-artifacts-required-before-staging",
   "authority": ["page-15", "page-17", "release-manifest"],
   "runtime_provider_name": "openai-compatible",
   "endpoint": {
@@ -10,6 +10,7 @@
     "api_key_file": "/run/secrets/llm_api_key",
     "timeout_variable": "MEGURI_LLM_TIMEOUT_SECONDS",
     "max_concurrency_variable": "MEGURI_LLM_MAX_CONCURRENCY",
+    "model_registry_variable": "MEGURI_MODEL_REGISTRY_ID",
     "non_loopback_tls_required": true,
     "unauthenticated_public_endpoint_allowed": false,
     "cloud_model_weight_mount_allowed": false
@@ -43,7 +44,7 @@
   "handoff_gates": [
     "supply immutable candidate and last-good image/model identifiers",
     "supply adapter digest and model registry record",
-    "implement configured concurrency limit",
+    "run the locked validation safety and comparison gates on a trained adapter",
     "prove authenticated staging endpoint and schema-valid response"
   ]
 }

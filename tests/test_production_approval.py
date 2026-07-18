@@ -30,7 +30,7 @@ def production_manifest() -> dict:
         "prompt_sha256": "3456789abcdef012" * 4,
         "response_schema_sha256": "456789abcdef0123" * 4,
         "expression_map_sha256": "56789abcdef01234" * 4,
-        "database_revision": "20260714_0001",
+        "database_revision": "20260714_0004",
         "embedding_model_revision": "embedding-r1",
         "llm_base_model": "meguri-base-r1",
         "llm_adapter_revision": "meguri-adapter-r1",

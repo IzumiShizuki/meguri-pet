@@ -1,3 +1,4 @@
+import asyncio
 import json
 import unittest
 import tempfile
@@ -152,6 +153,74 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("HTTP 500", str(caught.exception))
         self.assertNotIn("upstream-secret-body", str(caught.exception))
 
+    async def test_provider_enforces_configured_concurrency_limit(self):
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = 0
+        max_active = 0
+        active = 0
+
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal active, calls, max_active
+            calls += 1
+            active += 1
+            max_active = max(max_active, active)
+            if calls == 1:
+                first_started.set()
+                await release_first.wait()
+            active -= 1
+            return completion(json.dumps(VALID_CONTENT))
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="http://localhost:9999/v1",
+            model="local-model",
+            max_concurrency=1,
+            transport=httpx.MockTransport(handler),
+        )
+        first = asyncio.create_task(provider.respond(request(), state(), [], []))
+        await first_started.wait()
+        second = asyncio.create_task(provider.respond(request(), state(), [], []))
+        await asyncio.sleep(0)
+        self.assertEqual(calls, 1)
+        release_first.set()
+        await asyncio.gather(first, second)
+        self.assertEqual(max_active, 1)
+
+    async def test_registered_gateway_metadata_must_match_release(self):
+        expected_headers = {
+            "X-Meguri-Model-Id": "meguri-text-staging-r1",
+            "X-Meguri-Base-Revision": "base-r1",
+            "X-Meguri-Adapter-Revision": "adapter-r1",
+            "X-Meguri-Adapter-SHA256": "a" * 64,
+        }
+
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers=expected_headers,
+                json={
+                    "choices": [
+                        {"message": {"content": json.dumps(VALID_CONTENT)}}
+                    ]
+                },
+            )
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="https://llm.example.test/v1",
+            model="candidate",
+            api_key="secret",
+            expected_model_id="meguri-text-staging-r1",
+            expected_base_revision="base-r1",
+            expected_adapter_revision="adapter-r1",
+            expected_adapter_sha256="a" * 64,
+            transport=httpx.MockTransport(handler),
+        )
+        await provider.respond(request(), state(), [], [])
+
+        expected_headers["X-Meguri-Adapter-Revision"] = "wrong-adapter"
+        with self.assertRaisesRegex(LlmProviderError, "release metadata"):
+            await provider.respond(request(), state(), [], [])
+
     async def test_provider_failure_becomes_terminal_turn_failure(self):
         class FailingProvider:
             provider_name = "failing-test"
@@ -204,6 +273,24 @@ class LlmProviderConfigurationTests(unittest.TestCase):
                         "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
                         "MEGURI_LLM_API_KEY": "inline-key",
                     }
+                )
+
+    def test_concurrency_configuration_is_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            values = {
+                "MEGURI_LLM_PROVIDER": "openai-compatible",
+                "MEGURI_LLM_MODEL": "model",
+                "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
+                "MEGURI_LLM_API_KEY_FILE": str(secret),
+                "MEGURI_LLM_MAX_CONCURRENCY": "3",
+            }
+            provider = create_llm_provider_from_env(values)
+            self.assertEqual(provider.max_concurrency, 3)
+            with self.assertRaises(LlmConfigurationError):
+                create_llm_provider_from_env(
+                    {**values, "MEGURI_LLM_MAX_CONCURRENCY": "zero"}
                 )
 
     def test_response_models_reject_additional_properties(self):

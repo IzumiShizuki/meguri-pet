@@ -40,13 +40,14 @@ def evaluate_persona(raw_output: str, expected: dict[str, Any]) -> dict[str, Any
 
 def aggregate_persona_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
     counter = Counter()
+    fields = (
+        "identity_stable_heuristic",
+        "relationship_severe_error_free_heuristic",
+        "interaction_mode_consistent_heuristic",
+    )
     for row in rows:
         metrics = row["persona_metrics"]
-        for field in (
-            "identity_stable_heuristic",
-            "relationship_severe_error_free_heuristic",
-            "interaction_mode_consistent_heuristic",
-        ):
+        for field in fields:
             counter[field] += int(metrics[field])
     total = len(rows)
     return {
@@ -54,7 +55,7 @@ def aggregate_persona_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total": total,
         **{
             field + "_rate": round(counter[field] / total, 6) if total else 0.0
-            for field in counter
+            for field in fields
         },
         "manual_review_required": total,
     }
