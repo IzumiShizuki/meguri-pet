@@ -52,6 +52,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--smoke-samples", type=int, default=100)
     value.add_argument("--smoke-validation-samples", type=int, default=20)
     value.add_argument("--smoke-steps", type=int, default=50)
+    value.add_argument("--input-pad-length", type=int, default=1152)
     value.add_argument("--allow-download", action="store_true")
     return value
 
@@ -124,6 +125,8 @@ def main() -> int:
             str(args.smoke_validation_samples),
             "--smoke-steps",
             str(args.smoke_steps),
+            "--input-pad-length",
+            str(args.input_pad_length),
         ]
         if args.allow_download:
             smoke_args.append("--allow-download")
