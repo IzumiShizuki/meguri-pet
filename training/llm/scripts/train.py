@@ -107,6 +107,11 @@ def run(args: argparse.Namespace) -> Path:
     try:
         import torch
         from datasets import Dataset
+        # Unsloth replaces TRL's SFTConfig/SFTTrainer with a paired subclass.
+        # Import it before TRL so both objects share the same generated class;
+        # importing TRL first causes its TrainingArguments serialization to
+        # reintroduce the placeholder `<EOS_TOKEN>` on Qwen3.5.
+        import unsloth  # noqa: F401
         from transformers import DataCollatorForSeq2Seq
         from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
@@ -135,6 +140,13 @@ def run(args: argparse.Namespace) -> Path:
     template = str(getattr(tokenizer, "chat_template", "") or "")
     if not template:
         raise PipelineError("pinned tokenizer has no chat template")
+    real_eos_token = str(
+        tokenizer.convert_ids_to_tokens(int(tokenizer.eos_token_id))
+        if getattr(tokenizer, "eos_token_id", None) is not None
+        else tokenizer.eos_token
+    )
+    if getattr(tokenizer, "eos_token", None) in (None, "<EOS_TOKEN>"):
+        tokenizer.eos_token = real_eos_token
     kwargs: dict[str, Any] = {
         "output_dir": str(output_dir),
         "max_length": max_length,
@@ -162,6 +174,13 @@ def run(args: argparse.Namespace) -> Path:
         "load_best_model_at_end": False,
         "remove_unused_columns": False,
         "dataset_kwargs": {"skip_prepare_dataset": True},
+        # TRL 5.2 defaults to a placeholder `<EOS_TOKEN>` which is not in the
+        # pinned Qwen3.5 vocabulary. Bind the trainer to the tokenizer's real
+        # assistant terminator so the collator and generation use one boundary.
+        # Leave this unset so TRL uses processing_class.eos_token directly;
+        # TRL 0.22.2 serializes an explicit value through the placeholder
+        # `<EOS_TOKEN>` even when the SFTConfig attribute is correct.
+        "eos_token": None,
     }
     if args.smoke:
         kwargs["max_steps"] = args.smoke_steps

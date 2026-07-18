@@ -215,26 +215,29 @@ def full_probe(config: dict[str, Any], *, allow_download: bool, artifact_dir: Pa
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": json.dumps(
-                {
-                    "runtime_state": {
-                        "client_id": "website",
-                        "mode": "work",
-                        "relationship_profile": "sibling",
-                        "outfit_code": "01",
-                        "local_time": "2026-07-14T12:00:00+08:00",
-                        "is_holiday": False,
-                        "voice_enabled": False,
-                        "screen_context_enabled": False,
-                        "allowed_expression_tags": ["neutral", "happy", "worried"],
+            "content": (
+                json.dumps(
+                    {
+                        "runtime_state": {
+                            "client_id": "website",
+                            "mode": "work",
+                            "relationship_profile": "sibling",
+                            "outfit_code": "01",
+                            "local_time": "2026-07-14T12:00:00+08:00",
+                            "is_holiday": False,
+                            "voice_enabled": False,
+                            "screen_context_enabled": False,
+                            "allowed_expression_tags": ["neutral", "happy", "worried"],
+                        },
+                        "user_message": "请用 JSON 确认环境正常。",
+                        "canon_examples": [],
+                        "long_term_memories": [],
+                        "recent_context": [],
                     },
-                    "user_message": "请用 JSON 确认环境正常。",
-                    "canon_examples": [],
-                    "long_term_memories": [],
-                    "recent_context": [],
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+                + "\n只输出一个 JSON 对象，键必须严格是 reply、expression_tag、expression_intensity、voice_style、memory_candidates；不要使用 response 键，不要输出 Markdown。memory_candidates 必须是对象数组，本次请保持为空数组 []。格式示例：{\"reply\":\"好的。\",\"expression_tag\":\"neutral\",\"expression_intensity\":\"low\",\"voice_style\":\"neutral\",\"memory_candidates\":[]}"
             ),
         },
     ]

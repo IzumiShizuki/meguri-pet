@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "status": "experimental_pass",
+  "experiment_id": "meguri-qwen35-4b-mvp-20260718-v6",
+  "branch": "codex/mvp-auto-fit",
+  "base_model": {
+    "repo_id": "Qwen/Qwen3.5-4B",
+    "revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
+  },
+  "config": {
+    "path": "training/llm/configs/qwen35_4b_bf16_lora.yaml",
+    "sha256": "a373390eb74b579c07c698fc68a10923484d693bd86aac622366f9337575b723"
+  },
+  "dataset": {
+    "dataset_id": "meguri-text-sft-v1-532aca8b1a5d",
+    "source_build_id": "meguri_v2_02c3db0c507d7c2d",
+    "manifest_sha256": "25b60c1c80e469d8a7fee07be340724b2a1ec27ee1f5ed5f8b85ea003c10004b",
+    "quality_report_sha256": "b4c7cc632041b7f148656c396a98a1612d0ce95d6954291be9731d02542ee517",
+    "train_samples": 100,
+    "validation_samples": 20,
+    "locked_eval_accessed": false
+  },
+  "probe": {
+    "path": "training/llm/artifacts/reports/qwen35-full-probe-mvp-v5.json",
+    "sha256": "490be360b7411233ce465699d9d57f709893a581895e42cd1e4b9b825a7e9ca9",
+    "status": "pass",
+    "peak_memory_gib": 10.5136
+  },
+  "training": {
+    "requested_steps": 50,
+    "completed_steps": 25,
+    "seed": 3407,
+    "checkpoint": "training/llm/artifacts/checkpoints/meguri-qwen35-4b-mvp-20260718-v6/checkpoint-25",
+    "adapter": "training/llm/artifacts/checkpoints/meguri-qwen35-4b-mvp-20260718-v6/final_adapter",
+    "adapter_weights_sha256": "131c19fa06f35710acc54d98078600c7df0cddcec692e0e112e47f2402c694e3",
+    "adapter_config_sha256": "5def3f36089c9d3b210c95ad6a1ef1cd863b5a6295b6be4e2347208b9cb2fb29"
+  },
+  "post_training_json_smoke": {
+    "status": "pass",
+    "schema_valid": true,
+    "response": {
+      "reply": "嗯……",
+      "expression_tag": "neutral",
+      "expression_intensity": "low",
+      "voice_style": "soft",
+      "memory_candidates": []
+    }
+  },
+  "release_boundary": "local experimental demo only; no staging or production evidence"
+}

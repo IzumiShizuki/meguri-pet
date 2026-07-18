@@ -185,7 +185,19 @@ def tokenize_assistant_only(
             f"tokenized sample exceeds max_seq_length without safe JSON truncation: {len(full_ids)}>{max_seq_length}"
         )
     eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is None or not full_ids or full_ids[-1] != eos_token_id:
+    if eos_token_id is None or not full_ids:
+        raise PipelineError("chat template does not expose an EOS token")
+    # Qwen3.5 renders the assistant terminator as `<|im_end|>` followed by a
+    # template newline.  Requiring the literal final token to be EOS rejects
+    # that valid format even though the assistant content is properly closed.
+    # Accept only whitespace after the final EOS so an arbitrary non-terminated
+    # response cannot pass this guard.
+    try:
+        last_eos = len(full_ids) - 1 - full_ids[::-1].index(eos_token_id)
+    except ValueError as exc:
+        raise PipelineError("chat template does not terminate the assistant response with EOS") from exc
+    trailing_ids = full_ids[last_eos + 1 :]
+    if trailing_ids and tokenizer.decode(trailing_ids, skip_special_tokens=True).strip():
         raise PipelineError("chat template does not terminate the assistant response with EOS")
     labels = [-100] * len(prefix_ids) + full_ids[len(prefix_ids) :]
     if not any(label != -100 for label in labels) or any(label != -100 for label in labels[: len(prefix_ids)]):
