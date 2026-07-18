@@ -20,6 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path, default=Path("/opt/meguri/staging/state"))
     parser.add_argument("--docker", default="docker")
+    parser.add_argument("--compose", help="standalone Compose executable for a remote control plane")
     parser.add_argument("--health-timeout", type=float, default=180)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -28,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         controller = DeploymentController(
             args.state_dir,
             docker=args.docker,
+            compose=args.compose,
             health_timeout=args.health_timeout,
         )
         controller.validate_compose(candidate)

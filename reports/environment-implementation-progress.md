@@ -68,8 +68,7 @@
 
 ## E-004 - PostgreSQL migration job and least-privilege app role
 
-- Status: implementation completed; empty-database runtime acceptance remains
-  gated on the isolated staging deployment in E-008/E-010.
+- Status: completed and verified on the isolated Staging runtime.
 - Files: `Dockerfile.migration`, `alembic.ini`, `migrations/`,
   `ops/migration/`, migration Compose wiring, two additional per-environment
   secret contracts, a negative isolation fixture, and
@@ -94,11 +93,15 @@
   projects render successfully.
 - Safety: repository-only so far; no existing database, server container,
   volume, network, route, or credential was changed.
+- Runtime result (2026-07-15): a fresh dedicated pgvector database migrated to
+  `20260714_0004`; only `meguri_staging_migration` and
+  `meguri_staging_app` exist under the Meguri role prefix. Dev/Production
+  account probes failed authentication. An unsafe role-name injection made the
+  migration job fail before candidate core replacement, then restored `r002`.
 
 ## E-005 - liveness, readiness, and file-secret runtime contract
 
-- Status: completed locally; managed-environment runtime proof remains part of
-  the isolated staging acceptance.
+- Status: completed and verified on `meguri-staging-20260715-r002`.
 - Endpoints: `/health/live` proves only that the process can answer;
   `/health/ready` returns 503 in dev/staging/production unless the release and
   runtime identities, mounted data build, Prompt/Response/expression hashes,
@@ -117,6 +120,10 @@
   passed; the normal isolation configuration passed.
 - Safety: repository-only; no remote health route, container, database, or
   secret was touched.
+- Runtime result (2026-07-15): core and PostgreSQL are healthy; readiness
+  reports release Manifest, release identity, artifact digests, file secrets,
+  providers and live database revision passed with no failures. Secret files
+  are mode `0400`; values were not printed or committed.
 
 ## E-006 - temporary/raw exposure ledger and production gate
 
@@ -144,8 +151,7 @@
 
 ## E-007 - immutable staging deploy, health gate, and last-good rollback
 
-- Status: repository implementation completed; real staging execution remains
-  pending server deployment access, release artifacts, and E-008 restore proof.
+- Status: completed and verified on the isolated Staging runtime.
 - Preflight: staging-only, absolute release paths, `meguri-staging` project,
   matching env/Manifest release and DB identities, all tests passed, no
   readiness placeholders, mutation disabled, and core/migration/PostgreSQL
@@ -169,11 +175,24 @@
   tests passed; both direct CLI entrypoints loaded and displayed usage.
 - Safety: repository simulation only; no server Compose command, pull,
   migration, health request, or rollback was run.
+- 2026-07-15 remote-control-plane update: staging now accepts an explicit
+  standalone Compose executable, a preloaded-digest `never` pull policy, a
+  separate local Manifest source, and an in-container readiness probe. The
+  default remains registry pull plus HTTP readiness for a host-local runner;
+  Production still requires `pull_policy: always`.
+- Verification: `python -m unittest -v tests.test_staging_deployment
+  tests.test_postgres_backup tests.test_migration_job
+  tests.test_environment_checker` passed 22 tests;
+  `python ops/scripts/check_environment_isolation.py` passed; standalone
+  Compose rendered staging with `config --quiet`.
+- Runtime result (2026-07-15): deployed distinct core digests for `r001` and
+  `r002`, explicitly rolled back to `r001`, redeployed `r002`, then proved
+  automatic `r002` recovery for a nonexistent image and a 503 readiness
+  identity mismatch. State is mirrored under `/opt/meguri/staging/state`.
 
 ## E-008 - staging PostgreSQL backup and restore rehearsal
 
-- Status: repository implementation completed; real staging rehearsal is
-  pending the isolated deployment and server-side release/secret access.
+- Status: completed for Staging; Production recovery remains blocked.
 - Backup: custom format, compression, no owner/ACL, environment-specific output
   directory, mode `0600`, and atomic metadata containing size, SHA-256, release,
   data build, PostgreSQL version, and Alembic revision. No password is copied
@@ -192,6 +211,20 @@
   that no runtime RPO/RTO evidence exists yet.
 - Safety: local fake transport only; no server database, archive, directory,
   container, volume, or secret was accessed.
+- 2026-07-15 remote-control-plane update: backup/restore accepts the same
+  standalone Compose executable and an explicit
+  `MEGURI_CONTROL_PLANE_BACKUP_DIR`. Database commands remain inside the
+  isolated staging container and the checksum gate is unchanged.
+- Recovery evidence now snapshots all nine authoritative memory-table counts
+  and a fixed active-memory query before `pg_dump`, compares the same values in
+  the isolated restored database, and still force-drops the target on a count
+  mismatch. Seven backup/restore tests pass, including the mismatch cleanup
+  fault path.
+- Runtime result (2026-07-15): the authoritative non-empty archive is 35,922
+  bytes at SHA-256 `1bfdaab8ecc9eae974e723faf8eec78954bde349cabc1a5d21b9ce08367e33df`.
+  Restore matched revision, pgvector, item/version/audit/outbox counts and
+  fingerprint `8b44c99e722e7b1d056824a8721ad037`, then removed the
+  temporary database in 10.974 seconds.
 
 ## E-009 - CI/CD boundaries and production approval
 
@@ -218,9 +251,8 @@
 
 ## E-010 - automated acceptance evidence and Agent handoff
 
-- Status: repository and protected-server invariant acceptance completed;
-  runtime staging acceptance remains blocked with explicit machine-readable
-  evidence.
+- Status: environment runtime checks completed; full application acceptance
+  remains blocked only on authenticated DeepSeek Turn/SSE smoke.
 - Handoff contracts: the native pgvector Memory implementation through M-012
   is integrated at schema head `20260714_0004`, with file-only app credentials,
   pinned BGE-M3 metadata, recovery validation and exact-search benchmarks. The
@@ -235,18 +267,34 @@
   empty-database migration, migration failure, backup/restore, two rollback
   fault injections, and protected-service invariants to be true with evidence
   digests. The committed blocked artifact intentionally returns 1.
-- Live read-only recheck (latest: 2026-07-14 22:37:12 +08:00): Docker Engine 29.2.1, all
-  22 protected containers running, all required networks/named volumes present,
-  and no Meguri environment object. No mutation was issued.
-- Final regression (before the final integrated rerun recorded in
-  `reports/environment-final.md`):
-  - Python environment suite: 95 passed;
-  - TypeScript: 20 passed;
-  - Compose: dev/staging/production config passed;
-  - isolation, Agent contracts, and live protected-server invariants passed;
-  - staging acceptance and production approval/exposure gates returned nonzero
-    as required by the current evidence state.
-- Blockers: no immutable core/migration image digests, server release directory
-  and independent secret provisioning/deployment access, trained registered
-  LLM candidate/last-good artifacts, real isolated PostgreSQL contract run, or
-  real staging evidence. Production remains blocked.
+- Live before/after evidence (2026-07-15): Docker Engine 29.2.1, all 22
+  protected containers running with start times older than the Staging window,
+  and all required protected networks/named volumes present. Only the new
+  `meguri-staging` project, two networks and one named volume were added.
+- Final regression: local Pytest 184 passed with 6 expected database-gated
+  skips; the gated live subset passed 7 with zero skips; TypeScript 20 passed;
+  all three Compose renders, isolation, Agent contracts, Release Manifest and
+  protected-server invariants passed. Staging acceptance still returns 1 only
+  because the authenticated DeepSeek application gate remains blocked.
+- Runtime checks: project/network/data/account/volume identity, empty migration,
+  migration failure, backup/restore, explicit rollback, image fault, readiness
+  fault and protected-service invariants all passed with evidence digests.
+- The seven previously PostgreSQL-gated native provider/workflow/recovery cases
+  passed with zero skips inside a disposable container attached to the Staging
+  internal network; the app URL was read from its mounted secret file and the
+  container was removed.
+- Remaining blocker: no usable DeepSeek key. The provider route failed closed
+  with sanitized HTTP 401 evidence, so real Turn/SSE/RAG/Memory smoke is not
+  claimed. Production remains blocked.
+- 2026-07-15 provider-compatibility update: DeepSeek's current official Chat
+  Completion contract accepts JSON Output as `response_format.type=json_object`
+  rather than the OpenAI `json_schema` request shape. The provider now exposes
+  an explicit `MEGURI_LLM_RESPONSE_FORMAT` boundary: Meguri gateways retain
+  `json_schema`; DeepSeek uses `json_object`, receives the same committed schema
+  inside the bounded context, and remains subject to strict Pydantic validation
+  after generation. Compose, all environment examples, the isolation checker
+  and the LLM handoff carry the setting explicitly.
+- Verification: `python -m pytest tests/test_llm_provider.py
+  tests/test_environment_acceptance.py` passed 23 tests; `python
+  ops/scripts/check_agent_environment_contracts.py` passed. No provider request,
+  credential mutation, server mutation or billable call was made.

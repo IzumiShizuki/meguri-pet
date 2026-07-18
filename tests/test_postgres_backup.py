@@ -14,9 +14,10 @@ from ops.backup.postgres import (
 
 
 class FakeTransport:
-    def __init__(self, *, vector_version: str = "0.8.5") -> None:
+    def __init__(self, *, vector_version: str = "0.8.5", restored_active_items: int = 0) -> None:
         self.commands: list[list[str]] = []
         self.vector_version = vector_version
+        self.restored_active_items = restored_active_items
 
     def text(self, command: list[str]) -> str:
         self.commands.append(command)
@@ -27,6 +28,14 @@ class FakeTransport:
             return "16.9"
         if "SELECT extversion FROM pg_extension" in joined:
             return self.vector_version
+        if "SELECT count(*) FROM memory_items WHERE status = 'active'" in joined:
+            if "meguri_staging_restore_" in joined:
+                return str(self.restored_active_items)
+            return "0"
+        if "md5(string_agg" in joined:
+            return "d41d8cd98f00b204e9800998ecf8427e"
+        if "SELECT count(*) FROM" in joined:
+            return "0"
         return ""
 
     def stdout_to_file(self, command: list[str], output: Path) -> None:
@@ -73,6 +82,21 @@ class PostgresBackupTests(unittest.TestCase):
             self.assertTrue(archive.is_file())
             self.assertEqual(metadata["database_revision"], "20260714_0004")
             self.assertEqual(metadata["restore_rehearsal"], {"status": "pending"})
+            self.assertEqual(set(metadata["recovery_snapshot"]["table_counts"]), {
+                "identity_bindings",
+                "memory_candidates",
+                "memory_items",
+                "memory_versions",
+                "memory_embeddings",
+                "memory_feedback",
+                "session_summaries",
+                "memory_audit_log",
+                "memory_outbox",
+            })
+            self.assertEqual(
+                metadata["recovery_snapshot"]["fixed_queries"]["active_memory_fingerprint"],
+                "d41d8cd98f00b204e9800998ecf8427e",
+            )
             self.assertEqual(metadata["archive_bytes"], archive.stat().st_size)
             self.assertTrue(any("pg_dump" in command for command in transport.commands))
 
@@ -101,6 +125,17 @@ class PostgresBackupTests(unittest.TestCase):
             metadata_path = create_backup(database, backups)
             with self.assertRaisesRegex(BackupError, "does not contain pgvector"):
                 rehearse_restore(database, metadata_path, "meguri_staging_restore_fault")
+            self.assertTrue(any("dropdb" in command for command in map(" ".join, transport.commands)))
+
+    def test_restore_count_mismatch_still_drops_temporary_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backups = root / "backups"
+            transport = FakeTransport(restored_active_items=1)
+            database = StagingDatabase(env_file(root, backups), transport=transport)
+            metadata_path = create_backup(database, backups)
+            with self.assertRaisesRegex(BackupError, "core-table counts"):
+                rehearse_restore(database, metadata_path, "meguri_staging_restore_count_fault")
             self.assertTrue(any("dropdb" in command for command in map(" ".join, transport.commands)))
 
     def test_checksum_mismatch_fails_before_database_mutation(self) -> None:
@@ -133,6 +168,28 @@ class PostgresBackupTests(unittest.TestCase):
             metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(BackupError, "filename is unsafe"):
                 rehearse_restore(database, metadata_path, "meguri_staging_restore_safe")
+
+    def test_remote_control_plane_has_explicit_compose_and_backup_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote_backups = root / "remote-backups"
+            control_backups = root / "control-backups"
+            env_path = env_file(root, remote_backups)
+            env_path.write_text(
+                env_path.read_text(encoding="utf-8")
+                + f"MEGURI_CONTROL_PLANE_BACKUP_DIR={control_backups.resolve()}\n",
+                encoding="utf-8",
+            )
+            transport = FakeTransport()
+            database = StagingDatabase(
+                env_path,
+                compose="docker-compose",
+                transport=transport,
+            )
+            metadata_path = create_backup(database, control_backups)
+
+            self.assertTrue(metadata_path.is_file())
+            self.assertTrue(all(command[0] == "docker-compose" for command in transport.commands))
 
 
 if __name__ == "__main__":

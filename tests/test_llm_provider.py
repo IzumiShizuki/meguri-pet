@@ -113,6 +113,27 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(context["canon_examples"][0]), 2000)
         self.assertEqual(len(context["long_term_memories"]), 5)
 
+    async def test_json_object_mode_supplies_the_committed_schema_in_context(self):
+        captured = {}
+
+        async def handler(http_request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(http_request.content))
+            return completion(json.dumps(VALID_CONTENT))
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-chat",
+            api_key="secret-test-key",
+            response_format="json_object",
+            transport=httpx.MockTransport(handler),
+        )
+        await provider.respond(request(), state(), [], [])
+        self.assertEqual(captured["response_format"], {"type": "json_object"})
+        context = json.loads(captured["messages"][1]["content"])
+        schema = context["required_output_schema"]
+        self.assertEqual(set(schema["required"]), set(LlmResponse.model_fields))
+        self.assertFalse(schema["additionalProperties"])
+
     async def test_invalid_json_and_extra_fields_are_rejected(self):
         values = ["not-json", json.dumps({**VALID_CONTENT, "unexpected": True})]
         for value in values:
@@ -275,6 +296,43 @@ class LlmProviderConfigurationTests(unittest.TestCase):
                     }
                 )
 
+    def test_external_registered_base_model_can_omit_adapter_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            provider = create_llm_provider_from_env(
+                {
+                    "MEGURI_LLM_PROVIDER": "openai-compatible",
+                    "MEGURI_LLM_MODEL": "deepseek-chat",
+                    "MEGURI_LLM_BASE_URL": "https://api.deepseek.com/v1",
+                    "MEGURI_LLM_API_KEY_FILE": str(secret),
+                    "MEGURI_MODEL_REGISTRY_ID": "external-deepseek-chat-staging",
+                    "MEGURI_LLM_BASE_MODEL_REVISION": "deepseek-chat",
+                    "MEGURI_LLM_ADAPTER_REVISION": "none",
+                    "MEGURI_LLM_ADAPTER_SHA256": "none",
+                    "MEGURI_LLM_RESPONSE_FORMAT": "json_object",
+                }
+            )
+            self.assertEqual(provider.provider_name, "openai-compatible")
+            self.assertEqual(provider.expected_release_headers, {})
+            self.assertEqual(provider.response_format, "json_object")
+
+    def test_adapter_backed_registered_model_requires_complete_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            base = {
+                "MEGURI_LLM_PROVIDER": "openai-compatible",
+                "MEGURI_LLM_MODEL": "candidate",
+                "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
+                "MEGURI_LLM_API_KEY_FILE": str(secret),
+                "MEGURI_MODEL_REGISTRY_ID": "meguri-text-staging-r1",
+                "MEGURI_LLM_BASE_MODEL_REVISION": "base-r1",
+                "MEGURI_LLM_ADAPTER_REVISION": "adapter-r1",
+            }
+            with self.assertRaisesRegex(LlmConfigurationError, "adapter-backed"):
+                create_llm_provider_from_env(base)
+
     def test_concurrency_configuration_is_validated(self):
         with tempfile.TemporaryDirectory() as directory:
             secret = Path(directory) / "llm-api-key.txt"
@@ -292,6 +350,20 @@ class LlmProviderConfigurationTests(unittest.TestCase):
                 create_llm_provider_from_env(
                     {**values, "MEGURI_LLM_MAX_CONCURRENCY": "zero"}
                 )
+
+    def test_response_format_configuration_is_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            values = {
+                "MEGURI_LLM_PROVIDER": "openai-compatible",
+                "MEGURI_LLM_MODEL": "model",
+                "MEGURI_LLM_BASE_URL": "https://llm.example.test/v1",
+                "MEGURI_LLM_API_KEY_FILE": str(secret),
+                "MEGURI_LLM_RESPONSE_FORMAT": "invalid",
+            }
+            with self.assertRaisesRegex(LlmConfigurationError, "RESPONSE_FORMAT"):
+                create_llm_provider_from_env(values)
 
     def test_response_models_reject_additional_properties(self):
         with self.assertRaises(ValidationError):

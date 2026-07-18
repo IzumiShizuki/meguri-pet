@@ -74,13 +74,14 @@ class StagingAcceptanceEvidenceTests(unittest.TestCase):
         }
         self.assertEqual(validate_acceptance(value), [])
 
-    def test_blocked_repository_evidence_remains_failed(self) -> None:
+    def test_blocked_runtime_evidence_remains_failed_on_external_gate(self) -> None:
         value = json.loads(
             (ROOT / "ops" / "acceptance" / "blocked.staging-acceptance.json").read_text(encoding="utf-8")
         )
         errors = validate_acceptance(value)
         self.assertTrue(any("status is not passed" in error for error in errors))
-        self.assertTrue(any("every staging acceptance check" in error for error in errors))
+        self.assertFalse(any("every staging acceptance check" in error for error in errors))
+        self.assertTrue(all(value["checks"].values()))
 
     def test_missing_fault_injection_result_fails_closed(self) -> None:
         value = {

@@ -18,6 +18,17 @@ from ops.scripts.check_environment_isolation import read_env_file
 
 SAFE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
 SAFE_RELEASE = re.compile(r"^[A-Za-z0-9._-]+$")
+CORE_TABLES = (
+    "identity_bindings",
+    "memory_candidates",
+    "memory_items",
+    "memory_versions",
+    "memory_embeddings",
+    "memory_feedback",
+    "session_summaries",
+    "memory_audit_log",
+    "memory_outbox",
+)
 
 
 class BackupError(RuntimeError):
@@ -64,12 +75,41 @@ def timestamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
 
 
+def recovery_snapshot(database: StagingDatabase, *, target: str | None = None) -> dict[str, Any]:
+    counts: dict[str, int] = {}
+    try:
+        for table in CORE_TABLES:
+            counts[table] = int(database.query(f"SELECT count(*) FROM {table}", database=target))
+        active_items = int(
+            database.query(
+                "SELECT count(*) FROM memory_items WHERE status = 'active'",
+                database=target,
+            )
+        )
+        active_fingerprint = database.query(
+            "SELECT COALESCE(md5(string_agg(memory_id::text || ':' || "
+            "current_version_id::text, ',' ORDER BY memory_id)), md5('')) "
+            "FROM memory_items WHERE status = 'active'",
+            database=target,
+        )
+    except ValueError as exc:
+        raise BackupError("database recovery snapshot returned a non-integer count") from exc
+    return {
+        "table_counts": counts,
+        "fixed_queries": {
+            "active_memory_items": active_items,
+            "active_memory_fingerprint": active_fingerprint,
+        },
+    }
+
+
 class StagingDatabase:
     def __init__(
         self,
         env_file: Path,
         *,
         docker: str = "docker",
+        compose: str | None = None,
         transport: Transport | None = None,
     ) -> None:
         if not env_file.is_absolute():
@@ -85,12 +125,12 @@ class StagingDatabase:
         if SAFE_NAME.fullmatch(self.database) is None or SAFE_NAME.fullmatch(self.owner) is None:
             raise BackupError("database and owner must be safe PostgreSQL identifiers")
         self.docker = docker
+        self.compose_executable = compose
         self.transport = transport or SubprocessTransport()
 
     def compose(self) -> list[str]:
-        return [
-            self.docker,
-            "compose",
+        prefix = [self.compose_executable] if self.compose_executable else [self.docker, "compose"]
+        return prefix + [
             "--project-name",
             "meguri-staging",
             "--env-file",
@@ -146,15 +186,21 @@ class StagingDatabase:
 
 
 def create_backup(database: StagingDatabase, output_dir: Path) -> Path:
-    expected_dir = Path(database.env.get("MEGURI_BACKUP_DIR", ""))
-    if output_dir.resolve() != expected_dir.resolve():
-        raise BackupError("output directory must equal MEGURI_BACKUP_DIR")
+    configured_dirs = [Path(database.env.get("MEGURI_BACKUP_DIR", ""))]
+    control_plane_dir = database.env.get("MEGURI_CONTROL_PLANE_BACKUP_DIR", "").strip()
+    if control_plane_dir:
+        configured_dirs.append(Path(control_plane_dir))
+    if output_dir.resolve() not in {path.resolve() for path in configured_dirs}:
+        raise BackupError(
+            "output directory must equal MEGURI_BACKUP_DIR or MEGURI_CONTROL_PLANE_BACKUP_DIR"
+        )
     release_id = database.env.get("MEGURI_RELEASE_ID", "")
     if SAFE_RELEASE.fullmatch(release_id) is None:
         raise BackupError("MEGURI_RELEASE_ID is unsafe for a backup filename")
     output_dir.mkdir(parents=True, exist_ok=True)
     revision = database.query("SELECT version_num FROM alembic_version")
     server_version = database.query("SHOW server_version")
+    snapshot = recovery_snapshot(database)
     archive = output_dir / f"{timestamp()}_{release_id}.dump"
     descriptor, temporary_name = tempfile.mkstemp(prefix=f".{archive.name}.", suffix=".tmp", dir=output_dir)
     os.close(descriptor)
@@ -176,6 +222,7 @@ def create_backup(database: StagingDatabase, output_dir: Path) -> Path:
         "database": database.database,
         "database_revision": revision,
         "postgres_server_version": server_version,
+        "recovery_snapshot": snapshot,
         "archive_file": archive.name,
         "archive_bytes": archive.stat().st_size,
         "archive_sha256": sha256_file(archive),
@@ -219,6 +266,9 @@ def rehearse_restore(database: StagingDatabase, metadata_path: Path, target: str
             raise BackupError("restored Alembic revision does not match backup metadata")
         if not vector_version:
             raise BackupError("restored database does not contain pgvector")
+        restored_snapshot = recovery_snapshot(database, target=target)
+        if restored_snapshot != metadata.get("recovery_snapshot"):
+            raise BackupError("restored core-table counts or fixed queries do not match backup metadata")
     finally:
         if created:
             database.command("dropdb", "-U", database.owner, "--force", target)
@@ -230,6 +280,7 @@ def rehearse_restore(database: StagingDatabase, metadata_path: Path, target: str
             "target_database": target,
             "database_revision": revision,
             "pgvector_version": vector_version,
+            "recovery_snapshot": restored_snapshot,
             "completed_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         },
     }

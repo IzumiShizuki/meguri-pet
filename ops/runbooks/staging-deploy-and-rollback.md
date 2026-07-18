@@ -43,6 +43,26 @@ core, and accepts it only when `/health/ready` reports the candidate release ID.
 It writes `current.json`, `last-good.json`, and `rollback-target.json` atomically
 under `/opt/meguri/staging/state`.
 
+## Remote Docker control plane
+
+When the repository reaches the server through a TLS Docker endpoint instead
+of a shell on the host, keep the server-side paths in
+`MEGURI_RELEASE_MANIFEST_FILE` and the secret variables unchanged. Add these
+non-secret controls to the local release env:
+
+```text
+MEGURI_CONTROL_PLANE_MANIFEST_FILE=<absolute-local-manifest-path>
+MEGURI_IMAGE_PULL_POLICY=never
+MEGURI_HEALTH_PROBE_MODE=compose
+```
+
+`never` is permitted only when all three Manifest-matching digest references
+have already been inspected on that daemon. Supply the standalone Compose
+binary with `--compose`; readiness is then checked from inside `core`, so the
+server can keep port 8000 bound to host loopback. Keep the control-plane state
+directory environment-specific and mirror its three JSON files to
+`/opt/meguri/staging/state` after a successful deployment or rollback.
+
 ## Failure and rollback behavior
 
 - Migration failure occurs before core replacement, so the running old core is

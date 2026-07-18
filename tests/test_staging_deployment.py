@@ -114,6 +114,36 @@ class StagingDeploymentTests(unittest.TestCase):
             self.assertTrue(any(command[-3:] == ["migration", "upgrade", "head"] for command in commands))
             self.assertEqual(probes, [("http://127.0.0.1:18080/health/ready", "meguri-staging-r001")])
 
+    def test_remote_control_plane_uses_standalone_compose_without_pull(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = write_release(root, "meguri-staging-r001")
+            env_path = Path(candidate["env_file"])
+            env_path.write_text(
+                env_path.read_text(encoding="utf-8")
+                + "MEGURI_IMAGE_PULL_POLICY=never\n"
+                + "MEGURI_HEALTH_PROBE_MODE=compose\n",
+                encoding="utf-8",
+            )
+            candidate = preflight_release(env_path, Path(candidate["manifest_file"]))
+            commands: list[list[str]] = []
+            controller = DeploymentController(
+                root / "state",
+                compose="docker-compose",
+                runner=commands.append,
+            )
+            controller.deploy(candidate)
+
+            self.assertTrue(all(command[0] == "docker-compose" for command in commands))
+            self.assertFalse(any("pull" in command for command in commands))
+            self.assertTrue(
+                any(
+                    ["exec", "-T", "core"] == command[index : index + 3]
+                    for command in commands
+                    for index in range(len(command) - 2)
+                )
+            )
+
     def test_readiness_failure_restores_previous_same_revision(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

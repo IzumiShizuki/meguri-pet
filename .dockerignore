@@ -1,4 +1,6 @@
 .git
+.agents
+.codex
 .github
 .idea
 .pytest_cache
@@ -17,6 +19,13 @@ GPT_SoVITS
 baselines
 reports
 training
+apps
+docs
+local-services
+packages
+scripts
+tests
+tests-ts
 .env
 .env.*
 *.pem

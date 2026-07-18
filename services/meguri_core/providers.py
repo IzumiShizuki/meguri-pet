@@ -81,6 +81,7 @@ class OpenAICompatibleLlmProvider:
         api_key: str | None = None,
         timeout_seconds: float = 30.0,
         max_concurrency: int = 4,
+        response_format: str = "json_schema",
         expected_model_id: str | None = None,
         expected_base_revision: str | None = None,
         expected_adapter_revision: str | None = None,
@@ -103,27 +104,39 @@ class OpenAICompatibleLlmProvider:
             raise LlmConfigurationError("MEGURI_LLM_TIMEOUT_SECONDS must be positive")
         if max_concurrency <= 0:
             raise LlmConfigurationError("MEGURI_LLM_MAX_CONCURRENCY must be positive")
+        normalized_response_format = response_format.strip().lower()
+        if normalized_response_format not in {"json_schema", "json_object"}:
+            raise LlmConfigurationError(
+                "MEGURI_LLM_RESPONSE_FORMAT must be json_schema or json_object"
+            )
         self.base_url = base_url.rstrip("/") + "/"
         self.model = model
         self.api_key = api_key
         self.timeout = httpx.Timeout(timeout_seconds)
         self.max_concurrency = max_concurrency
+        self.response_format = normalized_response_format
         self._semaphore = asyncio.Semaphore(max_concurrency)
         self.expected_release_headers: dict[str, str] = {}
         if expected_model_id:
-            expected = {
-                "X-Meguri-Model-Id": expected_model_id,
-                "X-Meguri-Base-Revision": expected_base_revision,
-                "X-Meguri-Adapter-Revision": expected_adapter_revision,
-                "X-Meguri-Adapter-SHA256": expected_adapter_sha256,
-            }
-            if any(not value for value in expected.values()):
+            if not expected_base_revision:
                 raise LlmConfigurationError(
-                    "registered LLM releases require base and adapter identity metadata"
+                    "registered LLM releases require base identity metadata"
                 )
-            self.expected_release_headers = {
-                key: str(value) for key, value in expected.items()
-            }
+            has_adapter = bool(expected_adapter_revision or expected_adapter_sha256)
+            if has_adapter:
+                expected = {
+                    "X-Meguri-Model-Id": expected_model_id,
+                    "X-Meguri-Base-Revision": expected_base_revision,
+                    "X-Meguri-Adapter-Revision": expected_adapter_revision,
+                    "X-Meguri-Adapter-SHA256": expected_adapter_sha256,
+                }
+                if any(not value for value in expected.values()):
+                    raise LlmConfigurationError(
+                        "adapter-backed registered LLM releases require base and adapter identity metadata"
+                    )
+                self.expected_release_headers = {
+                    key: str(value) for key, value in expected.items()
+                }
         self.transport = transport
         try:
             self.system_prompt = system_prompt_path.read_text(encoding="utf-8").strip()
@@ -145,16 +158,35 @@ class OpenAICompatibleLlmProvider:
             headers["Authorization"] = f"Bearer {self.api_key}"
         schema = dict(self.response_schema)
         schema.pop("$schema", None)
+        response_format: dict[str, object]
+        if self.response_format == "json_schema":
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "meguri_response",
+                    "strict": True,
+                    "schema": schema,
+                },
+            }
+        else:
+            response_format = {"type": "json_object"}
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": self._context_json(request, state, canon, memories, recent_context)},
+                {
+                    "role": "user",
+                    "content": self._context_json(
+                        request,
+                        state,
+                        canon,
+                        memories,
+                        recent_context,
+                        include_response_schema=self.response_format == "json_object",
+                    ),
+                },
             ],
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "meguri_response", "strict": True, "schema": schema},
-            },
+            "response_format": response_format,
             "stream": False,
         }
         try:
@@ -191,6 +223,8 @@ class OpenAICompatibleLlmProvider:
         canon: list[str],
         memories: list[str],
         recent_context: list[str] | None,
+        *,
+        include_response_schema: bool = False,
     ) -> str:
         context = {
             "runtime_state": state.model_dump(mode="json"),
@@ -199,6 +233,8 @@ class OpenAICompatibleLlmProvider:
             "long_term_memories": [_bounded(item, 2000) for item in memories[:5]],
             "recent_context": [_bounded(item, 2000) for item in (recent_context or [])[-20:]],
         }
+        if include_response_schema:
+            context["required_output_schema"] = self.response_schema
         return json.dumps(context, ensure_ascii=False, separators=(",", ":"))
 
     def _validate_contract(self) -> None:
@@ -255,6 +291,7 @@ def create_llm_provider_from_env(
         api_key=api_key,
         timeout_seconds=timeout,
         max_concurrency=max_concurrency,
+        response_format=values.get("MEGURI_LLM_RESPONSE_FORMAT", "json_schema"),
         expected_model_id=_optional_release_value(values.get("MEGURI_MODEL_REGISTRY_ID")),
         expected_base_revision=_optional_release_value(
             values.get("MEGURI_LLM_BASE_MODEL_REVISION")

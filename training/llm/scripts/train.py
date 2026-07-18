@@ -151,6 +151,13 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError("the pinned Unsloth/TRL training environment is incomplete") from exc
     parameter_counts = assert_text_only_trainable_parameters(model)
     tokenizer = getattr(processor, "tokenizer", processor)
+    real_eos_token = str(
+        tokenizer.convert_ids_to_tokens(int(tokenizer.eos_token_id))
+        if getattr(tokenizer, "eos_token_id", None) is not None
+        else tokenizer.eos_token
+    )
+    if getattr(tokenizer, "eos_token", None) in (None, "<EOS_TOKEN>"):
+        tokenizer.eos_token = real_eos_token
     max_length = int(training["max_seq_length"])
     encoded_train = [tokenize_assistant_only(row, tokenizer, max_seq_length=max_length) for row in train_rows]
     encoded_validation = [
@@ -205,6 +212,9 @@ def run(args: argparse.Namespace) -> Path:
         "load_best_model_at_end": False,
         "remove_unused_columns": False,
         "dataset_kwargs": {"skip_prepare_dataset": True},
+        # Let the paired Unsloth/TRL trainer use processing_class.eos_token;
+        # explicit serialization can reintroduce TRL's placeholder token.
+        "eos_token": None,
     }
     if args.smoke:
         kwargs["max_steps"] = args.smoke_steps
