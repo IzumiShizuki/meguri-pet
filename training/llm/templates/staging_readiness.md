@@ -2,6 +2,9 @@
 
 - Candidate registry ID:
 - Candidate status:
+- Generation profile ID / SHA-256:
+- Locked-eval suite ID / evaluation source build / committed manifest SHA-256:
+- Independent-suite validation SHA-256 / preparer / approver:
 - Last-good registry ID:
 - Release Manifest:
 - Authenticated endpoint evidence:

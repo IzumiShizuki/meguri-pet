@@ -5,7 +5,17 @@ import json
 from pathlib import Path
 from typing import Any
 
-from training.llm.scripts.common import PipelineError, read_json, sha256_file, utc_now, write_json
+from training.llm.scripts.common import (
+    PipelineError,
+    canonical_json,
+    read_json,
+    require_clean_git_worktree,
+    sha256_file,
+    sha256_text,
+    utc_now,
+    write_json,
+)
+from training.llm.scripts.export_adapter import adapter_hash
 
 
 def automatic_quality_score(report: dict[str, Any]) -> float:
@@ -86,19 +96,161 @@ def compare(
     safety_path: Path,
     human_path: Path | None,
     output: Path,
+    *,
+    comparison_commit: str | None = None,
 ) -> dict[str, Any]:
+    if output.exists():
+        raise PipelineError(f"refusing to overwrite comparison report: {output}")
     baselines = [read_json(path) for path in baseline_paths]
     candidate = read_json(candidate_path)
     safety = read_json(safety_path)
     human = read_json(human_path) if human_path else None
-    if any(report.get("counts", {}).get("total") != 184 for report in [*baselines, candidate]):
+    reports = [*baselines, candidate]
+    if any(report.get("status") != "pass" for report in reports):
+        raise PipelineError("all comparison locked-eval reports must pass")
+    if any(report.get("counts", {}).get("total") != 184 for report in reports):
         raise PipelineError("all comparison reports must cover the complete 184-case locked eval")
+    prompt_hashes = {report.get("provenance", {}).get("prompt_sha256") for report in reports}
+    schema_hashes = {
+        report.get("provenance", {}).get("response_schema_sha256") for report in reports
+    }
+    pad_lengths = {report.get("model", {}).get("input_pad_length") for report in reports}
+    if len(prompt_hashes) != 1 or None in prompt_hashes:
+        raise PipelineError("comparison reports must use one pinned Prompt")
+    if len(schema_hashes) != 1 or None in schema_hashes:
+        raise PipelineError("comparison reports must use one pinned response schema")
+    if len(pad_lengths) != 1 or None in pad_lengths:
+        raise PipelineError("comparison reports must use one fixed input padding length")
+    eval_inputs = {
+        canonical_json(report.get("provenance", {}).get("eval_input_hashes")) for report in reports
+    }
+    if len(eval_inputs) != 1 or "null" in eval_inputs:
+        raise PipelineError("comparison reports must use the same frozen evaluation inputs")
+    suite_ids = {
+        report.get("provenance", {}).get("locked_eval_suite_id") for report in reports
+    }
+    manifest_hashes = {
+        report.get("provenance", {}).get("locked_eval_manifest_sha256") for report in reports
+    }
+    source_build_ids = {
+        report.get("provenance", {}).get("locked_eval_source_build_id") for report in reports
+    }
+    if candidate.get("provenance", {}).get("generation_profile_sha256") is not None:
+        if len(suite_ids) != 1 or None in suite_ids:
+            raise PipelineError("profile-bound comparison requires one locked-eval suite ID")
+        if len(manifest_hashes) != 1 or None in manifest_hashes:
+            raise PipelineError("profile-bound comparison requires one locked-eval manifest")
+        if len(source_build_ids) != 1 or None in source_build_ids:
+            raise PipelineError("profile-bound comparison requires one evaluation source build")
+        independent_validations = {
+            canonical_json(report.get("independent_suite_validation")) for report in reports
+        }
+        if len(independent_validations) != 1 or "null" in independent_validations:
+            raise PipelineError(
+                "profile-bound comparison requires identical independent-suite validation"
+            )
+        if candidate.get("independent_suite_validation", {}).get("status") != "pass":
+            raise PipelineError("candidate independent-suite validation did not pass")
+    else:
+        independent_validations = set()
+    if candidate.get("locked_eval_policy", {}).get("used_for_checkpoint_selection") is not False:
+        raise PipelineError("candidate locked eval must not influence checkpoint selection")
+    if safety.get("status") != "pass" or safety.get("passed") != safety.get("total"):
+        raise PipelineError("complete passing safety evaluation is required")
+    candidate_adapter = Path(str(candidate.get("model", {}).get("adapter_path") or ""))
+    safety_adapter = Path(str(safety.get("model", {}).get("adapter_path") or ""))
+    if not candidate_adapter.is_dir() or not safety_adapter.is_dir():
+        raise PipelineError("candidate and safety reports must identify existing adapters")
+    candidate_digest, _ = adapter_hash(candidate_adapter)
+    safety_digest, _ = adapter_hash(safety_adapter)
+    if candidate_digest != safety_digest:
+        raise PipelineError("candidate locked eval and safety report use different adapters")
+    candidate_profile_id = candidate.get("provenance", {}).get("generation_profile_id")
+    candidate_profile_sha256 = candidate.get("provenance", {}).get("generation_profile_sha256")
+    safety_profile_id = safety.get("provenance", {}).get("generation_profile_id")
+    safety_profile_sha256 = safety.get("provenance", {}).get("generation_profile_sha256")
+    if (candidate_profile_id, candidate_profile_sha256) != (
+        safety_profile_id,
+        safety_profile_sha256,
+    ):
+        raise PipelineError("candidate locked eval and safety report use different generation profiles")
     hashes = {
         "baseline_reports": [sha256_file(path) for path in baseline_paths],
         "candidate_report": sha256_file(candidate_path),
         "safety_report": sha256_file(safety_path),
         "human_report": sha256_file(human_path) if human_path else None,
     }
+    if human is not None:
+        evidence = human.get("evidence", {})
+        if (
+            human.get("status") != "complete"
+            or human.get("counts", {}).get("total") != 184
+            or human.get("counts", {}).get("rated") != 184
+        ):
+            raise PipelineError("human review must be a complete 184-item frozen-rubric result")
+        if evidence.get("locked_eval_report_sha256") != hashes["candidate_report"]:
+            raise PipelineError("human review was not produced for the candidate locked eval")
+        if evidence.get("candidate_run_id") != candidate.get("run_id"):
+            raise PipelineError("human review candidate run identity mismatch")
+        if evidence.get("raw_outputs_sha256") != candidate.get("provenance", {}).get(
+            "raw_outputs_sha256"
+        ):
+            raise PipelineError("human review raw-output identity mismatch")
+        if (
+            evidence.get("generation_profile_id"),
+            evidence.get("generation_profile_sha256"),
+        ) != (candidate_profile_id, candidate_profile_sha256):
+            raise PipelineError("human review generation profile identity mismatch")
+        if evidence.get("locked_eval_suite_id") != candidate.get("provenance", {}).get(
+            "locked_eval_suite_id"
+        ):
+            raise PipelineError("human review locked-eval suite identity mismatch")
+        if evidence.get("locked_eval_source_build_id") != candidate.get("provenance", {}).get(
+            "locked_eval_source_build_id"
+        ):
+            raise PipelineError("human review evaluation source build identity mismatch")
+        independent_validation_sha256 = sha256_text(
+            canonical_json(candidate.get("independent_suite_validation"))
+        )
+        if (
+            evidence.get("independent_suite_validation_sha256")
+            != independent_validation_sha256
+        ):
+            raise PipelineError("human review suite-independence evidence mismatch")
+        if human.get("component_rates", {}).get("safety_acceptable") != 1.0:
+            raise PipelineError("human review contains a safety rejection")
+        language_naturalness = human.get("language_naturalness_by_language", {})
+        if set(language_naturalness) != {"jp", "zh"} or any(
+            not isinstance(rate, (int, float)) or isinstance(rate, bool) or not 0 <= rate <= 1
+            for rate in language_naturalness.values()
+        ):
+            raise PipelineError("human review language-specific naturalness rates are invalid")
+        component_rates = human.get("component_rates", {})
+        persona_score = round(
+            sum(
+                float(component_rates.get(field, -1))
+                for field in (
+                    "persona_consistent",
+                    "language_natural",
+                    "relationship_tone_appropriate",
+                )
+            )
+            / 3,
+            6,
+        )
+        if persona_score != human.get("persona_score"):
+            raise PipelineError("human review persona score is inconsistent with component rates")
+        expected_approval = persona_score >= 0.90 and all(
+            rate >= 0.90 for rate in language_naturalness.values()
+        )
+        if human.get("approved") != expected_approval:
+            raise PipelineError("human review approval is inconsistent with the frozen rubric")
+        reviewer = human.get("reviewer", {})
+        if (
+            reviewer.get("independent_of_training_and_prompt_tuning") is not True
+            or reviewer.get("locked_eval_content_not_used_for_tuning") is not True
+        ):
+            raise PipelineError("human review declarations are incomplete")
     baseline_rows = [
         {"run_id": report["run_id"], "automatic_score": automatic_quality_score(report)}
         for report in baselines
@@ -113,8 +265,34 @@ def compare(
             "automatic_score": automatic_quality_score(candidate),
         },
         "staging_gate": staging_gate(candidate, baseline_score=strongest, safety=safety, human=human),
-        "provenance": {**hashes, "created_at": utc_now()},
+        "provenance": {
+            **hashes,
+            "adapter_sha256": candidate_digest,
+            "prompt_sha256": next(iter(prompt_hashes)),
+            "response_schema_sha256": next(iter(schema_hashes)),
+            "input_pad_length": next(iter(pad_lengths)),
+            "generation_profile_id": candidate_profile_id,
+            "generation_profile_sha256": candidate_profile_sha256,
+            "locked_eval_suite_id": (
+                next(iter(suite_ids)) if len(suite_ids) == 1 else None
+            ),
+            "locked_eval_manifest_sha256": (
+                next(iter(manifest_hashes)) if len(manifest_hashes) == 1 else None
+            ),
+            "locked_eval_source_build_id": (
+                next(iter(source_build_ids)) if len(source_build_ids) == 1 else None
+            ),
+            "independent_suite_validation_sha256": (
+                sha256_text(next(iter(independent_validations)))
+                if independent_validations
+                else None
+            ),
+            "comparison_code_commit": comparison_commit,
+            "created_at": utc_now(),
+        },
     }
+    if comparison_commit is not None and require_clean_git_worktree() != comparison_commit:
+        raise PipelineError("Git commit changed while comparison was running")
     write_json(output, result)
     return result
 
@@ -128,7 +306,15 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        result = compare(args.baseline, args.candidate, args.safety, args.human_review, args.output)
+        comparison_commit = require_clean_git_worktree()
+        result = compare(
+            args.baseline,
+            args.candidate,
+            args.safety,
+            args.human_review,
+            args.output,
+            comparison_commit=comparison_commit,
+        )
     except PipelineError as exc:
         print(json.dumps({"status": "fail", "error": str(exc)}, ensure_ascii=False))
         return 2

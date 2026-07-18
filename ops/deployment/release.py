@@ -112,6 +112,17 @@ def preflight_release(env_file: Path, manifest_file: Path) -> dict[str, Any]:
             raise DeploymentError(f"manifest field is not readiness-safe: {field}")
     if manifest.get("llm_adapter_revision") and not manifest.get("llm_adapter_sha256"):
         raise DeploymentError("adapter revision requires llm_adapter_sha256")
+    if manifest.get("llm_adapter_revision"):
+        for field in (
+            "llm_generation_profile_id",
+            "llm_generation_profile_sha256",
+            "llm_locked_eval_suite_id",
+            "llm_locked_eval_source_build_id",
+            "llm_locked_eval_manifest_sha256",
+            "llm_independent_suite_validation_sha256",
+        ):
+            if not manifest.get(field) or placeholder(manifest.get(field)):
+                raise DeploymentError(f"profile-bound adapter release requires {field}")
     if not manifest.get("model_registry_id") or placeholder(manifest.get("model_registry_id")):
         raise DeploymentError("staging release requires model_registry_id")
     if env.get("MEGURI_MODEL_REGISTRY_ID") != manifest.get("model_registry_id"):

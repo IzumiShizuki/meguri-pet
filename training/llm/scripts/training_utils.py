@@ -48,6 +48,24 @@ def validate_probe_report(path: Path, config: dict[str, Any]) -> dict[str, Any]:
     report = read_json(path)
     if report.get("status") != "pass" or report.get("mode") != "full":
         raise PipelineError("a passing full L-001 probe report is required before training")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(report.get("git_commit") or "")):
+        raise PipelineError("the L-001 report is missing a pinned Git commit")
+    static = report.get("static") or {}
+    if static.get("status") != "pass":
+        raise PipelineError("the L-001 static probe section is not passing")
+    environment_lock = static.get("environment_lock") or {}
+    packages = environment_lock.get("packages")
+    if (
+        environment_lock.get("status") != "pass"
+        or not isinstance(packages, list)
+        or not packages
+        or any(not isinstance(item, str) or not item.strip() for item in packages)
+        or environment_lock.get("line_count") != len(packages)
+    ):
+        raise PipelineError("the L-001 report is missing a complete pip freeze environment lock")
+    normalized_lock = "\n".join(item.strip() for item in packages) + "\n"
+    if environment_lock.get("sha256") != sha256_text(normalized_lock):
+        raise PipelineError("the L-001 pip freeze environment lock hash is invalid")
     expected = config["model"]
     identity = report.get("model") or {}
     for field in ("repo_id", "revision", "tokenizer_revision"):
@@ -72,6 +90,66 @@ def validate_probe_report(path: Path, config: dict[str, Any]) -> dict[str, Any]:
     failed = [name for name in required if checks.get(name) is not True]
     if failed:
         raise PipelineError(f"full probe is missing passing checks: {failed}")
+    return report
+
+
+def maximum_training_peak_bytes(config: dict[str, Any]) -> int:
+    maximum_gib = float(config.get("hardware", {}).get("maximum_training_peak_gib", 0))
+    if maximum_gib <= 0:
+        raise PipelineError("training config requires a positive maximum_training_peak_gib")
+    return int(maximum_gib * (1024**3))
+
+
+def validate_training_peak_memory(peak_vram_bytes: int, config: dict[str, Any]) -> None:
+    maximum = maximum_training_peak_bytes(config)
+    if peak_vram_bytes > maximum:
+        raise PipelineError(
+            f"training peak VRAM exceeds configured limit: {peak_vram_bytes}>{maximum}"
+        )
+
+
+def validate_smoke_report(
+    path: Path,
+    *,
+    config: dict[str, Any],
+    dataset_manifest: dict[str, Any],
+    training_config_sha256: str,
+) -> dict[str, Any]:
+    report = read_json(path)
+    if report.get("status") != "pass" or report.get("stage") != "L1_smoke":
+        raise PipelineError("a passing L-006 smoke report is required before full training")
+    expected_model = config["model"]
+    identity_fields = {
+        "base_model_repo": expected_model["repo_id"],
+        "base_model_revision": expected_model["revision"],
+        "tokenizer_revision": expected_model["tokenizer_revision"],
+        "dataset_id": dataset_manifest["dataset_id"],
+        "data_build_id": dataset_manifest["source_build_id"],
+        "training_config_sha256": training_config_sha256,
+    }
+    mismatches = [name for name, expected in identity_fields.items() if report.get(name) != expected]
+    if mismatches:
+        raise PipelineError(f"L-006 smoke identity mismatch: {mismatches}")
+    if not re.fullmatch(r"[0-9a-f]{40}", str(report.get("training_commit") or "")):
+        raise PipelineError("L-006 smoke report is missing a pinned training commit")
+    train_samples = int(report.get("train_samples") or 0)
+    steps = int((report.get("training_parameters") or {}).get("max_steps") or 0)
+    if not 100 <= train_samples <= 200 or not 50 <= steps <= 100:
+        raise PipelineError("L-006 smoke size or optimizer-step gate is not satisfied")
+    if report.get("locked_eval_accessed") is not False:
+        raise PipelineError("L-006 smoke report does not prove locked-eval isolation")
+    if (report.get("post_training_json_smoke") or {}).get("status") != "pass":
+        raise PipelineError("L-006 post-training JSON smoke is not passing")
+    if report.get("loss_normalization") != "assistant_tokens_across_gradient_accumulation":
+        raise PipelineError("L-006 smoke did not use accumulated assistant-token loss normalization")
+    padding = report.get("input_padding") or {}
+    if padding.get("enabled") is not True or int(padding.get("input_pad_length") or 0) <= 0:
+        raise PipelineError("L-006 smoke did not use a fixed training input shape")
+    peak = int(report.get("peak_vram_bytes") or 0)
+    validate_training_peak_memory(peak, config)
+    final_adapter = Path(str(report.get("final_adapter") or ""))
+    if not final_adapter.is_dir() or not (final_adapter / "adapter_model.safetensors").is_file():
+        raise PipelineError("L-006 final adapter artifact is unavailable")
     return report
 
 
@@ -184,9 +262,26 @@ def tokenize_assistant_only(
         raise PipelineError(
             f"tokenized sample exceeds max_seq_length without safe JSON truncation: {len(full_ids)}>{max_seq_length}"
         )
-    eos_token_id = getattr(tokenizer, "eos_token_id", None)
-    if eos_token_id is None or not full_ids or full_ids[-1] != eos_token_id:
-        raise PipelineError("chat template does not terminate the assistant response with EOS")
+    eos_value = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(eos_value, int):
+        eos_token_ids = {eos_value}
+    elif isinstance(eos_value, (list, tuple, set)):
+        eos_token_ids = {int(value) for value in eos_value}
+    else:
+        eos_token_ids = set()
+    terminal_eos = next(
+        (index for index in range(len(full_ids) - 1, len(prefix_ids) - 1, -1) if full_ids[index] in eos_token_ids),
+        None,
+    )
+    trailing_text = (
+        tokenizer.decode(full_ids[terminal_eos + 1 :], skip_special_tokens=True)
+        if terminal_eos is not None
+        else ""
+    )
+    if terminal_eos is None or trailing_text.strip():
+        raise PipelineError(
+            "chat template does not terminate the assistant response with EOS followed only by whitespace"
+        )
     labels = [-100] * len(prefix_ids) + full_ids[len(prefix_ids) :]
     if not any(label != -100 for label in labels) or any(label != -100 for label in labels[: len(prefix_ids)]):
         raise PipelineError("assistant-only loss mask is invalid")
@@ -196,12 +291,83 @@ def tokenize_assistant_only(
     return {"input_ids": full_ids, "attention_mask": [1] * len(full_ids), "labels": labels}
 
 
+def validate_input_padding(
+    *,
+    input_pad_length: int | None,
+    max_seq_length: int,
+    train_lengths: list[int],
+    validation_lengths: list[int],
+    required: bool,
+) -> dict[str, Any]:
+    if not train_lengths or not validation_lengths:
+        raise PipelineError("training and validation token lengths are required")
+    if input_pad_length is None:
+        if required:
+            raise PipelineError("L-006 smoke training requires a fixed --input-pad-length")
+        return {
+            "enabled": False,
+            "train_max_tokens": max(train_lengths),
+            "validation_max_tokens": max(validation_lengths),
+        }
+    if input_pad_length <= 0 or input_pad_length > max_seq_length:
+        raise PipelineError(
+            f"training input pad length must be within 1..{max_seq_length}"
+        )
+    observed_max = max(max(train_lengths), max(validation_lengths))
+    if observed_max > input_pad_length:
+        raise PipelineError(
+            f"training input exceeds fixed pad length: {observed_max}>{input_pad_length}"
+        )
+    return {
+        "enabled": True,
+        "input_pad_length": input_pad_length,
+        "train_max_tokens": max(train_lengths),
+        "validation_max_tokens": max(validation_lengths),
+        "train_distinct_lengths": len(set(train_lengths)),
+        "validation_distinct_lengths": len(set(validation_lengths)),
+    }
+
+
+def token_normalized_causal_lm_loss(
+    outputs: Any,
+    labels: Any,
+    *,
+    num_items_in_batch: Any,
+    loss_function: Any | None = None,
+) -> Any:
+    if labels is None:
+        raise PipelineError("token-normalized causal loss requires labels")
+    if num_items_in_batch is None:
+        try:
+            num_items_in_batch = labels.ne(-100).sum()
+        except (AttributeError, TypeError) as exc:
+            raise PipelineError(
+                "token-normalized causal loss cannot count evaluation labels"
+            ) from exc
+    logits = getattr(outputs, "logits", None)
+    if logits is None or not hasattr(logits, "shape"):
+        raise PipelineError("token-normalized causal loss requires model logits")
+    if loss_function is None:
+        try:
+            from transformers.loss.loss_utils import ForCausalLMLoss
+        except ImportError as exc:
+            raise PipelineError("Transformers causal loss is unavailable") from exc
+        loss_function = ForCausalLMLoss
+    return loss_function(
+        logits,
+        labels,
+        vocab_size=int(logits.shape[-1]),
+        num_items_in_batch=num_items_in_batch,
+    )
+
+
 def smoke_manifest(
     rows: list[dict[str, Any]],
     validation_rows: list[dict[str, Any]],
     *,
     dataset_id: str,
     seed: int,
+    input_padding: dict[str, Any],
 ) -> dict[str, Any]:
     ids = [str((row.get("metadata") or {}).get("sample_id")) for row in rows]
     validation_ids = [str((row.get("metadata") or {}).get("sample_id")) for row in validation_rows]
@@ -214,5 +380,6 @@ def smoke_manifest(
         "validation_count": len(validation_ids),
         "sample_ids_sha256": sha256_text(canonical_json(ids)),
         "validation_sample_ids_sha256": sha256_text(canonical_json(validation_ids)),
+        "input_padding": input_padding,
         "locked_eval_accessed": False,
     }

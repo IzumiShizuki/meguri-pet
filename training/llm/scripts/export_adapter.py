@@ -5,7 +5,16 @@ import json
 import shutil
 from pathlib import Path
 
-from training.llm.scripts.common import PipelineError, canonical_json, read_json, sha256_file, sha256_text, utc_now, write_json
+from training.llm.scripts.common import (
+    PipelineError,
+    canonical_json,
+    read_json,
+    require_clean_git_worktree,
+    sha256_file,
+    sha256_text,
+    utc_now,
+    write_json,
+)
 
 
 def adapter_hash(root: Path) -> tuple[str, dict[str, str]]:
@@ -26,8 +35,15 @@ def adapter_hash(root: Path) -> tuple[str, dict[str, str]]:
     return sha256_text(canonical_json(hashes)), hashes
 
 
-def export(experiment_dir: Path, export_root: Path, selection_path: Path | None = None) -> Path:
-    experiment = read_json(experiment_dir / "experiment_manifest.json")
+def export(
+    experiment_dir: Path,
+    export_root: Path,
+    selection_path: Path | None = None,
+    *,
+    export_commit: str | None = None,
+) -> Path:
+    experiment_path = experiment_dir / "experiment_manifest.json"
+    experiment = read_json(experiment_path)
     if experiment.get("status") != "pass":
         raise PipelineError("only a passing experiment can be exported")
     selection = read_json(selection_path) if selection_path else None
@@ -55,6 +71,8 @@ def export(experiment_dir: Path, export_root: Path, selection_path: Path | None 
     copied_digest, copied_hashes = adapter_hash(destination)
     if copied_digest != digest or copied_hashes != hashes:
         raise PipelineError("exported adapter hash verification failed")
+    if export_commit is not None and require_clean_git_worktree() != export_commit:
+        raise PipelineError("Git commit changed while adapter export was running")
     write_json(
         destination / "export_manifest.json",
         {
@@ -66,6 +84,9 @@ def export(experiment_dir: Path, export_root: Path, selection_path: Path | None 
             "tokenizer_revision": experiment["tokenizer_revision"],
             "adapter_sha256": digest,
             "validation_selection": str(selection_path.resolve()) if selection_path else None,
+            "validation_selection_sha256": sha256_file(selection_path) if selection_path else None,
+            "experiment_manifest_sha256": sha256_file(experiment_path),
+            "export_code_commit": export_commit,
             "files": hashes,
             "created_at": utc_now(),
         },
@@ -80,7 +101,13 @@ def main() -> int:
     parser.add_argument("--selection", type=Path)
     args = parser.parse_args()
     try:
-        output = export(args.experiment_dir, args.export_root, args.selection)
+        export_commit = require_clean_git_worktree()
+        output = export(
+            args.experiment_dir,
+            args.export_root,
+            args.selection,
+            export_commit=export_commit,
+        )
     except PipelineError as exc:
         print(json.dumps({"status": "fail", "error": str(exc)}, ensure_ascii=False))
         return 2

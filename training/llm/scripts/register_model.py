@@ -3,14 +3,25 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
-from training.llm.scripts.common import LLM_ROOT, PipelineError, read_json, utc_now
+from training.llm.generation_profile import load_generation_profile
+from training.llm.scripts.common import (
+    LLM_ROOT,
+    PipelineError,
+    canonical_json,
+    load_yaml,
+    read_json,
+    sha256_text,
+    utc_now,
+)
 from training.llm.scripts.export_adapter import adapter_hash
 
 
 ALLOWED_REGISTER_STATUS = {"experimental", "evaluated", "staging_candidate"}
+MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$")
 
 
 def _validate_registry(registry: dict[str, Any], schema_path: Path) -> None:
@@ -48,6 +59,8 @@ def register(
     status: str,
     parent_model_id: str | None,
     rollback_model_id: str | None,
+    generation_profile_path: Path | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
     if status not in ALLOWED_REGISTER_STATUS:
         raise PipelineError("training registration cannot mark staging/production active")
@@ -73,16 +86,74 @@ def register(
             raise PipelineError("locked eval adapter does not match exported adapter")
     if comparison.get("candidate", {}).get("run_id") != locked.get("run_id"):
         raise PipelineError("comparison candidate does not match locked-eval run")
+    generation_profile = None
+    if generation_profile_path is not None:
+        generation_profile = load_generation_profile(
+            generation_profile_path,
+            training_config=load_yaml(Path(experiment["training_config"])),
+            adapter_path=export_dir,
+        )
+        locked_provenance = locked.get("provenance", {})
+        comparison_provenance = comparison.get("provenance", {})
+        for label, provenance in (
+            ("locked eval", locked_provenance),
+            ("comparison", comparison_provenance),
+        ):
+            if provenance.get("generation_profile_id") != generation_profile.profile_id:
+                raise PipelineError(f"{label} generation profile ID mismatch")
+            if provenance.get("generation_profile_sha256") != generation_profile.sha256:
+                raise PipelineError(f"{label} generation profile digest mismatch")
+        locked_suite_id = locked_provenance.get("locked_eval_suite_id")
+        if not locked_suite_id:
+            raise PipelineError("profile-bound registration requires a versioned locked-eval suite")
+        if locked_suite_id == generation_profile.previous_locked_eval_suite_id:
+            raise PipelineError("generation profile must use a new independently frozen locked-eval suite")
+        locked_input_hashes = locked_provenance.get("eval_input_hashes")
+        if not isinstance(locked_input_hashes, dict):
+            raise PipelineError("profile-bound registration requires frozen locked-eval input hashes")
+        if sha256_text(canonical_json(locked_input_hashes)) == (
+            generation_profile.previous_locked_eval_input_hashes_sha256
+        ):
+            raise PipelineError("generation profile must not reuse the previous locked-eval inputs")
+        locked_manifest_sha256 = locked_provenance.get("locked_eval_manifest_sha256")
+        if not locked_manifest_sha256:
+            raise PipelineError("profile-bound registration requires a locked-eval manifest digest")
+        locked_source_build_id = locked_provenance.get("locked_eval_source_build_id")
+        if not locked_source_build_id:
+            raise PipelineError("profile-bound registration requires an evaluation source build")
+        if comparison_provenance.get("locked_eval_suite_id") != locked_suite_id:
+            raise PipelineError("comparison locked-eval suite identity mismatch")
+        if comparison_provenance.get("locked_eval_manifest_sha256") != locked_manifest_sha256:
+            raise PipelineError("comparison locked-eval manifest identity mismatch")
+        if comparison_provenance.get("locked_eval_source_build_id") != locked_source_build_id:
+            raise PipelineError("comparison evaluation source build identity mismatch")
+        independent_validation = locked.get("independent_suite_validation")
+        if not isinstance(independent_validation, dict) or independent_validation.get("status") != "pass":
+            raise PipelineError("profile-bound registration requires passing suite independence validation")
+        independent_validation_sha256 = sha256_text(canonical_json(independent_validation))
+        if (
+            comparison_provenance.get("independent_suite_validation_sha256")
+            != independent_validation_sha256
+        ):
+            raise PipelineError("comparison suite-independence evidence mismatch")
+    elif locked.get("provenance", {}).get("generation_profile_sha256") is not None:
+        raise PipelineError("registration must bind the generation profile used by locked eval")
     if status == "staging_candidate":
         if comparison.get("staging_gate", {}).get("status") != "pass":
             raise PipelineError("staging_candidate requires a passing comparison gate")
         if not rollback_model_id:
             raise PipelineError("staging_candidate requires an explicit rollback_model_id")
-    model_id = str(export["model_id"])
-    if any(item.get("model_id") == model_id for item in registry["models"]):
-        raise PipelineError(f"model is already registered: {model_id}")
+        if generation_profile is None:
+            raise PipelineError("staging_candidate requires a pinned generation profile")
+    resolved_model_id = str(model_id or export["model_id"])
+    if not MODEL_ID.fullmatch(resolved_model_id):
+        raise PipelineError("model ID must be a safe 3-128 character identifier")
+    if model_id is not None and generation_profile is None:
+        raise PipelineError("a deployment model ID override requires a pinned generation profile")
+    if any(item.get("model_id") == resolved_model_id for item in registry["models"]):
+        raise PipelineError(f"model is already registered: {resolved_model_id}")
     entry = {
-        "model_id": model_id,
+        "model_id": resolved_model_id,
         "status": status,
         "base_model": experiment["base_model_repo"],
         "base_revision": experiment["base_model_revision"],
@@ -102,6 +173,35 @@ def register(
         "validation_selection": str(selection_path.resolve()),
         "locked_eval_report": str(locked_eval_path.resolve()),
         "comparison_report": str(comparison_path.resolve()),
+        "generation_profile": (
+            str(generation_profile.path) if generation_profile is not None else None
+        ),
+        "generation_profile_id": (
+            generation_profile.profile_id if generation_profile is not None else None
+        ),
+        "generation_profile_sha256": (
+            generation_profile.sha256 if generation_profile is not None else None
+        ),
+        "locked_eval_suite_id": (
+            locked.get("provenance", {}).get("locked_eval_suite_id")
+            if generation_profile is not None
+            else None
+        ),
+        "locked_eval_source_build_id": (
+            locked.get("provenance", {}).get("locked_eval_source_build_id")
+            if generation_profile is not None
+            else None
+        ),
+        "locked_eval_manifest_sha256": (
+            locked.get("provenance", {}).get("locked_eval_manifest_sha256")
+            if generation_profile is not None
+            else None
+        ),
+        "independent_suite_validation_sha256": (
+            sha256_text(canonical_json(locked.get("independent_suite_validation")))
+            if generation_profile is not None
+            else None
+        ),
         "created_at": utc_now(),
         "parent_model_id": parent_model_id,
         "rollback_model_id": rollback_model_id,
@@ -122,6 +222,8 @@ def main() -> int:
     parser.add_argument("--validation-selection", type=Path, required=True)
     parser.add_argument("--locked-eval-report", type=Path, required=True)
     parser.add_argument("--comparison-report", type=Path, required=True)
+    parser.add_argument("--generation-profile", type=Path)
+    parser.add_argument("--model-id")
     parser.add_argument("--status", choices=sorted(ALLOWED_REGISTER_STATUS), default="evaluated")
     parser.add_argument("--parent-model-id")
     parser.add_argument("--rollback-model-id")
@@ -138,6 +240,8 @@ def main() -> int:
             status=args.status,
             parent_model_id=args.parent_model_id,
             rollback_model_id=args.rollback_model_id,
+            generation_profile_path=args.generation_profile,
+            model_id=args.model_id,
         )
     except PipelineError as exc:
         print(json.dumps({"status": "fail", "error": str(exc)}, ensure_ascii=False))

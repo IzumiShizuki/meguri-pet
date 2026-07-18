@@ -46,12 +46,18 @@ class GatewaySettings:
 
 
 def _headers(metadata: dict[str, str]) -> dict[str, str]:
-    return {
+    headers = {
         "X-Meguri-Model-Id": metadata["model_id"],
         "X-Meguri-Base-Revision": metadata["base_revision"],
         "X-Meguri-Adapter-Revision": metadata["adapter_revision"],
         "X-Meguri-Adapter-SHA256": metadata["adapter_sha256"],
     }
+    if metadata.get("generation_profile_id"):
+        headers["X-Meguri-Generation-Profile-Id"] = metadata["generation_profile_id"]
+        headers["X-Meguri-Generation-Profile-SHA256"] = metadata[
+            "generation_profile_sha256"
+        ]
+    return headers
 
 
 def create_app(manager: ModelManager, settings: GatewaySettings) -> FastAPI:

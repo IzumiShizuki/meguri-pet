@@ -1,9 +1,41 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 from .common import PipelineError
+
+
+def configure_compile_cache() -> dict[str, Any]:
+    if os.name != "nt":
+        return {"configured": False, "reason": "non_windows"}
+    root = Path(
+        os.environ.get("MEGURI_LLM_COMPILE_CACHE_ROOT")
+        or r"D:\environment\cache\meguri-llm"
+    ).expanduser()
+    paths: dict[str, str] = {}
+    try:
+        for variable, directory in (
+            ("TORCHINDUCTOR_CACHE_DIR", "torchinductor"),
+            ("TRITON_CACHE_DIR", "triton"),
+        ):
+            value = Path(os.environ.get(variable) or root / directory).expanduser().resolve()
+            value.mkdir(parents=True, exist_ok=True)
+            os.environ[variable] = str(value)
+            paths[variable] = str(value)
+    except OSError as exc:
+        raise PipelineError(f"cannot prepare the Windows compile cache below {root}") from exc
+    return {"configured": True, "root": str(root.resolve()), "paths": paths}
+
+
+def autocast_dtype(config: dict[str, Any], torch_module: Any) -> Any:
+    dtype = str(config["model"].get("dtype") or "")
+    if dtype == "bfloat16":
+        return torch_module.bfloat16
+    if dtype == "float16":
+        return torch_module.float16
+    raise PipelineError(f"unsupported CUDA autocast dtype: {dtype}")
 
 
 def resolve_model_snapshot(config: dict[str, Any], *, allow_download: bool) -> Path:
@@ -36,6 +68,7 @@ def load_base_model(
 ) -> tuple[Any, Any, Any]:
     """Load the exact pinned base model without attaching an adapter."""
 
+    configure_compile_cache()
     try:
         import torch
     except ImportError as exc:
@@ -57,6 +90,7 @@ def load_base_model(
             load_in_4bit=bool(model_config.get("load_in_4bit")),
             dtype=dtype,
             use_gradient_checkpointing=training.get("gradient_checkpointing", "unsloth"),
+            local_files_only=not allow_download,
         )
         return model, processor, FastVisionModel
 
@@ -70,6 +104,7 @@ def load_base_model(
             max_seq_length=int(training["max_seq_length"]),
             dtype=dtype,
             load_in_4bit=bool(model_config.get("load_in_4bit")),
+            local_files_only=not allow_download,
         )
         return model, tokenizer, FastLanguageModel
 

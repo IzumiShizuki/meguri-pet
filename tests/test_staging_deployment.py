@@ -36,6 +36,12 @@ def manifest(release_id: str, database_revision: str = "20260714_0004") -> dict:
         "llm_base_model": "meguri-base-r1",
         "llm_adapter_revision": "meguri-adapter-r1",
         "llm_adapter_sha256": "6789abcdef012345" * 4,
+        "llm_generation_profile_id": "decode-v2",
+        "llm_generation_profile_sha256": "789abcdef0123456" * 4,
+        "llm_locked_eval_suite_id": "meguri-locked-eval-v2",
+        "llm_locked_eval_source_build_id": "new-eval-build-v2",
+        "llm_locked_eval_manifest_sha256": "89abcdef01234567" * 4,
+        "llm_independent_suite_validation_sha256": "9abcdef012345678" * 4,
         "model_registry_id": "meguri-text-staging-r1",
         "tests": {"python": "passed", "typescript": "passed", "integration": "passed"},
         "generated_at": "2026-07-14T12:00:00Z",
@@ -79,6 +85,17 @@ class StagingDeploymentTests(unittest.TestCase):
             env_path.write_text(content, encoding="utf-8")
             with self.assertRaisesRegex(DeploymentError, "immutable sha256 digest"):
                 preflight_release(env_path, Path(state["manifest_file"]))
+
+    def test_preflight_requires_profile_bound_adapter_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = write_release(root, "meguri-staging-r001")
+            manifest_path = Path(state["manifest_file"])
+            value = json.loads(manifest_path.read_text(encoding="utf-8"))
+            value["llm_generation_profile_sha256"] = None
+            manifest_path.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(DeploymentError, "llm_generation_profile_sha256"):
+                preflight_release(Path(state["env_file"]), manifest_path)
 
     def test_success_records_last_good_and_command_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

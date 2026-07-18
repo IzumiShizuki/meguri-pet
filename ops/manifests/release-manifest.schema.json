@@ -90,6 +90,30 @@
       "type": ["string", "null"],
       "pattern": "^[0-9a-f]{64}$"
     },
+    "llm_generation_profile_id": {
+      "type": ["string", "null"],
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"
+    },
+    "llm_generation_profile_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "llm_locked_eval_suite_id": {
+      "type": ["string", "null"],
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"
+    },
+    "llm_locked_eval_source_build_id": {
+      "type": ["string", "null"],
+      "minLength": 3
+    },
+    "llm_locked_eval_manifest_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "llm_independent_suite_validation_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "model_registry_id": {
       "type": [
         "string",

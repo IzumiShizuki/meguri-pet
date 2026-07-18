@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "suite_id": "meguri-locked-eval-v1",
   "source_build_id": "meguri_v2_02c3db0c507d7c2d",
   "counts": {
     "jp": 92,

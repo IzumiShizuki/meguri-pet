@@ -1,5 +1,46 @@
 {
   "schema_version": 1,
-  "updated_at": "2026-07-14T00:00:00+00:00",
-  "models": []
+  "updated_at": "2026-07-15T21:43:52.240127+00:00",
+  "models": [
+    {
+      "model_id": "qwen35-4b-l2-full-s3407-20260716-v1-a2dec9d9d481",
+      "status": "evaluated",
+      "base_model": "Qwen/Qwen3.5-4B",
+      "base_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "tokenizer_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "adapter_revision": "a2dec9d9d481aa8e",
+      "adapter_sha256": "a2dec9d9d481aa8e118afc61838cb1d9e80136c3bfac5b051a62efb0a96b87ef",
+      "artifact_path": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\adapters\\qwen35-4b-l2-full-s3407-20260716-v1-a2dec9d9d481",
+      "dataset_id": "meguri-text-sft-v1-532aca8b1a5d",
+      "data_build_id": "meguri_v2_02c3db0c507d7c2d",
+      "prompt_sha256": "e17211c6fc2a99d18ffe50c12627b79e93d26f63d8966a1ec7e730faa639946d",
+      "response_schema_sha256": "3819e5f532d33d69bc8a13baeae8f564f0a66d9cd42d7c7cc3feb985f6ba4c03",
+      "chat_template_sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+      "training_commit": "f51a62a92ce9174f2844a9db19f99bebaefb14bd",
+      "framework_versions": {
+        "torch": "2.8.0+cu128",
+        "transformers": "5.2.0",
+        "trl": "0.22.2",
+        "peft": "0.19.1",
+        "datasets": "4.3.0",
+        "unsloth": "2026.2.1",
+        "bitsandbytes": "0.49.2"
+      },
+      "training_config": "D:\\program\\meguri-pet-llm-training\\training\\llm\\configs\\qwen35_4b_bf16_lora.yaml",
+      "experiment_manifest": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\checkpoints\\qwen35-4b-l2-full-s3407-20260716-v1\\experiment_manifest.json",
+      "validation_selection": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\reports\\qwen35-4b-l2-validation-selection-r851bf6e-20260716-v1.json",
+      "locked_eval_report": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\eval\\qwen35-4b-l2-post-train-r851bf6e-20260716-v1\\report.json",
+      "comparison_report": "D:\\program\\meguri-pet-llm-training\\training\\llm\\artifacts\\reports\\qwen35-4b-l2-comparison-r851bf6e-20260716-v1.json",
+      "generation_profile": null,
+      "generation_profile_id": null,
+      "generation_profile_sha256": null,
+      "locked_eval_suite_id": null,
+      "locked_eval_source_build_id": null,
+      "locked_eval_manifest_sha256": null,
+      "independent_suite_validation_sha256": null,
+      "created_at": "2026-07-15T21:43:52.240107+00:00",
+      "parent_model_id": null,
+      "rollback_model_id": null
+    }
+  ]
 }

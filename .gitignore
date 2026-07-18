@@ -35,6 +35,7 @@ coverage/
 /training/llm/artifacts/
 /training/llm/checkpoints/
 /training/llm/reports/
+/unsloth_compiled_cache/
 
 # Secrets and local environment files
 .env

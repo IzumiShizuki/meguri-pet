@@ -139,6 +139,14 @@ def check_readiness(manifest: dict[str, Any], args: argparse.Namespace) -> list[
         "llm_base_model": args.expected_llm_base_model,
         "llm_adapter_revision": args.expected_llm_adapter_revision,
         "llm_adapter_sha256": args.expected_llm_adapter_sha256,
+        "llm_generation_profile_id": args.expected_llm_generation_profile_id,
+        "llm_generation_profile_sha256": args.expected_llm_generation_profile_sha256,
+        "llm_locked_eval_suite_id": args.expected_llm_locked_eval_suite_id,
+        "llm_locked_eval_source_build_id": args.expected_llm_locked_eval_source_build_id,
+        "llm_locked_eval_manifest_sha256": args.expected_llm_locked_eval_manifest_sha256,
+        "llm_independent_suite_validation_sha256": (
+            args.expected_llm_independent_suite_validation_sha256
+        ),
     }
     for field, expected_value in expected.items():
         if expected_value is not None and manifest.get(field) != expected_value:
@@ -169,6 +177,18 @@ def check_readiness(manifest: dict[str, Any], args: argparse.Namespace) -> list[
             errors.append("llm_adapter_sha256: required when llm_adapter_revision is set")
         if adapter_sha256 is not None and placeholder(adapter_sha256):
             errors.append("llm_adapter_sha256: placeholder value is not readiness-safe")
+        profile_fields = (
+            "llm_generation_profile_id",
+            "llm_generation_profile_sha256",
+            "llm_locked_eval_suite_id",
+            "llm_locked_eval_source_build_id",
+            "llm_locked_eval_manifest_sha256",
+            "llm_independent_suite_validation_sha256",
+        )
+        if adapter_revision is not None:
+            for field in profile_fields:
+                if not manifest.get(field) or placeholder(manifest.get(field)):
+                    errors.append(f"{field}: required for a profile-bound adapter release")
         if manifest.get("environment") in {"staging", "production"}:
             registry_id = manifest.get("model_registry_id")
             if not registry_id or placeholder(registry_id):
@@ -198,6 +218,12 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--expected-llm-base-model")
     result.add_argument("--expected-llm-adapter-revision")
     result.add_argument("--expected-llm-adapter-sha256")
+    result.add_argument("--expected-llm-generation-profile-id")
+    result.add_argument("--expected-llm-generation-profile-sha256")
+    result.add_argument("--expected-llm-locked-eval-suite-id")
+    result.add_argument("--expected-llm-locked-eval-source-build-id")
+    result.add_argument("--expected-llm-locked-eval-manifest-sha256")
+    result.add_argument("--expected-llm-independent-suite-validation-sha256")
     result.add_argument("--expected-image-digest", action="append", type=parse_assignment, default=[])
     return result
 

@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "request_id": "meguri-text-llm-independent-locked-suite-v2-20260716",
+  "status": "WAITING_INDEPENDENT_FREEZE",
+  "candidate": {
+    "base_model": "Qwen/Qwen3.5-4B",
+    "base_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "adapter_model_id": "qwen35-4b-l2-full-s3407-20260716-v1-a2dec9d9d481",
+    "adapter_sha256": "a2dec9d9d481aa8e118afc61838cb1d9e80136c3bfac5b051a62efb0a96b87ef",
+    "generation_profile_id": "qwen35-4b-l2-decode-v2-r851bf6e-20260716-v1",
+    "generation_profile_sha256": "3b36c58ddcb6a09499c7a5528054741d2f43f25c2b87c2a2b576cc5a1c170738"
+  },
+  "excluded_previous_suite": {
+    "suite_id": "meguri-locked-eval-v1",
+    "source_build_id": "meguri_v2_02c3db0c507d7c2d",
+    "input_hashes_sha256": "976df16cc1b2c509bf6932d62baf29c1cf97e6796c19912dc03529a9ef722980"
+  },
+  "required_suite": {
+    "manifest_schema_version": 2,
+    "new_suite_id_required": true,
+    "new_source_build_id_required": true,
+    "counts": {"jp": 92, "zh": 92, "total": 184},
+    "distinct_preparer_and_approver_required": true,
+    "training_team_content_access_before_freeze": false,
+    "content_used_for_training_or_tuning": false,
+    "zero_overlap_dimensions": [
+      "sample_id",
+      "normalized_input_fingerprint",
+      "full_case_fingerprint",
+      "scene_id",
+      "normalized_near_input_at_0.95"
+    ]
+  },
+  "required_deliverables": [
+    "92-row cases_jp.jsonl retained in the independent evaluation scope",
+    "92-row cases_zh.jsonl retained in the independent evaluation scope",
+    "committed locked-eval manifest v2 containing digests and declarations only",
+    "distinct preparer and approver identities",
+    "source-authority record for the new evaluation build"
+  ],
+  "manifest_builder": {
+    "module": "training.llm.eval.locked_suite",
+    "acknowledgement": "--acknowledge-independent-freeze-and-non-tuning",
+    "output_must_be_committed_before_evaluation": true,
+    "raw_case_text_written_to_manifest": false
+  },
+  "after_handoff": {
+    "rerun_l0_base_on_new_suite": true,
+    "rerun_l0_prompt_rag_on_new_suite": true,
+    "run_v2_candidate_once_on_new_suite": true,
+    "run_frozen_safety_with_same_generation_profile": true,
+    "run_184_item_independent_human_review_after_automatic_gate": true,
+    "old_locked_results_may_be_used_for_tuning": false
+  },
+  "staging_eligible": false,
+  "production_ready": false,
+  "generated_at": "2026-07-16T07:20:00+08:00"
+}

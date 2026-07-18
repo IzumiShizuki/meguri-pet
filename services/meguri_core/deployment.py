@@ -140,6 +140,19 @@ class ReadinessEvaluator:
                 raise RuntimeError("MEGURI_MODEL_REGISTRY_ID is required")
             if normalize_adapter_revision(manifest.get("model_registry_id")) != actual_registry_id:
                 raise RuntimeError("model_registry_id does not match the release manifest")
+            actual_profile_id = normalize_adapter_revision(
+                self.env.get("MEGURI_LLM_GENERATION_PROFILE_ID")
+            )
+            if normalize_adapter_revision(manifest.get("llm_generation_profile_id")) != actual_profile_id:
+                raise RuntimeError("llm_generation_profile_id does not match the release manifest")
+            actual_profile_sha256 = normalize_adapter_revision(
+                self.env.get("MEGURI_LLM_GENERATION_PROFILE_SHA256")
+            )
+            if (
+                normalize_adapter_revision(manifest.get("llm_generation_profile_sha256"))
+                != actual_profile_sha256
+            ):
+                raise RuntimeError("llm_generation_profile_sha256 does not match the release manifest")
             if self.build_id != expected["data_build_id"]:
                 raise RuntimeError("mounted data build does not match MEGURI_DATA_BUILD_ID")
 

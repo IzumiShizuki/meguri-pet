@@ -8,16 +8,19 @@ from typing import Any
 from training.llm.eval.backends import LocalUnslothBackend
 from training.llm.eval.persona_eval import aggregate_persona_metrics, evaluate_persona
 from training.llm.eval.schema_eval import aggregate_schema_metrics, evaluate_output
+from training.llm.generation_profile import resolve_generation_settings
 from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     PipelineError,
+    canonical_json,
     load_yaml,
+    package_versions,
     read_json,
     read_jsonl,
+    require_clean_git_worktree,
     sha256_file,
     utc_now,
     write_json,
-    write_jsonl,
 )
 from training.llm.scripts.export_adapter import adapter_hash
 from training.llm.scripts.training_utils import EXPERIMENT_ID
@@ -71,6 +74,9 @@ def _composite(schema: dict[str, Any], persona: dict[str, Any], safety_rate: flo
 def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.run_id):
         raise PipelineError("validation run ID must be a safe identifier")
+    if args.progress_every <= 0:
+        raise PipelineError("progress interval must be positive")
+    run_commit = require_clean_git_worktree()
     manifest = read_json(args.dataset_dir / "dataset_manifest.json")
     validation_path = args.dataset_dir / "validation.jsonl"
     if sha256_file(validation_path) != manifest.get("files", {}).get("validation.jsonl"):
@@ -79,11 +85,21 @@ def run(args: argparse.Namespace) -> Path:
     if safety.get("model", {}).get("adapter_path") != str(args.adapter.resolve()):
         raise PipelineError("safety report was not produced for the same adapter/checkpoint")
     config = load_yaml(args.config)
+    generation, generation_profile = resolve_generation_settings(
+        args,
+        training_config=config,
+        adapter_path=args.adapter,
+    )
+    safety_profile_sha256 = safety.get("provenance", {}).get("generation_profile_sha256")
+    expected_profile_sha256 = generation_profile.sha256 if generation_profile is not None else None
+    if safety_profile_sha256 != expected_profile_sha256:
+        raise PipelineError("safety and validation evaluations must use the same generation profile")
     backend = LocalUnslothBackend(
         config,
         allow_download=args.allow_download,
         adapter_path=args.adapter,
-        max_new_tokens=256,
+        input_pad_length=args.input_pad_length,
+        **generation,
     )
     rows = [row for _, row in read_jsonl(validation_path)]
     output = args.output_root.resolve() / args.run_id
@@ -91,24 +107,40 @@ def run(args: argparse.Namespace) -> Path:
         raise PipelineError(f"refusing to overwrite validation evaluation: {output}")
     output.mkdir(parents=True, exist_ok=False)
     results: list[dict[str, Any]] = []
-    for row in rows:
-        messages = row["messages"]
-        expected = _expected(row)
-        generated = backend.generate(messages[0]["content"], messages[1]["content"])
-        results.append(
-            {
+    raw_path = output / "raw_outputs.jsonl"
+    with raw_path.open("x", encoding="utf-8", newline="\n") as raw_handle:
+        for index, row in enumerate(rows, 1):
+            messages = row["messages"]
+            expected = _expected(row)
+            generated = backend.generate(messages[0]["content"], messages[1]["content"])
+            result = {
                 "sample_id": row["metadata"]["sample_id"],
                 "raw_output": generated.raw_output,
                 "expected": expected,
                 "metrics": evaluate_output(generated.raw_output, expected),
                 "persona_metrics": evaluate_persona(generated.raw_output, expected),
             }
-        )
-    raw_path = output / "raw_outputs.jsonl"
-    write_jsonl(raw_path, results)
+            results.append(result)
+            raw_handle.write(canonical_json(result) + "\n")
+            raw_handle.flush()
+            if index % args.progress_every == 0 or index == len(rows):
+                print(
+                    json.dumps(
+                        {
+                            "event": "validation_eval.progress",
+                            "run_id": args.run_id,
+                            "completed": index,
+                            "total": len(rows),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
     schema = aggregate_schema_metrics(results)
     persona = aggregate_persona_metrics(results)
     digest, _ = adapter_hash(args.adapter)
+    if require_clean_git_worktree() != run_commit:
+        raise PipelineError("Git commit changed while validation evaluation was running")
     report = {
         "schema_version": 1,
         "run_id": args.run_id,
@@ -127,6 +159,14 @@ def run(args: argparse.Namespace) -> Path:
             "validation_jsonl_sha256": sha256_file(validation_path),
             "raw_outputs_sha256": sha256_file(raw_path),
             "training_config_sha256": sha256_file(args.config),
+            "generation_profile_id": (
+                generation_profile.profile_id if generation_profile is not None else None
+            ),
+            "generation_profile_sha256": expected_profile_sha256,
+            "code_commit": run_commit,
+            "framework_versions": package_versions(
+                ["torch", "transformers", "unsloth", "peft", "pydantic"]
+            ),
             "generated_at": utc_now(),
         },
     }
@@ -139,9 +179,16 @@ def main() -> int:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--adapter", type=Path, required=True)
+    parser.add_argument("--generation-profile", type=Path)
     parser.add_argument("--dataset-dir", type=Path, required=True)
     parser.add_argument("--safety-report", type=Path, required=True)
     parser.add_argument("--allow-download", action="store_true")
+    parser.add_argument("--max-new-tokens", type=int)
+    parser.add_argument("--input-pad-length", type=int)
+    parser.add_argument("--repetition-penalty", type=float)
+    parser.add_argument("--no-repeat-ngram-size", type=int)
+    parser.add_argument("--force-json-object-start", action="store_true", default=None)
+    parser.add_argument("--progress-every", type=int, default=10)
     parser.add_argument("--output-root", type=Path, default=ARTIFACT_ROOT / "validation_eval")
     args = parser.parse_args()
     try:

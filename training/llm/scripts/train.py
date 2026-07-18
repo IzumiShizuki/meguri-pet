@@ -11,24 +11,33 @@ from training.llm.scripts.common import (
     ARTIFACT_ROOT,
     CONFIG_ROOT,
     PipelineError,
-    git_commit,
     load_yaml,
     package_versions,
     read_jsonl,
+    require_clean_git_worktree,
     sha256_file,
     sha256_text,
     utc_now,
     write_json,
 )
-from training.llm.scripts.modeling import assert_text_only_trainable_parameters, load_model_with_lora
+from training.llm.scripts.modeling import (
+    assert_text_only_trainable_parameters,
+    autocast_dtype,
+    configure_compile_cache,
+    load_model_with_lora,
+)
 from training.llm.scripts.training_utils import (
     EXPERIMENT_ID,
     deterministic_stratified_subset,
     smoke_manifest,
+    token_normalized_causal_lm_loss,
     tokenize_assistant_only,
     validate_dataset_for_training,
     validate_enablement_gate_report,
+    validate_input_padding,
     validate_probe_report,
+    validate_smoke_report,
+    validate_training_peak_memory,
     validate_training_config,
 )
 
@@ -43,7 +52,14 @@ def _last_checkpoint(checkpoint_root: Path) -> str | None:
     return str(max(values)[1].resolve()) if values else None
 
 
-def _smoke_inference(model: Any, tokenizer: Any, row: dict[str, Any], max_new_tokens: int = 256) -> dict[str, Any]:
+def _smoke_inference(
+    model: Any,
+    tokenizer: Any,
+    row: dict[str, Any],
+    *,
+    generation_dtype: Any,
+    max_new_tokens: int = 256,
+) -> dict[str, Any]:
     import torch
 
     messages = row["messages"][:-1]
@@ -57,7 +73,7 @@ def _smoke_inference(model: Any, tokenizer: Any, row: dict[str, Any], max_new_to
     encoded = {name: value.to("cuda") for name, value in encoded.items()}
     input_length = int(encoded["input_ids"].shape[-1])
     model.eval()
-    with torch.inference_mode():
+    with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=generation_dtype):
         output = model.generate(
             **encoded,
             do_sample=False,
@@ -76,11 +92,25 @@ def _smoke_inference(model: Any, tokenizer: Any, row: dict[str, Any], max_new_to
 def run(args: argparse.Namespace) -> Path:
     if not EXPERIMENT_ID.fullmatch(args.experiment_id):
         raise PipelineError("experiment ID must be a safe 3-80 character identifier")
+    training_commit = require_clean_git_worktree()
     config = load_yaml(args.config)
     validate_enablement_gate_report(args.enablement_gate_report, config)
     validate_training_config(config, allow_disabled=args.enablement_gate_report is not None)
     probe = validate_probe_report(args.probe_report, config)
     manifest, _ = validate_dataset_for_training(args.dataset_dir)
+    if args.smoke:
+        if args.smoke_report is not None:
+            raise PipelineError("L-006 smoke must not consume a prior smoke report")
+        smoke_gate = None
+    else:
+        if args.smoke_report is None:
+            raise PipelineError("full training requires --smoke-report from a passing L-006 run")
+        smoke_gate = validate_smoke_report(
+            args.smoke_report,
+            config=config,
+            dataset_manifest=manifest,
+            training_config_sha256=sha256_file(args.config),
+        )
     output_dir = args.experiment_root.resolve() / args.experiment_id
     resume_checkpoint = args.resume_from_checkpoint.resolve() if args.resume_from_checkpoint else None
     if resume_checkpoint is None and output_dir.exists():
@@ -104,16 +134,21 @@ def run(args: argparse.Namespace) -> Path:
             size=min(args.smoke_validation_samples, len(validation_rows)),
             seed=seed + 1,
         )
+    configure_compile_cache()
     try:
         import torch
-        from datasets import Dataset
-        from transformers import DataCollatorForSeq2Seq
-        from trl import SFTConfig, SFTTrainer
     except ImportError as exc:
         raise PipelineError("the pinned Unsloth/TRL training environment is incomplete") from exc
 
     torch.manual_seed(seed)
     model, processor, _ = load_model_with_lora(config, allow_download=args.allow_download)
+    # Loading Unsloth first is required for its Transformers and PEFT patches.
+    try:
+        from datasets import Dataset
+        from transformers import DataCollatorForSeq2Seq
+        from trl import SFTConfig, SFTTrainer
+    except ImportError as exc:
+        raise PipelineError("the pinned Unsloth/TRL training environment is incomplete") from exc
     parameter_counts = assert_text_only_trainable_parameters(model)
     tokenizer = getattr(processor, "tokenizer", processor)
     max_length = int(training["max_seq_length"])
@@ -121,6 +156,13 @@ def run(args: argparse.Namespace) -> Path:
     encoded_validation = [
         tokenize_assistant_only(row, tokenizer, max_seq_length=max_length) for row in validation_rows
     ]
+    input_padding = validate_input_padding(
+        input_pad_length=args.input_pad_length,
+        max_seq_length=max_length,
+        train_lengths=[len(row["input_ids"]) for row in encoded_train],
+        validation_lengths=[len(row["input_ids"]) for row in encoded_validation],
+        required=args.smoke,
+    )
     output_dir.mkdir(parents=True, exist_ok=resume_checkpoint is not None)
     if args.smoke and not (output_dir / "smoke_dataset_manifest.json").exists():
         write_json(
@@ -130,6 +172,7 @@ def run(args: argparse.Namespace) -> Path:
                 validation_rows,
                 dataset_id=str(manifest["dataset_id"]),
                 seed=seed,
+                input_padding=input_padding,
             ),
         )
     template = str(getattr(tokenizer, "chat_template", "") or "")
@@ -170,7 +213,8 @@ def run(args: argparse.Namespace) -> Path:
     sft_args = SFTConfig(**kwargs)
     collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
-        padding=True,
+        padding="max_length" if input_padding["enabled"] else True,
+        max_length=input_padding.get("input_pad_length"),
         label_pad_token_id=-100,
         return_tensors="pt",
     )
@@ -181,6 +225,7 @@ def run(args: argparse.Namespace) -> Path:
         eval_dataset=Dataset.from_list(encoded_validation),
         processing_class=tokenizer,
         data_collator=collator,
+        compute_loss_func=token_normalized_causal_lm_loss,
     )
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
@@ -201,13 +246,22 @@ def run(args: argparse.Namespace) -> Path:
             write_json(output_dir / "failure_report.json", failure)
         raise PipelineError("training stopped on CUDA OOM; no data or model fallback was applied") from exc
     duration = time.perf_counter() - start
+    peak_vram_bytes = int(torch.cuda.max_memory_allocated())
+    validate_training_peak_memory(peak_vram_bytes, config)
     trainer.save_state()
     final_adapter = output_dir / "final_adapter"
     if final_adapter.exists():
         raise PipelineError(f"refusing to overwrite final adapter: {final_adapter}")
     model.save_pretrained(final_adapter)
     tokenizer.save_pretrained(final_adapter)
-    smoke_result = _smoke_inference(model, tokenizer, validation_rows[0])
+    smoke_result = _smoke_inference(
+        model,
+        tokenizer,
+        validation_rows[0],
+        generation_dtype=autocast_dtype(config, torch),
+    )
+    if require_clean_git_worktree() != training_commit:
+        raise PipelineError("Git commit changed while training was running")
     experiment = {
         "schema_version": 1,
         "experiment_id": args.experiment_id,
@@ -223,7 +277,7 @@ def run(args: argparse.Namespace) -> Path:
         "prompt_sha256": manifest["prompt_sha256"],
         "response_schema_sha256": manifest["response_schema_sha256"],
         "chat_template_sha256": sha256_text(template),
-        "training_commit": git_commit(),
+        "training_commit": training_commit,
         "training_config": str(args.config.resolve()),
         "training_config_sha256": sha256_file(args.config),
         "probe_report_sha256": sha256_file(args.probe_report),
@@ -234,11 +288,13 @@ def run(args: argparse.Namespace) -> Path:
         "seed": seed,
         "lora": config["lora"],
         "training_parameters": kwargs,
+        "loss_normalization": "assistant_tokens_across_gradient_accumulation",
+        "input_padding": input_padding,
         "train_samples": len(train_rows),
         "validation_samples": len(validation_rows),
         "train_metrics": result.metrics,
         "parameter_counts": parameter_counts,
-        "peak_vram_bytes": int(torch.cuda.max_memory_allocated()),
+        "peak_vram_bytes": peak_vram_bytes,
         "started_at": started_at,
         "finished_at": utc_now(),
         "duration_seconds": round(duration, 3),
@@ -248,6 +304,7 @@ def run(args: argparse.Namespace) -> Path:
         "final_adapter": str(final_adapter.resolve()),
         "post_training_json_smoke": smoke_result,
         "locked_eval_accessed": False,
+        "smoke_gate_report_sha256": sha256_file(args.smoke_report) if smoke_gate else None,
     }
     write_json(output_dir / "experiment_manifest.json", experiment)
     return output_dir
@@ -259,6 +316,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--config", type=Path, default=CONFIG_ROOT / "qwen35_4b_bf16_lora.yaml")
     value.add_argument("--dataset-dir", type=Path, required=True)
     value.add_argument("--probe-report", type=Path, required=True)
+    value.add_argument("--smoke-report", type=Path)
     value.add_argument("--experiment-root", type=Path, default=ARTIFACT_ROOT / "checkpoints")
     value.add_argument("--allow-download", action="store_true")
     value.add_argument("--enablement-gate-report", type=Path)
@@ -266,6 +324,7 @@ def parser() -> argparse.ArgumentParser:
     value.add_argument("--smoke-samples", type=int, default=160)
     value.add_argument("--smoke-validation-samples", type=int, default=40)
     value.add_argument("--smoke-steps", type=int, default=75)
+    value.add_argument("--input-pad-length", type=int)
     value.add_argument("--resume-from-checkpoint", type=Path)
     return value
 
