@@ -30,3 +30,35 @@ D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe --test tests-ts\pro
 ```
 
 The provider interfaces are intentionally replaceable. `MockLLMProvider`, `MockRagProvider`, and `FakeMemoryProvider` remain the enabled local defaults. Production provider selection, pgvector, Mem0, OpenResty, authentication, backup/restore validation, and deployment remain separate follow-up stages.
+
+## Java online runtime (parallel phase)
+
+The first Java migration phase lives in `java/meguri-core`. It uses JDK 21,
+Spring Boot WebFlux and LangChain4j, starts on port `18080`, and preserves the
+existing Python core on port `8000` as the authoritative memory service. The
+default profile is offline mock; the Java service does not contact an external
+LLM unless `MEGURI_LLM_PROVIDER=openai-compatible` and an API-key file are
+configured explicitly. See `java/meguri-core/README.md` for Maven commands and
+the Python memory bridge configuration.
+
+## Local text-model MVP
+
+The `codex/mvp-auto-fit` branch carries a reproducible quick-fit path for the
+Meguri text contract. It uses the existing `meguri-llm` environment, the pinned
+Qwen3.5-4B revision and a derived read-only dataset; it never reads locked eval
+content or changes the model registry.
+
+```powershell
+$env:HF_HUB_OFFLINE='1'
+$env:UNSLOTH_COMPILE_DISABLE='1'
+$env:UNSLOTH_COMPILE_LOCATION='D:\environment\cache\meguri-llm'
+D:\environment\anaconda3\envs\meguri-llm\python.exe -m training.llm.scripts.run_mvp `
+  --experiment-id meguri-qwen35-4b-mvp-20260718-v6
+```
+
+The checked local MVP artifact is an experimental LoRA adapter under
+`training/llm/artifacts/checkpoints/` with its `mvp_manifest.json`; generated
+model files stay ignored by Git and should be published through Git LFS or a
+GitHub Release rather than committed into ordinary source history. See
+`docs/mvp-release-audit.md` and the model card for the exact provenance and the
+resume command for formal training.

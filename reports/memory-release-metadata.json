@@ -1,0 +1,12 @@
+{
+  "database_revision": "20260714_0004",
+  "embedding_model": "BAAI/bge-m3",
+  "embedding_model_revision": "5617a9f61b028005a4858fdac845db406aefb181",
+  "embedding_dimension": 1024,
+  "data_build_id": "meguri_v2_02c3db0c507d7c2d",
+  "vector_search_mode": "exact",
+  "ann_index_enabled": false,
+  "staging_validation": "blocked-no-approved-staging-acceptance",
+  "embedding_runtime_validation": "blocked-dependency-and-cache-unavailable",
+  "fixed_recall_validation": "live-dev-passed-staging-restore-blocked"
+}

@@ -1,0 +1,44 @@
+{
+  "contract_version": 1,
+  "agent": "memory",
+  "status": "implementation-complete-runtime-evidence-required",
+  "authority": ["page-15", "page-16", "release-manifest"],
+  "runtime_provider_name": "native_pgvector",
+  "database": {
+    "service_dns": "postgres:5432",
+    "app_url_file": "/run/secrets/database_url",
+    "migration_url_available_to_core": false,
+    "app_role_variable": "MEGURI_POSTGRES_APP_USER",
+    "migration_job": "migration upgrade head",
+    "revision_variable": "MEGURI_DATABASE_REVISION",
+    "schema_head": "20260714_0004",
+    "embedding_revision_variable": "MEGURI_EMBEDDING_MODEL_REVISION",
+    "embedding_model": "BAAI/bge-m3",
+    "embedding_model_revision": "5617a9f61b028005a4858fdac845db406aefb181",
+    "embedding_dimension": 1024
+  },
+  "environments": {
+    "dev": {"project": "meguri-dev", "internal_network": "meguri-dev-internal", "database": "meguri_dev"},
+    "staging": {"project": "meguri-staging", "internal_network": "meguri-staging-internal", "database": "meguri_staging"},
+    "production": {"project": "meguri-production", "internal_network": "meguri-production-internal", "database": "meguri_production"}
+  },
+  "required_manifest_fields": ["database_revision", "embedding_model_revision", "data_build_id"],
+  "readiness_requirements": [
+    "configured provider name equals native_pgvector",
+    "database app URL loads from file only",
+    "live alembic revision equals the Release Manifest",
+    "embedding model revision equals the Release Manifest"
+  ],
+  "backup_restore": {
+    "backup_directory_variable": "MEGURI_BACKUP_DIR",
+    "restore_target_prefix": "meguri_staging_restore_",
+    "production_restore_authorized": false
+  },
+  "forbidden_dependencies": ["infra-postgres", "infra-postgres-data", "shizuki-memoryos", "shizuki-memoryos_memoryos-data"],
+  "handoff_gates": [
+    "run native provider and recovery contracts against an empty isolated PostgreSQL plus pgvector database",
+    "prove user and environment data isolation on empty staging database",
+    "run the embedding worker against the pinned BGE-M3 revision without public database ports",
+    "record live exact-search latency recall RPO and RTO evidence"
+  ]
+}

@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "demo": "node src/demo.ts"
+    "demo": "node src/demo.ts",
+    "web": "node src/web-server.mjs",
+    "overlay": "electron src/electron-main.mjs"
+  },
+  "devDependencies": {
+    "electron": "^43.1.1"
   }
 }

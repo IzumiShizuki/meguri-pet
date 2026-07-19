@@ -30,7 +30,7 @@ export interface ClientCapabilities {
 
 export interface TurnRequest {
   user_id: string
-  client_id: 'astrbot' | 'desktop_pet' | 'website'
+  client_id: 'airi' | 'astrbot' | 'desktop_pet' | 'website'
   session_id: string
   message: string
   attachments?: Array<Record<string, unknown>>

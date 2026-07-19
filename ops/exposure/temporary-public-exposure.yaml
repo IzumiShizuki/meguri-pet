@@ -1,0 +1,212 @@
+schema_version: 1
+inventory_host: 111.228.35.186
+observed_at: "2026-07-14T21:13:00+08:00"
+policy:
+  production_default: blocked
+  public_meguri_database_allowed: false
+  approved_entry_required: true
+
+entries:
+  - id: existing-host-unattributed
+    scope: existing-protected
+    environment: shared
+    service: host-network-and-unattributed-listeners
+    host: 111.228.35.186
+    ports: [22, 80, 443, 6185, 6199, 8000, 10086]
+    protocol: tcp
+    declared_binding: host-or-unknown
+    observed_reachable: true
+    authentication: unknown-not-verified
+    data_classification: unknown
+    owner: infrastructure-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Attribute every listener with host-level ss/firewall evidence and approve or close it.
+    evidence: Workstation TCP handshake only; no host listener mutation or attribution was performed.
+
+  - id: existing-docker-tls
+    scope: existing-protected
+    environment: shared
+    service: docker-remote-api
+    host: 111.228.35.186
+    ports: [2376]
+    protocol: tls
+    declared_binding: host
+    observed_reachable: true
+    authentication: mutual-tls
+    data_classification: infrastructure-admin
+    owner: infrastructure-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Confirm owner, client-certificate rotation, source allowlist, and continuing operational need.
+    evidence: Read-only Docker Engine inventory used an existing client certificate.
+
+  - id: existing-new-api
+    scope: existing-protected
+    environment: shared
+    service: new-api
+    host: 111.228.35.186
+    ports: [3000]
+    protocol: tcp
+    declared_binding: all-interfaces
+    observed_reachable: true
+    authentication: application-unknown
+    data_classification: sensitive
+    owner: service-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Confirm authenticated reverse-proxy-only access or restrict the raw listener.
+    evidence: Docker publish and workstation TCP handshake.
+
+  - id: existing-site-sidecars
+    scope: existing-protected
+    environment: shared
+    service: shizuki-site-sidecars
+    host: 111.228.35.186
+    ports: [3210, 3220, 39031, 39041, 39051]
+    protocol: tcp
+    declared_binding: docker-internal-only
+    observed_reachable: true
+    authentication: unknown-not-verified
+    data_classification: internal
+    owner: shizuki-site-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Reconcile Docker inspect with host listeners, forwarding, and cloud firewall state.
+    evidence: Reachable from workstation although Docker did not declare host publication.
+
+  - id: existing-infra-datastores
+    scope: existing-protected
+    environment: shared
+    service: mysql-postgresql-redis-kafka
+    host: 111.228.35.186
+    ports: [3306, 5432, 6379, 9092]
+    protocol: tcp
+    declared_binding: all-interfaces
+    observed_reachable: true
+    authentication: application-unknown
+    data_classification: sensitive
+    owner: infrastructure-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Verify credentials and source allowlists, then restrict raw datastore listeners from public reachability.
+    evidence: Docker publish and workstation TCP handshake; credentials were not inspected.
+
+  - id: existing-shizuki-site
+    scope: existing-protected
+    environment: shared
+    service: shizuki-site-frontend-backend
+    host: 111.228.35.186
+    ports: [5173, 8080]
+    protocol: tcp
+    declared_binding: all-interfaces
+    observed_reachable: true
+    authentication: mixed-public-and-application
+    data_classification: sensitive
+    owner: shizuki-site-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Confirm the raw ports are intentionally exposed or restrict access to approved reverse-proxy routes.
+    evidence: Docker publish and workstation TCP/HTTP checks.
+
+  - id: existing-proxies
+    scope: existing-protected
+    environment: shared
+    service: clash-and-cli-proxy
+    host: 111.228.35.186
+    ports: [7890, 8317, 9090]
+    protocol: tcp
+    declared_binding: all-interfaces
+    observed_reachable: true
+    authentication: application-unknown
+    data_classification: sensitive
+    owner: proxy-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Confirm authentication and source restrictions for every proxy listener.
+    evidence: Docker publish and workstation TCP handshake.
+
+  - id: existing-mcp-loopback-mismatch
+    scope: existing-protected
+    environment: shared
+    service: mcp-router
+    host: 111.228.35.186
+    ports: [8025, 8027]
+    protocol: tcp
+    declared_binding: loopback
+    observed_reachable: true
+    authentication: application-unknown
+    data_classification: sensitive
+    owner: mcp-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Reconcile loopback Docker binding with external reachability and remove unintended forwarding.
+    evidence: Docker reported 127.0.0.1 binding but workstation TCP handshake succeeded.
+
+  - id: existing-memoryos
+    scope: existing-protected
+    environment: shared
+    service: shizuki-memoryos
+    host: 111.228.35.186
+    ports: [8788]
+    protocol: tcp
+    declared_binding: all-interfaces
+    observed_reachable: true
+    authentication: application-unknown
+    data_classification: sensitive
+    owner: memoryos-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Restrict to approved read-only evaluation/import clients or close the raw listener.
+    evidence: Docker publish and workstation TCP handshake; HTTP health returned 502.
+
+  - id: existing-nacos
+    scope: existing-protected
+    environment: shared
+    service: nacos
+    host: 111.228.35.186
+    ports: [8848, 9848, 9849]
+    protocol: tcp
+    declared_binding: all-interfaces
+    observed_reachable: true
+    authentication: application-unknown
+    data_classification: infrastructure-admin
+    owner: infrastructure-owner-confirmation-required
+    approval_status: protected-existing
+    gate: blocks-production
+    close_condition: Confirm authentication and restrict all Nacos listeners to approved service sources.
+    evidence: Docker publish and workstation TCP handshake.
+
+  - id: meguri-dev-loopback
+    scope: meguri
+    environment: dev
+    service: core
+    host: 127.0.0.1
+    ports: [18000]
+    protocol: http
+    declared_binding: loopback
+    observed_reachable: false
+    authentication: local-development
+    data_classification: private
+    owner: meguri-environment-agent
+    approval_status: repository-contract
+    gate: none
+    close_condition: Remove with the meguri-dev Compose project.
+    evidence: Committed Compose configuration only; not deployed on the server.
+
+  - id: meguri-staging-loopback
+    scope: meguri
+    environment: staging
+    service: core
+    host: 127.0.0.1
+    ports: [18080]
+    protocol: http
+    declared_binding: loopback
+    observed_reachable: false
+    authentication: approved-tunnel-or-reverse-proxy-required
+    data_classification: private
+    owner: meguri-environment-agent
+    approval_status: repository-contract
+    gate: none
+    close_condition: Remove with the meguri-staging Compose project; any public route requires a separate ledger entry and approval.
+    evidence: Committed Compose configuration only; not deployed on the server.

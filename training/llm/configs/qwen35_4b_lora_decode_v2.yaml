@@ -1,0 +1,38 @@
+schema_version: 1
+profile_id: qwen35-4b-l2-decode-v2-r851bf6e-20260716-v1
+status: validation_selected
+model:
+  repo_id: Qwen/Qwen3.5-4B
+  revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+  tokenizer_revision: 851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a
+adapter:
+  model_id: qwen35-4b-l2-full-s3407-20260716-v1-a2dec9d9d481
+  sha256: a2dec9d9d481aa8e118afc61838cb1d9e80136c3bfac5b051a62efb0a96b87ef
+generation:
+  max_new_tokens: 256
+  repetition_penalty: 1.05
+  no_repeat_ngram_size: 4
+  force_json_object_start: true
+validation_evidence:
+  run_id: qwen35-4b-l2-val-c450-decode-v2-20260716-v1
+  report_sha256: d9fca15d068d036a40c5ecfbeadedc27438bf798c9483fbe141defcf1c97e48c
+  validation_count: 566
+  composite_score: 0.937279
+  json_parse_rate: 1.0
+  response_schema_valid_rate: 1.0
+  extra_field_rate: 0.0
+  locked_eval_accessed: false
+safety_evidence:
+  run_id: qwen35-4b-l2-safety-c450-decode-v2-20260716-v1
+  report_sha256: 87aae409cd51e4d7d6ed17d96ea4253217982207cabc4067094d173a49688ce7
+  passed: 8
+  total: 8
+policy:
+  selection_scope: validation_and_frozen_synthetic_safety_only
+  staging_eligible: false
+  production_ready: false
+  requires_new_independently_frozen_locked_eval: true
+  requires_frozen_rubric_human_review: true
+  previous_locked_eval_suite_id: meguri-locked-eval-v1
+  previous_locked_eval_input_hashes_sha256: 976df16cc1b2c509bf6932d62baf29c1cf97e6796c19912dc03529a9ef722980
+  previous_locked_eval_must_not_be_reused_for_tuning: true

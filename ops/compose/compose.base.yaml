@@ -1,0 +1,197 @@
+services:
+  postgres:
+    image: ${MEGURI_POSTGRES_IMAGE:?MEGURI_POSTGRES_IMAGE is required}
+    restart: unless-stopped
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_DB: ${MEGURI_POSTGRES_DB:?MEGURI_POSTGRES_DB is required}
+      POSTGRES_USER: ${MEGURI_POSTGRES_USER:?MEGURI_POSTGRES_USER is required}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - type: bind
+        source: ${MEGURI_POSTGRES_LOG_DIR:?MEGURI_POSTGRES_LOG_DIR is required}
+        target: /var/log/postgresql
+    networks:
+      - internal
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    labels:
+      io.meguri.environment: ${MEGURI_ENV:?MEGURI_ENV is required}
+      io.meguri.release-id: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
+
+  migration:
+    image: ${MEGURI_MIGRATION_IMAGE:?MEGURI_MIGRATION_IMAGE is required}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    environment:
+      MEGURI_ENV: ${MEGURI_ENV:?MEGURI_ENV is required}
+      MEGURI_RELEASE_ID: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
+      MEGURI_DATA_BUILD_ID: ${MEGURI_DATA_BUILD_ID:?MEGURI_DATA_BUILD_ID is required}
+      MEGURI_DATABASE_REVISION: ${MEGURI_DATABASE_REVISION:?MEGURI_DATABASE_REVISION is required}
+      MEGURI_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+      MEGURI_POSTGRES_APP_USER: ${MEGURI_POSTGRES_APP_USER:?MEGURI_POSTGRES_APP_USER is required}
+      MEGURI_POSTGRES_APP_PASSWORD_FILE: /run/secrets/postgres_app_password
+    secrets:
+      - migration_database_url
+      - postgres_app_password
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+    command:
+      - upgrade
+      - head
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    labels:
+      io.meguri.environment: ${MEGURI_ENV:?MEGURI_ENV is required}
+      io.meguri.release-id: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
+      io.meguri.database-revision: ${MEGURI_DATABASE_REVISION:?MEGURI_DATABASE_REVISION is required}
+
+  core:
+    image: ${MEGURI_CORE_IMAGE:?MEGURI_CORE_IMAGE is required}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    environment:
+      MEGURI_ENV: ${MEGURI_ENV:?MEGURI_ENV is required}
+      MEGURI_RELEASE_ID: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
+      MEGURI_DATA_BUILD_ID: ${MEGURI_DATA_BUILD_ID:?MEGURI_DATA_BUILD_ID is required}
+      MEGURI_DATA_ROOT: /app/datasets/meguri
+      MEGURI_RELEASE_MANIFEST_PATH: /run/meguri/release-manifest.json
+      MEGURI_EXPRESSION_MAP_PATH: /app/datasets/meguri/exports/expression_map/expression_map.json
+      MEGURI_DATABASE_URL_FILE: /run/secrets/database_url
+      MEGURI_TENANT_ID: ${MEGURI_TENANT_ID:?MEGURI_TENANT_ID is required}
+      MEGURI_MEMORY_PROVIDER: ${MEGURI_MEMORY_PROVIDER:?MEGURI_MEMORY_PROVIDER is required}
+      MEGURI_LLM_PROVIDER: ${MEGURI_LLM_PROVIDER:?MEGURI_LLM_PROVIDER is required}
+      MEGURI_LLM_BASE_URL: ${MEGURI_LLM_BASE_URL:-}
+      MEGURI_LLM_MODEL: ${MEGURI_LLM_MODEL:?MEGURI_LLM_MODEL is required}
+      MEGURI_LLM_TIMEOUT_SECONDS: ${MEGURI_LLM_TIMEOUT_SECONDS:?MEGURI_LLM_TIMEOUT_SECONDS is required}
+      MEGURI_LLM_MAX_CONCURRENCY: ${MEGURI_LLM_MAX_CONCURRENCY:?MEGURI_LLM_MAX_CONCURRENCY is required}
+      MEGURI_LLM_RESPONSE_FORMAT: ${MEGURI_LLM_RESPONSE_FORMAT:?MEGURI_LLM_RESPONSE_FORMAT is required}
+      MEGURI_LLM_RELEASE_CHANNEL: ${MEGURI_LLM_RELEASE_CHANNEL:?MEGURI_LLM_RELEASE_CHANNEL is required}
+      MEGURI_LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      MEGURI_JWT_SECRET_FILE: /run/secrets/jwt_secret
+      MEGURI_ASTRBOT_SHARED_TOKEN_FILE: /run/secrets/astrbot_shared_token
+      MEGURI_PUBLIC_BASE_URL: ${MEGURI_PUBLIC_BASE_URL:?MEGURI_PUBLIC_BASE_URL is required}
+      MEGURI_ALLOWED_ORIGINS: ${MEGURI_ALLOWED_ORIGINS:?MEGURI_ALLOWED_ORIGINS is required}
+      MEGURI_ENABLE_DEBUG_ROUTES: ${MEGURI_ENABLE_DEBUG_ROUTES:?MEGURI_ENABLE_DEBUG_ROUTES is required}
+      MEGURI_MUTATION_ALLOWED: ${MEGURI_MUTATION_ALLOWED:?MEGURI_MUTATION_ALLOWED is required}
+      MEGURI_LOG_LEVEL: ${MEGURI_LOG_LEVEL:?MEGURI_LOG_LEVEL is required}
+      MEGURI_DATABASE_REVISION: ${MEGURI_DATABASE_REVISION:?MEGURI_DATABASE_REVISION is required}
+      MEGURI_EMBEDDING_MODEL_REVISION: ${MEGURI_EMBEDDING_MODEL_REVISION:?MEGURI_EMBEDDING_MODEL_REVISION is required}
+      MEGURI_LLM_BASE_MODEL_REVISION: ${MEGURI_LLM_BASE_MODEL_REVISION:?MEGURI_LLM_BASE_MODEL_REVISION is required}
+      MEGURI_LLM_ADAPTER_REVISION: ${MEGURI_LLM_ADAPTER_REVISION:?MEGURI_LLM_ADAPTER_REVISION is required}
+      MEGURI_LLM_ADAPTER_SHA256: ${MEGURI_LLM_ADAPTER_SHA256:?MEGURI_LLM_ADAPTER_SHA256 is required}
+      MEGURI_MODEL_REGISTRY_ID: ${MEGURI_MODEL_REGISTRY_ID:?MEGURI_MODEL_REGISTRY_ID is required}
+      MEGURI_LLM_GENERATION_PROFILE_ID: ${MEGURI_LLM_GENERATION_PROFILE_ID:?MEGURI_LLM_GENERATION_PROFILE_ID is required}
+      MEGURI_LLM_GENERATION_PROFILE_SHA256: ${MEGURI_LLM_GENERATION_PROFILE_SHA256:?MEGURI_LLM_GENERATION_PROFILE_SHA256 is required}
+    secrets:
+      - database_url
+      - llm_api_key
+      - jwt_secret
+      - astrbot_shared_token
+    volumes:
+      - type: bind
+        source: ${MEGURI_DATA_DIR:?MEGURI_DATA_DIR is required}
+        target: /app/datasets/meguri
+        read_only: true
+      - type: bind
+        source: ${MEGURI_CORE_LOG_DIR:?MEGURI_CORE_LOG_DIR is required}
+        target: /var/log/meguri
+      - type: bind
+        source: ${MEGURI_RELEASE_MANIFEST_FILE:?MEGURI_RELEASE_MANIFEST_FILE is required}
+        target: /run/meguri/release-manifest.json
+        read_only: true
+    expose:
+      - "8000"
+    networks:
+      - edge
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+    labels:
+      io.meguri.environment: ${MEGURI_ENV:?MEGURI_ENV is required}
+      io.meguri.release-id: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
+      io.meguri.data-build-id: ${MEGURI_DATA_BUILD_ID:?MEGURI_DATA_BUILD_ID is required}
+
+networks:
+  edge:
+    name: ${MEGURI_EDGE_NETWORK:?MEGURI_EDGE_NETWORK is required}
+    driver: bridge
+  internal:
+    name: ${MEGURI_INTERNAL_NETWORK:?MEGURI_INTERNAL_NETWORK is required}
+    driver: bridge
+    internal: true
+
+volumes:
+  postgres-data:
+    name: ${MEGURI_POSTGRES_VOLUME:?MEGURI_POSTGRES_VOLUME is required}
+
+secrets:
+  postgres_password:
+    file: ${MEGURI_POSTGRES_PASSWORD_FILE:?MEGURI_POSTGRES_PASSWORD_FILE is required}
+  database_url:
+    file: ${MEGURI_DATABASE_URL_FILE:?MEGURI_DATABASE_URL_FILE is required}
+  migration_database_url:
+    file: ${MEGURI_MIGRATION_DATABASE_URL_FILE:?MEGURI_MIGRATION_DATABASE_URL_FILE is required}
+  postgres_app_password:
+    file: ${MEGURI_POSTGRES_APP_PASSWORD_FILE:?MEGURI_POSTGRES_APP_PASSWORD_FILE is required}
+  llm_api_key:
+    file: ${MEGURI_LLM_API_KEY_FILE:?MEGURI_LLM_API_KEY_FILE is required}
+  jwt_secret:
+    file: ${MEGURI_JWT_SECRET_FILE:?MEGURI_JWT_SECRET_FILE is required}
+  astrbot_shared_token:
+    file: ${MEGURI_ASTRBOT_SHARED_TOKEN_FILE:?MEGURI_ASTRBOT_SHARED_TOKEN_FILE is required}
