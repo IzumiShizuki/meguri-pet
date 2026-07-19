@@ -296,10 +296,12 @@ async def value_error_handler(_, exc: ValueError):
 
 from .identity_api import router as identity_router
 from .memory_api import router as authoritative_memory_router
+from .memory_bridge import router as internal_memory_bridge_router
 from .memory_service.metrics import memory_metrics
 
 app.include_router(authoritative_memory_router)
 app.include_router(identity_router)
+app.include_router(internal_memory_bridge_router)
 
 
 @app.get("/metrics", response_class=PlainTextResponse)

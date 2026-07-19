@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: meguri-core-java
+  profiles:
+    default: local-mock
+  main:
+    web-application-type: reactive
+
+server:
+  port: ${SERVER_PORT:18080}
+  shutdown: graceful
+
+meguri:
+  build-id: ${MEGURI_BUILD_ID:}
+  data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
+  rag-path: ${MEGURI_RAG_PATH:../../datasets/meguri/exports/rag/chunks_train.jsonl}
+  memory:
+    bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    timeout-ms: ${MEGURI_MEMORY_TIMEOUT_MS:1500}
+  web-search:
+    enabled: ${MEGURI_WEB_SEARCH_ENABLED:false}
+    base-url: ${MEGURI_WEB_SEARCH_BASE_URL:https://www.bing.com/search}
+    timeout-ms: ${MEGURI_WEB_SEARCH_TIMEOUT_MS:8000}
+    max-results: ${MEGURI_WEB_SEARCH_MAX_RESULTS:5}
+  llm:
+    provider: ${MEGURI_LLM_PROVIDER:mock}
+    base-url: ${MEGURI_LLM_BASE_URL:}
+    model: ${MEGURI_LLM_MODEL:}
+    api-key-file: ${MEGURI_LLM_API_KEY_FILE:}
+    response-format: ${MEGURI_LLM_RESPONSE_FORMAT:json_schema}
+    max-concurrency: ${MEGURI_LLM_MAX_CONCURRENCY:4}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+# No LangChain4j OpenAI properties are present in the default profile.  This
+# keeps local startup offline-first; the runtime may inject its mock provider.
+# Enable the `openai` profile and provide credentials to create a real model.

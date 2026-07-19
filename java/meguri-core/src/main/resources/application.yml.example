@@ -1,0 +1,33 @@
+# Copy this file to application.yml for local use. The default document is
+# offline-first; select a real provider explicitly with MEGURI_LLM_PROVIDER.
+spring:
+  application:
+    name: meguri-core-java
+  profiles:
+    default: local-mock
+  main:
+    web-application-type: reactive
+
+server:
+  port: ${SERVER_PORT:18080}
+  shutdown: graceful
+
+meguri:
+  build-id: ${MEGURI_BUILD_ID:}
+  data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
+  memory:
+    bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+  llm:
+    provider: ${MEGURI_LLM_PROVIDER:mock}
+    response-format: ${MEGURI_LLM_RESPONSE_FORMAT:json_schema}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

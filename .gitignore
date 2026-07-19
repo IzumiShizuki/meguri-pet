@@ -19,6 +19,7 @@ coverage/
 /data/
 /datasets/
 /configs/*
+!/configs/meguri_sprite_runtime_map.json
 
 # Local generated reports and model/training artifacts
 /reports/*
@@ -36,6 +37,9 @@ coverage/
 /training/llm/checkpoints/
 /training/llm/reports/
 /unsloth_compiled_cache/
+
+# Maven build outputs for the Java runtime
+/java/**/target/
 
 # Secrets and local environment files
 .env

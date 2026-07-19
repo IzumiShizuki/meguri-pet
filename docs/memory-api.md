@@ -29,6 +29,17 @@ When the native provider serves `/v1/chat/respond` or `/v1/turns`, the server al
 
 The hard-delete body requires `user_id`, `reason` and `confirmation="HARD_DELETE:{memory_id}"`. The server additionally requires `MEGURI_ALLOW_HARD_DELETE=true`; it is false by default.
 
+## Java runtime compatibility bridge
+
+During the first Java runtime migration phase, `java/meguri-core` can call the
+loopback-only bridge at `/internal/memory/health`, `/internal/memory/search`,
+`/internal/memory/extract` and `/internal/memory/write`. The bridge is disabled
+unless `MEGURI_INTERNAL_BRIDGE_TOKEN` is configured and every request carries
+the matching `X-Meguri-Internal-Token` header. Requests are accepted only from
+loopback by default; private container hosts must be explicitly listed in
+`MEGURI_INTERNAL_BRIDGE_ALLOWED_HOSTS`. These routes are not public API and do
+not change PostgreSQL/pgvector authority.
+
 ## Search contract
 
 `query`, optional `canonical_key`, `limit`, typed memory filters, scopes, modes and token budget are accepted. Exact-vector input must contain 1024 floats and identify the configured embedding model/revision. When no vector is supplied, the native runtime generates one using the pinned local embedding adapter for hybrid/exact-vector modes; if the adapter is unavailable, hybrid search degrades to keyword/structured retrieval and records a failure metric. Normal recall returns only active, unexpired current versions in the authenticated tenant/user scope. Candidate, deleted and historical versions are excluded.

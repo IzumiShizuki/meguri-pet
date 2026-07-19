@@ -1,0 +1,12 @@
+spring:
+  config:
+    activate:
+      on-profile: local-mock
+
+meguri:
+  llm:
+    provider: mock
+  web-search:
+    enabled: false
+  memory:
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
