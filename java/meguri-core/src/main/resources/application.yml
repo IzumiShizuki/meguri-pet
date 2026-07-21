@@ -23,6 +23,17 @@ meguri:
     base-url: ${MEGURI_WEB_SEARCH_BASE_URL:https://www.bing.com/search}
     timeout-ms: ${MEGURI_WEB_SEARCH_TIMEOUT_MS:8000}
     max-results: ${MEGURI_WEB_SEARCH_MAX_RESULTS:5}
+  weather:
+    enabled: ${MEGURI_WEATHER_ENABLED:false}
+    base-url: ${MEGURI_WEATHER_BASE_URL:https://api.open-meteo.com/v1/forecast}
+    location-file: ${MEGURI_WEATHER_LOCATION_FILE:${user.home}/.meguri/weather-location.json}
+    location-name: ${MEGURI_WEATHER_LOCATION_NAME:上海}
+    latitude: ${MEGURI_WEATHER_LATITUDE:31.2304}
+    longitude: ${MEGURI_WEATHER_LONGITUDE:121.4737}
+    timezone: ${MEGURI_WEATHER_TIMEZONE:Asia/Shanghai}
+    poll-delay-ms: ${MEGURI_WEATHER_POLL_DELAY_MS:900000}
+    rain-probability-threshold: ${MEGURI_WEATHER_RAIN_THRESHOLD:50}
+    rain-lookahead-hours: ${MEGURI_WEATHER_RAIN_LOOKAHEAD_HOURS:2}
   llm:
     provider: ${MEGURI_LLM_PROVIDER:mock}
     base-url: ${MEGURI_LLM_BASE_URL:}

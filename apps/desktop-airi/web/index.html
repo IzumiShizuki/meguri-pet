@@ -21,12 +21,18 @@
     .chat { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
     h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.5rem); }
     .subtitle { margin: 0; color: #c6b8d2; line-height: 1.65; }
+    .weather-card { padding: 12px 14px; border-radius: 16px; background: #7fb9ff12; border: 1px solid #9bc8ff2c; color: #d9eaff; font-size: .86rem; line-height: 1.6; }
+    .weather-card summary { cursor: pointer; color: #afcaed; margin-top: 6px; }
+    .weather-fields { display: grid; grid-template-columns: 1.2fr .8fr .8fr 1fr auto; gap: 6px; margin-top: 8px; }
+    .weather-fields input { padding: 8px; font-size: .78rem; }
+    .weather-fields button { padding: 0 12px; font-size: .78rem; }
     .bubble { min-height: 180px; padding: 18px; border-radius: 20px; background: #ffffff0b; border: 1px solid #ffffff14; line-height: 1.8; white-space: pre-wrap; }
     form { display: flex; gap: 10px; }
     input { flex: 1; min-width: 0; border: 1px solid #ffffff25; background: #0b0913aa; border-radius: 14px; padding: 14px; color: inherit; outline: none; font: inherit; }
     input:focus { border-color: #df9ce8; box-shadow: 0 0 0 3px #df9ce822; }
     button { border: 0; border-radius: 14px; padding: 0 20px; background: linear-gradient(135deg, #e7a5ec, #a873e2); color: #1a1020; font-weight: 700; cursor: pointer; font: inherit; }
     button:disabled { opacity: .5; cursor: wait; }
+    button.secondary { background: #ffffff14; color: #eadff0; border: 1px solid #ffffff2a; }
     .meta { display: flex; justify-content: space-between; color: #9386a1; font-size: .76rem; gap: 12px; }
     .error { color: #ffb4b4; min-height: 22px; font-size: .84rem; }
     body.overlay { background: transparent; }
@@ -35,11 +41,12 @@
     body.overlay #sprite { max-height: 275px; }
     body.overlay .chat { margin-top: 10px; padding: 12px; gap: 8px; border-radius: 18px; }
     body.overlay .chat > div:first-child, body.overlay .meta { display: none; }
+    body.overlay .weather-card details { display: none; }
     body.overlay .bubble { min-height: 48px; max-height: 110px; overflow: auto; padding: 10px; font-size: .86rem; }
     body.overlay form { gap: 6px; }
     body.overlay input { padding: 9px; font-size: .84rem; }
     body.overlay button { padding: 0 12px; font-size: .84rem; }
-    @media (max-width: 800px) { .shell { grid-template-columns: 1fr; padding: 14px; } .stage { min-height: 480px; } #sprite { max-height: 330px; } }
+    @media (max-width: 800px) { .shell { grid-template-columns: 1fr; padding: 14px; } .stage { min-height: 480px; } #sprite { max-height: 330px; } .weather-fields { grid-template-columns: 1fr 1fr; } }
   </style>
 </head>
 <body>
@@ -54,10 +61,24 @@
         <h1>和 Meguri 说说话</h1>
         <p class="subtitle">这是本地桌宠主页。浏览器只访问 Java Meguri Core，DeepSeek key 保留在本机服务端。</p>
       </div>
+      <div class="weather-card">
+        <div id="weather-text">天气：正在读取已保存地点…</div>
+        <details>
+          <summary>修改天气地点</summary>
+          <form id="weather-form" class="weather-fields">
+            <input id="weather-name" aria-label="地点名称" placeholder="地点名称" maxlength="40" required />
+            <input id="weather-latitude" aria-label="纬度" type="number" min="-90" max="90" step="0.0001" placeholder="纬度" required />
+            <input id="weather-longitude" aria-label="经度" type="number" min="-180" max="180" step="0.0001" placeholder="经度" required />
+            <input id="weather-timezone" aria-label="时区" placeholder="Asia/Shanghai" required />
+            <button type="submit">保存</button>
+          </form>
+        </details>
+      </div>
       <div id="bubble" class="bubble">你好呀，我已经在这里等你了。</div>
       <form id="form">
-        <input id="message" autocomplete="off" placeholder="输入消息…" maxlength="8000" />
+        <input id="message" autocomplete="off" placeholder="输入消息；#帮助 查看快捷指令，~工程任务 生成草稿…" maxlength="8000" />
         <button id="send" type="submit">发送</button>
+        <button id="send-draft" class="secondary" type="button" hidden>发送草稿</button>
       </form>
       <div id="error" class="error"></div>
       <div class="meta"><span id="build">build: checking…</span><span>session: local-browser</span></div>
@@ -76,7 +97,15 @@
     const error = document.getElementById('error')
     const input = document.getElementById('message')
     const send = document.getElementById('send')
+    const sendDraft = document.getElementById('send-draft')
+    const weatherText = document.getElementById('weather-text')
+    const weatherName = document.getElementById('weather-name')
+    const weatherLatitude = document.getElementById('weather-latitude')
+    const weatherLongitude = document.getElementById('weather-longitude')
+    const weatherTimezone = document.getElementById('weather-timezone')
     let speechEnabled = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
+    let weatherEnabled = false
+    let lastRainKey = localStorage.getItem('meguri.weather.lastRainKey') || ''
 
     function setStatus(text, busy = false) {
       status.textContent = text
@@ -102,6 +131,52 @@
         window.speechSynthesis.speak(utterance)
       } catch {
         speechEnabled = false
+      }
+    }
+    function applyWeatherLocation(location) {
+      if (!location) return
+      weatherName.value = location.name || ''
+      weatherLatitude.value = location.latitude ?? ''
+      weatherLongitude.value = location.longitude ?? ''
+      weatherTimezone.value = location.timezone || 'Asia/Shanghai'
+    }
+    function showRainReminder(data) {
+      if (!data.rain_soon || !data.next_rain_at) return
+      const key = data.location.name + ':' + data.next_rain_at
+      if (key === lastRainKey) return
+      lastRainKey = key
+      localStorage.setItem('meguri.weather.lastRainKey', key)
+      const message = data.location.name + '临近下雨，出门记得带伞。'
+      speakText(message, 'worried')
+      if ('Notification' in window && Notification.permission === 'granted') new Notification('Meguri 天气提醒', { body: message })
+    }
+    async function loadWeather(announce = false) {
+      try {
+        const locationResponse = await fetch(coreUrl + '/v1/daily/weather/location')
+        if (!locationResponse.ok) throw new Error('location ' + locationResponse.status)
+        const locationData = await locationResponse.json()
+        weatherEnabled = Boolean(locationData.enabled)
+        applyWeatherLocation(locationData.location)
+        if (!weatherEnabled) {
+          weatherText.textContent = '天气地点已保存；设置 MEGURI_WEATHER_ENABLED=true 后启用 02:00 更新和临雨提醒。'
+          return undefined
+        }
+        const response = await fetch(coreUrl + '/v1/daily/weather/briefing')
+        if (!response.ok) throw new Error('weather ' + response.status)
+        const data = await response.json()
+        weatherText.textContent = data.briefing
+        if (announce) {
+          speakText(data.briefing, data.rain_soon ? 'worried' : 'soft')
+          if (data.rain_soon && data.next_rain_at) {
+            lastRainKey = data.location.name + ':' + data.next_rain_at
+            localStorage.setItem('meguri.weather.lastRainKey', lastRainKey)
+          }
+        }
+        else showRainReminder(data)
+        return data
+      } catch (reason) {
+        weatherText.textContent = '天气暂时不可用：' + (reason.message || String(reason))
+        return undefined
       }
     }
     function parseSseFrame(frame) {
@@ -179,8 +254,101 @@
         send.disabled = false; setStatus('Java runtime ready'); error.textContent = reason.message || String(reason)
       }
     }
-    document.getElementById('form').addEventListener('submit', event => { event.preventDefault(); const message = input.value.trim(); if (!message || send.disabled) return; input.value = ''; sendMessage(message) })
+    async function resolveInput(message) {
+      const response = await fetch(coreUrl + '/v1/input/resolve', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }),
+      })
+      if (!response.ok) throw new Error('input resolve ' + response.status)
+      return response.json()
+    }
+    async function handleInput(message) {
+      error.textContent = ''
+      send.disabled = true
+      setStatus('正在识别输入…', true)
+      try {
+        const resolved = await resolveInput(message)
+        if (resolved.kind === 'normal') {
+          input.value = ''
+          sendDraft.hidden = true
+          await sendMessage(resolved.message)
+          return
+        }
+        if (resolved.kind === 'preprocess') {
+          bubble.textContent = resolved.preview
+          input.value = resolved.message
+          sendDraft.hidden = false
+          send.disabled = false
+          setStatus('工程草稿已生成，请确认后发送')
+          return
+        }
+        if (resolved.kind === 'error') {
+          bubble.textContent = resolved.error
+          send.disabled = false
+          setStatus('等待输入')
+          return
+        }
+        if (resolved.command === 'help') {
+          bubble.textContent = '快捷指令：\n#天气  查询已保存地点的天气\n#搜索 关键词  联网检索并整理\n#帮助  查看说明\n\n~工程任务  生成可编辑的工程任务草稿。'
+          input.value = ''
+          sendDraft.hidden = true
+          send.disabled = false
+          setStatus('快捷指令完成')
+          return
+        }
+        if (resolved.command === 'weather') {
+          input.value = ''
+          sendDraft.hidden = true
+          const briefing = await loadWeather(true)
+          if (briefing) bubble.textContent = briefing.briefing
+          send.disabled = false
+          setStatus('天气快捷指令完成')
+          return
+        }
+        if (resolved.command === 'search') {
+          input.value = ''
+          sendDraft.hidden = true
+          await sendMessage('联网搜索 ' + resolved.arguments)
+          return
+        }
+        throw new Error('unsupported command')
+      } catch (reason) {
+        send.disabled = false
+        setStatus('输入处理失败')
+        error.textContent = reason.message || String(reason)
+      }
+    }
+    document.getElementById('form').addEventListener('submit', event => {
+      event.preventDefault()
+      const message = input.value
+      if (!message.trim() || send.disabled) return
+      handleInput(message)
+    })
+    sendDraft.addEventListener('click', () => {
+      const message = input.value.trim()
+      if (!message || send.disabled) return
+      input.value = ''
+      sendDraft.hidden = true
+      sendMessage(message)
+    })
+    document.getElementById('weather-form').addEventListener('submit', async event => {
+      event.preventDefault()
+      try {
+        if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission()
+        const response = await fetch(coreUrl + '/v1/daily/weather/location', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+            name: weatherName.value.trim(), latitude: Number(weatherLatitude.value),
+            longitude: Number(weatherLongitude.value), timezone: weatherTimezone.value.trim(),
+          }),
+        })
+        if (!response.ok) throw new Error('保存失败 ' + response.status)
+        await loadWeather(true)
+      } catch (reason) {
+        weatherText.textContent = '天气地点保存失败：' + (reason.message || String(reason))
+      }
+    })
     checkCore()
+    loadWeather(true)
+    setInterval(() => { if (weatherEnabled) loadWeather(false) }, 15 * 60 * 1000)
   </script>
 </body>
 </html>

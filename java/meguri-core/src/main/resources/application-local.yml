@@ -8,5 +8,7 @@ meguri:
     provider: mock
   web-search:
     enabled: false
+  weather:
+    enabled: ${MEGURI_WEATHER_ENABLED:false}
   memory:
     bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}

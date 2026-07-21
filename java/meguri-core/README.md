@@ -74,3 +74,44 @@ with HTTPS-only transport, redirect following, an eight-second timeout and at
 most five results. Only title, URL and summary are injected as `web_results`;
 arbitrary URL fetching is not exposed. Set `MEGURI_WEB_SEARCH_ENABLED=false`
 to keep the service offline.
+
+## Local weather briefing and rain reminder
+
+The Java runtime includes an opt-in Open-Meteo integration for the desktop
+home. It stores only a user-selected label, coordinates and IANA timezone in
+`%USERPROFILE%\.meguri\weather-location.json`; no device geolocation or API
+key is used. When enabled, the runtime refreshes once during the saved
+location's 02:00 hour and polls at a bounded interval for rain within the next
+two hours. The desktop home reads the briefing when it opens, speaks it, and
+can show a browser notification for a new rain window.
+
+The default mock profile remains offline. Opt in explicitly before starting:
+
+```powershell
+$env:MEGURI_WEATHER_ENABLED = 'true'
+$env:MEGURI_WEATHER_LOCATION_NAME = '上海'
+$env:MEGURI_WEATHER_LATITUDE = '31.2304'
+$env:MEGURI_WEATHER_LONGITUDE = '121.4737'
+$env:MEGURI_WEATHER_TIMEZONE = 'Asia/Shanghai'
+& 'D:\environment\maven\runtime\apache-maven-3.9.16\bin\mvn.cmd' -B spring-boot:run
+```
+
+The location can then be changed and saved from the desktop page. The runtime
+must remain running for the 02:00 refresh and rain polling to occur. Override
+`MEGURI_WEATHER_POLL_DELAY_MS`, `MEGURI_WEATHER_RAIN_THRESHOLD` or
+`MEGURI_WEATHER_RAIN_LOOKAHEAD_HOURS` for a different reminder policy.
+
+## Prefix input contract
+
+The desktop home uses the loopback `POST /v1/input/resolve` endpoint before a
+turn is submitted. This is a deterministic router, not another model call:
+
+- ordinary text is passed to Meguri unchanged;
+- `#` selects an allow-listed action: `#天气`, `#搜索 <关键词>`, or `#帮助`;
+- `~<工程描述>` generates an editable engineering-task draft, but never calls
+  Codex, changes code, or invokes a tool automatically;
+- `##` and `~~` escape a literal prefix for normal dialogue.
+
+The desktop page displays a `~` draft and requires a second send action after
+the user reviews or edits it. Add a new `#` command only together with its
+explicit execution boundary and tests; unknown commands fail closed.

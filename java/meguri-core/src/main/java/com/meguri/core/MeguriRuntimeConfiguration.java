@@ -9,6 +9,9 @@ import com.meguri.core.websearch.DuckDuckGoWebSearchGateway;
 import com.meguri.core.websearch.BingRssWebSearchGateway;
 import com.meguri.core.websearch.NoopWebSearchGateway;
 import com.meguri.core.websearch.WebSearchGateway;
+import com.meguri.core.weather.OpenMeteoWeatherGateway;
+import com.meguri.core.weather.WeatherGateway;
+import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -54,6 +57,23 @@ public class MeguriRuntimeConfiguration {
             return new BingRssWebSearchGateway(client, mapper, baseUrl, timeout, maxResults);
         }
         return new DuckDuckGoWebSearchGateway(client, mapper, baseUrl, timeout, maxResults);
+    }
+
+    @Bean
+    public WeatherGateway meguriWeatherGateway(
+            @Value("${meguri.weather.base-url:https://api.open-meteo.com/v1/forecast}") String baseUrl,
+            @Value("${meguri.weather.rain-probability-threshold:50}") int rainThreshold,
+            @Value("${meguri.weather.rain-lookahead-hours:2}") int rainLookaheadHours) {
+        java.net.URI endpoint = java.net.URI.create(baseUrl);
+        boolean loopback = endpoint.getHost() != null
+                && (endpoint.getHost().equals("127.0.0.1") || endpoint.getHost().equals("localhost"));
+        if (!"https".equalsIgnoreCase(endpoint.getScheme()) && !loopback) {
+            throw new IllegalArgumentException("weather base URL must use HTTPS or loopback HTTP");
+        }
+        WebClient client = WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(HttpClient.create().followRedirect(true)))
+                .build();
+        return new OpenMeteoWeatherGateway(client, baseUrl, Clock.systemUTC(), rainThreshold, rainLookaheadHours);
     }
 
     private static String resolveBuildId(Path dataRoot, String configured, ObjectMapper mapper) {
