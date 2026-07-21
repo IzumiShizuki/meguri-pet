@@ -104,6 +104,28 @@ public final class PythonMemoryGateway implements MemoryGateway {
                 .onErrorReturn(MemoryWriteResult.unavailable());
     }
 
+    @Override
+    public Mono<SessionSummaryResult> summarize(SessionSummaryRequest request) {
+        if (!enabled()) {
+            return Mono.just(SessionSummaryResult.unavailable(request.userId(), request.clientId(), request.sessionId()));
+        }
+        Map<String, Object> payload = Map.of(
+                "user_id", request.userId(),
+                "client_id", request.clientId(),
+                "session_id", request.sessionId(),
+                "messages", request.messages());
+        return post("/internal/memory/session-summary", payload)
+                .map(node -> new SessionSummaryResult(
+                        "persisted",
+                        node.path("user_id").asText(request.userId()),
+                        node.path("client_id").asText(request.clientId()),
+                        node.path("session_id").asText(request.sessionId()),
+                        node.path("summary").asText(""),
+                        node.path("message_count").asInt(0)))
+                .onErrorReturn(SessionSummaryResult.unavailable(
+                        request.userId(), request.clientId(), request.sessionId()));
+    }
+
     private Mono<JsonNode> post(String path, Map<String, Object> payload) {
         return client.post()
                 .uri(path)

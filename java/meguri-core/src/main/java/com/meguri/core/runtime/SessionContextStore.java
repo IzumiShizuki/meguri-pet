@@ -11,9 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
 /** Bounded short-term context keyed by user, client and session. */
 public final class SessionContextStore {
     public record Message(String role, String content) { }
+    public record Snapshot(String userId, String clientId, String sessionId, List<Message> messages) { }
+    private record Scope(String userId, String clientId, String sessionId) { }
 
     private final int capacity;
-    private final Map<String, Deque<Message>> sessions = new ConcurrentHashMap<>();
+    private final Map<Scope, Deque<Message>> sessions = new ConcurrentHashMap<>();
 
     public SessionContextStore() {
         this(20);
@@ -25,7 +27,7 @@ public final class SessionContextStore {
     }
 
     public void append(String userId, String clientId, String sessionId, Message message) {
-        String key = key(userId, clientId, sessionId);
+        Scope key = key(userId, clientId, sessionId);
         Deque<Message> queue = sessions.computeIfAbsent(key, ignored -> new ArrayDeque<>());
         synchronized (queue) {
             queue.addLast(message);
@@ -41,11 +43,25 @@ public final class SessionContextStore {
         }
     }
 
+    /** Immutable snapshots for the sleep-time summary job; no other session can leak into a snapshot. */
+    public List<Snapshot> snapshots() {
+        List<Snapshot> snapshots = new ArrayList<>();
+        sessions.forEach((scope, queue) -> {
+            synchronized (queue) {
+                if (!queue.isEmpty()) {
+                    snapshots.add(new Snapshot(scope.userId(), scope.clientId(), scope.sessionId(),
+                            List.copyOf(new ArrayList<>(queue))));
+                }
+            }
+        });
+        return List.copyOf(snapshots);
+    }
+
     public void clear() {
         sessions.clear();
     }
 
-    private static String key(String userId, String clientId, String sessionId) {
-        return String.valueOf(userId) + "\u0000" + clientId + "\u0000" + sessionId;
+    private static Scope key(String userId, String clientId, String sessionId) {
+        return new Scope(String.valueOf(userId), String.valueOf(clientId), String.valueOf(sessionId));
     }
 }

@@ -27,6 +27,8 @@ coverage/
 !/reports/environment-implementation-progress.md
 !/reports/staging-restore-rehearsal.md
 !/reports/environment-final.md
+/output/
+/tmp/
 /baselines/
 /training/*
 !/training/llm/

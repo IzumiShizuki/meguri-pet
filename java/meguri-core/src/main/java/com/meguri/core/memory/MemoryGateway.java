@@ -14,4 +14,6 @@ public interface MemoryGateway {
     Mono<List<MemoryCandidate>> extract(TurnRequest request);
 
     Mono<MemoryWriteResult> write(TurnRequest request, LlmResponse response, String turnId, String traceId);
+
+    Mono<SessionSummaryResult> summarize(SessionSummaryRequest request);
 }

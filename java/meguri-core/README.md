@@ -115,3 +115,26 @@ turn is submitted. This is a deterministic router, not another model call:
 The desktop page displays a `~` draft and requires a second send action after
 the user reviews or edits it. Add a new `#` command only together with its
 explicit execution boundary and tests; unknown commands fail closed.
+
+## Sleep-time memory consolidation
+
+The existing `sleep` mode only controls runtime tone, clothing and expression.
+It does not train a model or alter canonical Lore RAG. The optional
+sleep-memory job is a separate, auditable step: during the configured local
+02:00 hour it snapshots eligible resident in-memory sessions, redacts credential-like
+messages, and stores a bounded session summary through the token-protected
+Python authoritative-memory bridge.
+
+Enable it only after the Python memory bridge and its internal token are
+configured:
+
+```powershell
+$env:MEGURI_SLEEP_MEMORY_CONSOLIDATION_ENABLED = 'true'
+$env:MEGURI_SLEEP_MEMORY_TIMEZONE = 'Asia/Shanghai'
+```
+
+Use `POST /v1/memory/sleep-consolidation` for an explicit local run and
+`GET /v1/memory/sleep-consolidation` for aggregate-only status. Session
+summaries are not automatically promoted into long-term facts and never modify
+the protected canonical RAG; durable facts still use the existing reviewed
+memory-candidate workflow.

@@ -201,6 +201,11 @@ public class TurnOrchestrator {
         return eventsFor(sessionId);
     }
 
+    /** Bounded, identity-isolated snapshots available to the sleep-memory service. */
+    public List<SessionContextStore.Snapshot> sessionSnapshots() {
+        return sessions.snapshots();
+    }
+
     /**
      * Accept a turn and schedule it in the background. Idempotency is scoped to
      * user/client/session exactly as the Python runtime contract specifies.

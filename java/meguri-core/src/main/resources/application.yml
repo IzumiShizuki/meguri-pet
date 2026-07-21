@@ -34,6 +34,15 @@ meguri:
     poll-delay-ms: ${MEGURI_WEATHER_POLL_DELAY_MS:900000}
     rain-probability-threshold: ${MEGURI_WEATHER_RAIN_THRESHOLD:50}
     rain-lookahead-hours: ${MEGURI_WEATHER_RAIN_LOOKAHEAD_HOURS:2}
+  sleep-memory:
+    enabled: ${MEGURI_SLEEP_MEMORY_CONSOLIDATION_ENABLED:false}
+    timezone: ${MEGURI_SLEEP_MEMORY_TIMEZONE:Asia/Shanghai}
+    hour: ${MEGURI_SLEEP_MEMORY_HOUR:2}
+    min-messages: ${MEGURI_SLEEP_MEMORY_MIN_MESSAGES:4}
+    check-delay-ms: ${MEGURI_SLEEP_MEMORY_CHECK_DELAY_MS:60000}
+  billing-digest:
+    file: ${MEGURI_BILLING_DIGEST_FILE:D:/program/shizuki-site/data/qianji-sync/daily-billing-digest.json}
+    project-root: ${MEGURI_BILLING_REPORT_PROJECT_ROOT:D:/program/meguri-pet}
   llm:
     provider: ${MEGURI_LLM_PROVIDER:mock}
     base-url: ${MEGURI_LLM_BASE_URL:}

@@ -23,6 +23,13 @@ class InputResolverTest {
     }
 
     @Test
+    void resolvesBillingOnlyAsAnExplicitShortcut() {
+        InputResolution result = InputResolver.resolve("#账单");
+        assertThat(result.kind()).isEqualTo("command");
+        assertThat(result.command()).isEqualTo("billing");
+    }
+
+    @Test
     void requiresSearchKeywordsAndRejectsUnknownCommands() {
         assertThat(InputResolver.resolve("#搜索").error()).contains("关键词");
         assertThat(InputResolver.resolve("#代码 修复登录").error()).contains("未知快捷指令");

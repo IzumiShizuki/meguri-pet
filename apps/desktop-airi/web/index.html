@@ -27,6 +27,8 @@
     .weather-fields input { padding: 8px; font-size: .78rem; }
     .weather-fields button { padding: 0 12px; font-size: .78rem; }
     .bubble { min-height: 180px; padding: 18px; border-radius: 20px; background: #ffffff0b; border: 1px solid #ffffff14; line-height: 1.8; white-space: pre-wrap; }
+    .artifact-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; white-space: normal; }
+    .artifact-links a { color: #87c7ff; text-decoration: underline; text-underline-offset: 3px; }
     form { display: flex; gap: 10px; }
     input { flex: 1; min-width: 0; border: 1px solid #ffffff25; background: #0b0913aa; border-radius: 14px; padding: 14px; color: inherit; outline: none; font: inherit; }
     input:focus { border-color: #df9ce8; box-shadow: 0 0 0 3px #df9ce822; }
@@ -87,13 +89,17 @@
   <script>
     if (new URLSearchParams(location.search).get('mode') === 'overlay') document.body.classList.add('overlay')
     const coreUrl = 'http://127.0.0.1:18080'
-    const sessionId = 'desktop-home-' + Math.random().toString(36).slice(2)
+    const sessionStorageKey = 'meguri.desktop.sessionId'
+    function newSessionId() { return 'desktop-home-' + crypto.randomUUID() }
+    let sessionId = sessionStorage.getItem(sessionStorageKey) || newSessionId()
+    sessionStorage.setItem(sessionStorageKey, sessionId)
     const userId = 'local-browser-user'
     const sprite = document.getElementById('sprite')
     const expression = document.getElementById('expression')
     const bubble = document.getElementById('bubble')
     const status = document.getElementById('status')
     const build = document.getElementById('build')
+    const sessionLabel = document.querySelector('.meta span:last-child')
     const error = document.getElementById('error')
     const input = document.getElementById('message')
     const send = document.getElementById('send')
@@ -106,6 +112,32 @@
     let speechEnabled = 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window
     let weatherEnabled = false
     let lastRainKey = localStorage.getItem('meguri.weather.lastRainKey') || ''
+
+    function updateSessionLabel() {
+      sessionLabel.textContent = 'session: ' + sessionId.slice(-8) + ' (this tab)'
+    }
+    function startNewSession() {
+      sessionId = newSessionId()
+      sessionStorage.setItem(sessionStorageKey, sessionId)
+      updateSessionLabel()
+      bubble.textContent = 'A new session has started. The previous resident session can be consolidated during sleep if it meets the configured threshold.'
+    }
+    function showBubble(text, artifacts = []) {
+      bubble.replaceChildren(document.createTextNode(text || ''))
+      const safeArtifacts = Array.isArray(artifacts) ? artifacts.filter(item => item && item.href && item.label) : []
+      if (!safeArtifacts.length) return
+      const links = document.createElement('div')
+      links.className = 'artifact-links'
+      for (const item of safeArtifacts) {
+        const link = document.createElement('a')
+        link.href = item.href
+        link.textContent = item.label
+        link.target = '_blank'
+        link.rel = 'noopener'
+        links.append(link)
+      }
+      bubble.append(links)
+    }
 
     function setStatus(text, busy = false) {
       status.textContent = text
@@ -288,7 +320,7 @@
           return
         }
         if (resolved.command === 'help') {
-          bubble.textContent = '快捷指令：\n#天气  查询已保存地点的天气\n#搜索 关键词  联网检索并整理\n#帮助  查看说明\n\n~工程任务  生成可编辑的工程任务草稿。'
+          bubble.textContent = '快捷指令：\n#天气  查询已保存地点的天气\n#账单  查看钱迹同步后的安全日报\n#搜索 关键词  联网检索并整理\n#帮助  查看说明\n\n~工程任务  生成可编辑的工程任务草稿。'
           input.value = ''
           sendDraft.hidden = true
           send.disabled = false
@@ -302,6 +334,18 @@
           if (briefing) bubble.textContent = briefing.briefing
           send.disabled = false
           setStatus('天气快捷指令完成')
+          return
+        }
+        if (resolved.command === 'billing') {
+          input.value = ''
+          sendDraft.hidden = true
+          const response = await fetch(coreUrl + '/v1/daily/billing/briefing')
+          if (!response.ok) throw new Error('billing ' + response.status)
+          const data = await response.json()
+          showBubble(data.briefing || data.error || 'Billing daily report is not available.', data.artifacts)
+          if (data.briefing) speakText(data.briefing, 'soft')
+          send.disabled = false
+          setStatus(data.status === 'ready' ? '账单日报已读取' : '账单日报暂不可用')
           return
         }
         if (resolved.command === 'search') {
@@ -346,6 +390,13 @@
         weatherText.textContent = '天气地点保存失败：' + (reason.message || String(reason))
       }
     })
+    const newSessionButton = document.createElement('button')
+    newSessionButton.type = 'button'
+    newSessionButton.className = 'secondary'
+    newSessionButton.textContent = 'New session'
+    newSessionButton.addEventListener('click', startNewSession)
+    document.querySelector('.meta').append(newSessionButton)
+    updateSessionLabel()
     checkCore()
     loadWeather(true)
     setInterval(() => { if (weatherEnabled) loadWeather(false) }, 15 * 60 * 1000)

@@ -61,3 +61,22 @@ class MemoryBridgeTests(unittest.TestCase):
         )
         self.assertEqual(search.status_code, 200)
         self.assertTrue(search.json()["items"])
+
+    def test_bridge_persists_a_bounded_session_summary(self) -> None:
+        headers = {"X-Meguri-Internal-Token": "bridge-test-token"}
+        response = self.client.post(
+            "/internal/memory/session-summary",
+            headers=headers,
+            json={
+                "user_id": "bridge-user",
+                "client_id": "desktop_pet",
+                "session_id": "sleep-session",
+                "messages": [
+                    {"role": "user", "content": "我喜欢喝茶"},
+                    {"role": "assistant", "content": "我记住了"},
+                ],
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["message_count"], 2)
+        self.assertIn("我喜欢喝茶", response.json()["summary"])

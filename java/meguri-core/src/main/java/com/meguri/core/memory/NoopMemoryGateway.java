@@ -23,4 +23,9 @@ public final class NoopMemoryGateway implements MemoryGateway {
     public Mono<MemoryWriteResult> write(TurnRequest request, LlmResponse response, String turnId, String traceId) {
         return Mono.just(MemoryWriteResult.unavailable());
     }
+
+    @Override
+    public Mono<SessionSummaryResult> summarize(SessionSummaryRequest request) {
+        return Mono.just(SessionSummaryResult.unavailable(request.userId(), request.clientId(), request.sessionId()));
+    }
 }

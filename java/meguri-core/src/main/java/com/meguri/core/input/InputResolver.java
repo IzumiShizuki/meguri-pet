@@ -13,6 +13,7 @@ import java.util.Map;
 public final class InputResolver {
     private static final Map<String, String> COMMANDS = Map.ofEntries(
             Map.entry("天气", "weather"), Map.entry("weather", "weather"),
+            Map.entry("账单", "billing"), Map.entry("bill", "billing"), Map.entry("billing", "billing"),
             Map.entry("搜索", "search"), Map.entry("search", "search"),
             Map.entry("帮助", "help"), Map.entry("help", "help"), Map.entry("?", "help"));
 
@@ -35,14 +36,14 @@ public final class InputResolver {
         String requested = parts[0].toLowerCase(Locale.ROOT);
         String command = COMMANDS.get(requested);
         if (command == null) {
-            return InputResolution.error(raw, requested, "未知快捷指令。可用：#帮助、#天气、#搜索 关键词。");
+            return InputResolution.error(raw, requested, "未知快捷指令。可用：#帮助、#天气、#账单、#搜索 关键词。");
         }
         String arguments = parts.length == 2 ? parts[1].trim() : "";
         if (command.equals("search") && arguments.isBlank()) {
             return InputResolution.error(raw, command, "#搜索 需要提供关键词，例如：#搜索 LangChain4j 文档");
         }
-        if (command.equals("weather") && !arguments.isBlank()) {
-            return InputResolution.error(raw, command, "#天气 当前只使用已保存的默认地点；请在天气设置中修改地点。");
+        if ((command.equals("weather") || command.equals("billing")) && !arguments.isBlank()) {
+            return InputResolution.error(raw, command, "该快捷指令当前不接受额外参数。");
         }
         return InputResolution.command(raw, command, arguments);
     }

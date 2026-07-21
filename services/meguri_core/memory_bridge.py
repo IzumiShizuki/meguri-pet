@@ -19,6 +19,8 @@ from .memory import (
     MemoryExtractionInput,
     MemorySearchInput,
     MemoryUpsertInput,
+    SessionMessage,
+    SessionSummaryInput,
 )
 from .schemas import MemoryCandidate
 
@@ -47,6 +49,15 @@ class BridgeWriteRequest(BaseModel):
     source_turn_id: str = Field(min_length=1)
     trace_id: str = Field(min_length=1)
     candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=3)
+
+
+class BridgeSessionSummaryRequest(BaseModel):
+    """A bounded session snapshot from the Java online runtime."""
+
+    user_id: str = Field(min_length=1)
+    client_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+    messages: list[SessionMessage] = Field(min_length=2, max_length=20)
 
 
 async def _authorize(request: Request) -> None:
@@ -184,3 +195,22 @@ async def bridge_write(body: BridgeWriteRequest, request: Request) -> dict[str, 
         "decisions": [decision.status for decision in decisions],
         "events": events,
     }
+
+
+@router.post("/session-summary")
+async def bridge_session_summary(
+    body: BridgeSessionSummaryRequest, request: Request
+) -> dict[str, Any]:
+    """Persist an audit-only session summary; it never writes canonical Lore RAG."""
+
+    await _authorize(request)
+    provider = _provider(request)
+    summary = await provider.summarize_session(
+        SessionSummaryInput(
+            user_id=body.user_id,
+            client_id=body.client_id,
+            session_id=body.session_id,
+            messages=body.messages,
+        )
+    )
+    return summary.model_dump(mode="json")
