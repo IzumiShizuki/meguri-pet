@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "Meguri runtime assets; populated during deployment packaging",
+  "sprite_dirs": [
+    "sprites",
+    "characters",
+    "."
+  ],
+  "backgrounds": {
+    "work_day": [],
+    "work_evening": [],
+    "work_night": [],
+    "private_day": [],
+    "private_evening": [],
+    "private_night": [],
+    "sleep_night": [],
+    "event_pool_day": [],
+    "event_pool_evening": [],
+    "event_pool_night": [],
+    "event_shrine_day": [],
+    "event_shrine_night": []
+  }
+}

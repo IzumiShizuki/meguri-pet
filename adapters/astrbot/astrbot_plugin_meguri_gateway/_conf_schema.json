@@ -2,16 +2,154 @@
   "core_url": {
     "description": "Loopback-only meguri-core URL",
     "type": "string",
-    "default": "http://127.0.0.1:8100"
+    "default": "http://127.0.0.1:18080"
+  },
+  "tenant_id": {
+    "description": "Meguri tenant identifier sent to the local core",
+    "type": "string",
+    "default": "meguri-local"
   },
   "timeout_seconds": {
-    "description": "Fail-fast request timeout",
+    "description": "Fail-fast timeout used for Core and Relay requests",
     "type": "float",
     "default": 8.0
+  },
+  "async_turns_enabled": {
+    "description": "Use the shared asynchronous Turn and SSE protocol; fall back only when the Core explicitly lacks the endpoint",
+    "type": "bool",
+    "default": true
+  },
+  "turn_checkpoint_file": {
+    "description": "Persistent async Turn cursor and reducer state outside the plugin source directory",
+    "type": "string",
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/turn-checkpoints.json"
   },
   "identity_salt_env": {
     "description": "Environment variable containing the identity HMAC salt",
     "type": "string",
     "default": "MEGURI_IDENTITY_SALT"
+  },
+  "identity_salt_file": {
+    "description": "Optional direct path to the identity HMAC salt file; used when the environment variable is absent",
+    "type": "string",
+    "default": ""
+  },
+  "core_token_file_env": {
+    "description": "Environment variable pointing to the optional Core token file",
+    "type": "string",
+    "default": "MEGURI_ASTRBOT_SHARED_TOKEN_FILE"
+  },
+  "core_token_file": {
+    "description": "Optional direct path to the Core shared-token file; used before the environment-variable path",
+    "type": "string",
+    "default": ""
+  },
+  "route_all_private_messages": {
+    "description": "Route every private message to Meguri; otherwise require /meguri",
+    "type": "bool",
+    "default": false
+  },
+  "allow_group_messages": {
+    "description": "Allow explicit /meguri commands in group chats",
+    "type": "bool",
+    "default": false
+  },
+  "route_all_group_messages": {
+    "description": "Route every group message delivered to AstrBot to Meguri; requires allow_group_messages",
+    "type": "bool",
+    "default": false
+  },
+  "bilingual_zh_ja": {
+    "description": "Render AstrBot replies as paired Chinese translations and Japanese originals",
+    "type": "bool",
+    "default": true
+  },
+  "daily_reports_enabled": {
+    "description": "Poll the remote Core inbox and proactively deliver validated local daily reports",
+    "type": "bool",
+    "default": false
+  },
+  "daily_report_targets": {
+    "description": "Exact AstrBot unified message origins receiving daily reports",
+    "type": "list",
+    "default": []
+  },
+  "daily_report_kinds": {
+    "description": "Report kinds polled from the Core inbox",
+    "type": "list",
+    "default": ["bilibili"]
+  },
+  "daily_report_poll_seconds": {
+    "description": "Seconds between Core inbox polls; minimum 30",
+    "type": "int",
+    "default": 60
+  },
+  "daily_report_max_age_hours": {
+    "description": "Do not proactively send reports older than this window",
+    "type": "int",
+    "default": 48
+  },
+  "daily_report_state_file": {
+    "description": "Persistent per-target delivery state outside the plugin source directory",
+    "type": "string",
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/daily-report-state.json"
+  },
+  "allowed_senders": {
+    "description": "Optional sender allowlist using platform:bot_account:sender_id",
+    "type": "list",
+    "default": []
+  },
+  "identity_bindings": {
+    "description": "Explicit platform identities bound to stable Meguri users",
+    "type": "template_list",
+    "default": [],
+    "templates": {
+      "binding": {
+        "name": "Identity binding",
+        "display_item": "meguri_user_id",
+        "items": {
+          "platform": {
+            "description": "AstrBot platform name",
+            "type": "string",
+            "default": ""
+          },
+          "account_id": {
+            "description": "Bot account ID or * for every account",
+            "type": "string",
+            "default": "*"
+          },
+          "sender_id": {
+            "description": "Platform sender ID",
+            "type": "string",
+            "default": ""
+          },
+          "meguri_user_id": {
+            "description": "Stable Meguri user ID",
+            "type": "string",
+            "default": ""
+          }
+        }
+      }
+    }
+  },
+  "remote_commands_enabled": {
+    "description": "Enable remote development commands through Meguri Relay",
+    "type": "bool",
+    "default": false
+  },
+  "relay_url": {
+    "description": "Meguri Relay URL; non-loopback addresses must use HTTPS",
+    "type": "string",
+    "default": "http://127.0.0.1:18100"
+  },
+  "relay_token_file_env": {
+    "description": "Environment variable pointing to the Relay access-token file",
+    "type": "string",
+    "default": "MEGURI_RELAY_TOKEN_FILE"
+  },
+  "remote_operator_senders": {
+    "description": "Remote-development operators using platform:bot_account:sender_id",
+    "type": "list",
+    "default": []
   }
 }

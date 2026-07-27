@@ -13,17 +13,26 @@ class IdentityBindingStore:
         if not salt:
             raise ValueError("identity salt must not be empty")
         self._salt = salt.encode("utf-8")
-        self._bindings: dict[tuple[str, str], str] = {}
+        self._bindings: dict[tuple[str, str, str], str] = {}
 
-    def bind(self, platform: str, platform_user_id: str, meguri_user_id: str) -> None:
+    def bind(
+        self,
+        platform: str,
+        platform_user_id: str,
+        meguri_user_id: str,
+        *,
+        account_id: str = "*",
+    ) -> None:
         if not all((platform, platform_user_id, meguri_user_id)):
             raise ValueError("binding values must not be empty")
-        self._bindings[(platform, platform_user_id)] = meguri_user_id
+        self._bindings[(platform, account_id or "*", platform_user_id)] = meguri_user_id
 
     def resolve(self, message: PlatformMessage) -> IdentityContext:
-        binding_key = (message.platform, message.sender_id)
-        user_id = self._bindings.get(binding_key) or self._opaque_id(
-            "user", message.platform, message.sender_id
+        exact_key = (message.platform, message.account_id, message.sender_id)
+        wildcard_key = (message.platform, "*", message.sender_id)
+        bound_user_id = self._bindings.get(exact_key) or self._bindings.get(wildcard_key)
+        user_id = bound_user_id or self._opaque_id(
+            "user", message.platform, message.account_id, message.sender_id
         )
         session_id = self._opaque_id(
             "session",
@@ -33,7 +42,11 @@ class IdentityBindingStore:
             message.conversation_id,
             message.sender_id,
         )
-        return IdentityContext(meguri_user_id=user_id, session_id=session_id)
+        return IdentityContext(
+            meguri_user_id=user_id,
+            session_id=session_id,
+            formal_memory_allowed=bound_user_id is not None,
+        )
 
     def _opaque_id(self, prefix: str, *parts: str) -> str:
         value = "\x1f".join(parts).encode("utf-8")

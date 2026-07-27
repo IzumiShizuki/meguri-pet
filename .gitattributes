@@ -6,7 +6,9 @@
 *.jsonl text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+configs/meguri_system_prompt.txt text eol=lf
 *.ps1 text eol=crlf
 *.parquet binary
 *.png binary
 *.ogg binary
+adapters/astrbot/astrbot_plugin_chuanhuatong/** -whitespace
