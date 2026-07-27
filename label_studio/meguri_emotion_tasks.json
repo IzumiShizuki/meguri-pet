@@ -1,0 +1,2002 @@
+[
+  {
+    "id": 1,
+    "data": {
+      "review_id": "emotion_pilot_001",
+      "voice_id": "MGR051140",
+      "text_jp": "そ、それは……す、すみません",
+      "scene_id": "01_e10a",
+      "line_id": "meguri_01_e10a_0197",
+      "outfit_code": "02",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051140.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051140.wav"
+    }
+  },
+  {
+    "id": 2,
+    "data": {
+      "review_id": "emotion_pilot_002",
+      "voice_id": "MGR001014",
+      "text_jp": "兄さんは、叶先輩が好きなんです",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0076",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001014.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001014.wav"
+    }
+  },
+  {
+    "id": 3,
+    "data": {
+      "review_id": "emotion_pilot_003",
+      "voice_id": "MGR051784",
+      "text_jp": "……ふふっ。\nでは、リビングに飾らせてもらいますね",
+      "scene_id": "01_e13c",
+      "line_id": "meguri_01_e13c_0058",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051784.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051784.wav"
+    }
+  },
+  {
+    "id": 4,
+    "data": {
+      "review_id": "emotion_pilot_004",
+      "voice_id": "MGR050308",
+      "text_jp": "あ、兄さん……",
+      "scene_id": "01_e04",
+      "line_id": "meguri_01_e04_0231",
+      "outfit_code": "06",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050308.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050308.wav"
+    }
+  },
+  {
+    "id": 5,
+    "data": {
+      "review_id": "emotion_pilot_005",
+      "voice_id": "MGR040294",
+      "text_jp": "おはようございます、兄さん",
+      "scene_id": "01_d13a",
+      "line_id": "meguri_01_d13a_0002",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR040294.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR040294.wav"
+    }
+  },
+  {
+    "id": 6,
+    "data": {
+      "review_id": "emotion_pilot_006",
+      "voice_id": "MGR070050",
+      "text_jp": "記念すべき日ですからね",
+      "scene_id": "01_g03",
+      "line_id": "meguri_01_g03_0030",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR070050.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR070050.wav"
+    }
+  },
+  {
+    "id": 7,
+    "data": {
+      "review_id": "emotion_pilot_007",
+      "voice_id": "MGR050271",
+      "text_jp": "私はここですよ、兄さん",
+      "scene_id": "01_e04",
+      "line_id": "meguri_01_e04_0016",
+      "outfit_code": "07",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050271.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050271.wav"
+    }
+  },
+  {
+    "id": 8,
+    "data": {
+      "review_id": "emotion_pilot_008",
+      "voice_id": "MGR051357",
+      "text_jp": "いえ、待ってください……こちらのほうが詳細に\n書かれているようです",
+      "scene_id": "01_e11",
+      "line_id": "meguri_01_e11_0227",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051357.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051357.wav"
+    }
+  },
+  {
+    "id": 9,
+    "data": {
+      "review_id": "emotion_pilot_009",
+      "voice_id": "MGR051464",
+      "text_jp": "あ……また、落ちてますね",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0269",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051464.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051464.wav"
+    }
+  },
+  {
+    "id": 10,
+    "data": {
+      "review_id": "emotion_pilot_010",
+      "voice_id": "MGR050211",
+      "text_jp": "はい。お願いします",
+      "scene_id": "01_e03",
+      "line_id": "meguri_01_e03_0165",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050211.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050211.wav"
+    }
+  },
+  {
+    "id": 11,
+    "data": {
+      "review_id": "emotion_pilot_011",
+      "voice_id": "MGR040029",
+      "text_jp": "……今、何か念じてたりするんですか",
+      "scene_id": "01_d01",
+      "line_id": "meguri_01_d01_0461",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR040029.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR040029.wav"
+    }
+  },
+  {
+    "id": 12,
+    "data": {
+      "review_id": "emotion_pilot_012",
+      "voice_id": "MGR020158",
+      "text_jp": "そうですね。差し入れを一緒に\n選ぶくらいはしたいですし。途中までおともします",
+      "scene_id": "01_b09a",
+      "line_id": "meguri_01_b09a_0115",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020158.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020158.wav"
+    }
+  },
+  {
+    "id": 13,
+    "data": {
+      "review_id": "emotion_pilot_013",
+      "voice_id": "MGR020150",
+      "text_jp": "昔からの性格ですから",
+      "scene_id": "01_b08",
+      "line_id": "meguri_01_b08_0182",
+      "outfit_code": "04",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020150.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020150.wav"
+    }
+  },
+  {
+    "id": 14,
+    "data": {
+      "review_id": "emotion_pilot_014",
+      "voice_id": "MGR050848",
+      "text_jp": "……開き直ります",
+      "scene_id": "01_e08a",
+      "line_id": "meguri_01_e08a_0268",
+      "outfit_code": "04",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050848.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050848.wav"
+    }
+  },
+  {
+    "id": 15,
+    "data": {
+      "review_id": "emotion_pilot_015",
+      "voice_id": "MGR020133",
+      "text_jp": "それでは、失礼しますね",
+      "scene_id": "01_b07a",
+      "line_id": "meguri_01_b07a_0333",
+      "outfit_code": "02",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020133.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020133.wav"
+    }
+  },
+  {
+    "id": 16,
+    "data": {
+      "review_id": "emotion_pilot_016",
+      "voice_id": "MGR001044",
+      "text_jp": "ええ、今まさに戻ったところでした",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0657",
+      "outfit_code": "05",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001044.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001044.wav"
+    }
+  },
+  {
+    "id": 17,
+    "data": {
+      "review_id": "emotion_pilot_017",
+      "voice_id": "MGR070026",
+      "text_jp": "それにしても、これで確定しましたね",
+      "scene_id": "01_g02",
+      "line_id": "meguri_01_g02_0021",
+      "outfit_code": "03",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR070026.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR070026.wav"
+    }
+  },
+  {
+    "id": 18,
+    "data": {
+      "review_id": "emotion_pilot_018",
+      "voice_id": "MGR010002",
+      "text_jp": "……意外です。また、すごく落ち込んでるのかと\n思っていたんですけど",
+      "scene_id": "01_a01",
+      "line_id": "meguri_01_a01_0007",
+      "outfit_code": "06",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR010002.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR010002.wav"
+    }
+  },
+  {
+    "id": 19,
+    "data": {
+      "review_id": "emotion_pilot_019",
+      "voice_id": "MGR001085",
+      "text_jp": "――ここが私の部屋です、どうぞ",
+      "scene_id": "00_10",
+      "line_id": "meguri_00_10_0166",
+      "outfit_code": "03",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001085.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001085.wav"
+    }
+  },
+  {
+    "id": 20,
+    "data": {
+      "review_id": "emotion_pilot_020",
+      "voice_id": "MGR010100",
+      "text_jp": "ナイスフォローですけど、\n美也先輩はかっこつけすぎじゃあないでしょうか",
+      "scene_id": "01_a07a",
+      "line_id": "meguri_01_a07a_0016",
+      "outfit_code": "05",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "平静／普通",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR010100.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR010100.wav"
+    }
+  },
+  {
+    "id": 21,
+    "data": {
+      "review_id": "emotion_pilot_021",
+      "voice_id": "MGR051067",
+      "text_jp": "ふにゃっ",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0334",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051067.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051067.wav"
+    }
+  },
+  {
+    "id": 22,
+    "data": {
+      "review_id": "emotion_pilot_022",
+      "voice_id": "MGR051076",
+      "text_jp": "構いません、兄さんになら……",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0355",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "worried",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051076.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051076.wav"
+    }
+  },
+  {
+    "id": 23,
+    "data": {
+      "review_id": "emotion_pilot_023",
+      "voice_id": "MGR051081",
+      "text_jp": "分けて洗ってませんから。そんな無駄なことしません",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0366",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051081.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051081.wav"
+    }
+  },
+  {
+    "id": 24,
+    "data": {
+      "review_id": "emotion_pilot_024",
+      "voice_id": "MGR051064",
+      "text_jp": "そうでしょうか……？\n自分でこう見ると、なんだか……気になって",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0327",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051064.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051064.wav"
+    }
+  },
+  {
+    "id": 25,
+    "data": {
+      "review_id": "emotion_pilot_025",
+      "voice_id": "MGR051058",
+      "text_jp": "その時は明日も、兄さんに\n髪を洗ってもらうことにします",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0312",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051058.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051058.wav"
+    }
+  },
+  {
+    "id": 26,
+    "data": {
+      "review_id": "emotion_pilot_026",
+      "voice_id": "MGR051079",
+      "text_jp": "小学生くらいまでは入ってたような",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0362",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051079.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051079.wav"
+    }
+  },
+  {
+    "id": 27,
+    "data": {
+      "review_id": "emotion_pilot_027",
+      "voice_id": "MGR051070",
+      "text_jp": "あ……でも兄さん、今日は……",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0342",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051070.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051070.wav"
+    }
+  },
+  {
+    "id": 28,
+    "data": {
+      "review_id": "emotion_pilot_028",
+      "voice_id": "MGR051062",
+      "text_jp": "兄さん、その……",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0322",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051062.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051062.wav"
+    }
+  },
+  {
+    "id": 29,
+    "data": {
+      "review_id": "emotion_pilot_029",
+      "voice_id": "MGR051087",
+      "text_jp": "ん……",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0380",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051087.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051087.wav"
+    }
+  },
+  {
+    "id": 30,
+    "data": {
+      "review_id": "emotion_pilot_030",
+      "voice_id": "MGR051055",
+      "text_jp": "ふぅ……やっぱりお風呂はいいですね",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0307",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051055.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051055.wav"
+    }
+  },
+  {
+    "id": 31,
+    "data": {
+      "review_id": "emotion_pilot_031",
+      "voice_id": "MGR051084",
+      "text_jp": "…………うそつき",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0372",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051084.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051084.wav"
+    }
+  },
+  {
+    "id": 32,
+    "data": {
+      "review_id": "emotion_pilot_032",
+      "voice_id": "MGR051073",
+      "text_jp": "……失敗しました",
+      "scene_id": "01_e09",
+      "line_id": "meguri_01_e09_0350",
+      "outfit_code": "07",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "浴室／环境回声",
+      "proposed_base_action_zh": "排除",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "明显",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051073.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051073.wav"
+    }
+  },
+  {
+    "id": 33,
+    "data": {
+      "review_id": "emotion_pilot_033",
+      "voice_id": "MGR051577",
+      "text_jp": "んぅう～～～～っ、\n叶先輩の胸にデレデレした兄さんなんて、知りませんっ",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0657",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "克制但加重语气的愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "克制愤怒专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051577.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051577.wav"
+    }
+  },
+  {
+    "id": 34,
+    "data": {
+      "review_id": "emotion_pilot_034",
+      "voice_id": "MGR051145",
+      "text_jp": "……い、いいから、先を続けてくださいっ",
+      "scene_id": "01_e10a",
+      "line_id": "meguri_01_e10a_0210",
+      "outfit_code": "02",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "克制但加重语气的愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "克制愤怒专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051145.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051145.wav"
+    }
+  },
+  {
+    "id": 35,
+    "data": {
+      "review_id": "emotion_pilot_035",
+      "voice_id": "MGR050764",
+      "text_jp": "な、何を話してるんですかっ。\nそれはその、確かに事実ですけど",
+      "scene_id": "01_e07",
+      "line_id": "meguri_01_e07_0224",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "克制但加重语气的愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "克制愤怒专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050764.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050764.wav"
+    }
+  },
+  {
+    "id": 36,
+    "data": {
+      "review_id": "emotion_pilot_036",
+      "voice_id": "MGR051575",
+      "text_jp": "怒ってなんていませんっ",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0653",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "克制但加重语气的愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "克制愤怒专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051575.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051575.wav"
+    }
+  },
+  {
+    "id": 37,
+    "data": {
+      "review_id": "emotion_pilot_037",
+      "voice_id": "MGR030136",
+      "text_jp": "……一応、ここは神聖な場所ですので。\nふしだらな行為はやめてくださいね",
+      "scene_id": "01_c10",
+      "line_id": "meguri_01_c10_0367",
+      "outfit_code": "04",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "克制但加重语气的愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "克制愤怒专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR030136.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR030136.wav"
+    }
+  },
+  {
+    "id": 38,
+    "data": {
+      "review_id": "emotion_pilot_038",
+      "voice_id": "MGR000335",
+      "text_jp": "よくありませんよっ",
+      "scene_id": "00_05",
+      "line_id": "meguri_00_05_0101",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "克制但加重语气的愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "克制愤怒专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR000335.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR000335.wav"
+    }
+  },
+  {
+    "id": 39,
+    "data": {
+      "review_id": "emotion_pilot_039",
+      "voice_id": "MGR000388",
+      "text_jp": "に、兄さんっ、どういう事ですか！？",
+      "scene_id": "00_07",
+      "line_id": "meguri_00_07_0087",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR000388.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR000388.wav"
+    }
+  },
+  {
+    "id": 40,
+    "data": {
+      "review_id": "emotion_pilot_040",
+      "voice_id": "MGR051778",
+      "text_jp": "ふぁ……っ！ に、兄さん……！？",
+      "scene_id": "01_e13c",
+      "line_id": "meguri_01_e13c_0038",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051778.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051778.wav"
+    }
+  },
+  {
+    "id": 41,
+    "data": {
+      "review_id": "emotion_pilot_041",
+      "voice_id": "MGR000387",
+      "text_jp": "っ！？ お、おはようございますっ",
+      "scene_id": "00_07",
+      "line_id": "meguri_00_07_0083",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR000387.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR000387.wav"
+    }
+  },
+  {
+    "id": 42,
+    "data": {
+      "review_id": "emotion_pilot_042",
+      "voice_id": "MGR010132",
+      "text_jp": "兄さん！",
+      "scene_id": "01_a10",
+      "line_id": "meguri_01_a10_0390",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR010132.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR010132.wav"
+    }
+  },
+  {
+    "id": 43,
+    "data": {
+      "review_id": "emotion_pilot_043",
+      "voice_id": "MGR050302",
+      "text_jp": "やっと会えた、兄さん！",
+      "scene_id": "01_e04",
+      "line_id": "meguri_01_e04_0149",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050302.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050302.wav"
+    }
+  },
+  {
+    "id": 44,
+    "data": {
+      "review_id": "emotion_pilot_044",
+      "voice_id": "MGR030131",
+      "text_jp": "うおっっっほん！",
+      "scene_id": "01_c10",
+      "line_id": "meguri_01_c10_0315",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR030131.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR030131.wav"
+    }
+  },
+  {
+    "id": 45,
+    "data": {
+      "review_id": "emotion_pilot_045",
+      "voice_id": "MGR020052",
+      "text_jp": "んっ、んんっ、あー、あー！",
+      "scene_id": "01_b02",
+      "line_id": "meguri_01_b02_0368",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020052.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020052.wav"
+    }
+  },
+  {
+    "id": 46,
+    "data": {
+      "review_id": "emotion_pilot_046",
+      "voice_id": "MGR000095",
+      "text_jp": "な、わけがありません！",
+      "scene_id": "00_01",
+      "line_id": "meguri_00_01_0343",
+      "outfit_code": "08",
+      "relationship_stage": "sibling",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR000095.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR000095.wav"
+    }
+  },
+  {
+    "id": 47,
+    "data": {
+      "review_id": "emotion_pilot_047",
+      "voice_id": "MGR010056",
+      "text_jp": "どうぞ、ごゆっくり！",
+      "scene_id": "01_a04a",
+      "line_id": "meguri_01_a04a_0028",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR010056.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR010056.wav"
+    }
+  },
+  {
+    "id": 48,
+    "data": {
+      "review_id": "emotion_pilot_048",
+      "voice_id": "MGR050076",
+      "text_jp": "あ……！",
+      "scene_id": "01_e01",
+      "line_id": "meguri_01_e01_0284",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050076.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050076.wav"
+    }
+  },
+  {
+    "id": 49,
+    "data": {
+      "review_id": "emotion_pilot_049",
+      "voice_id": "MGR030147",
+      "text_jp": "あるわけがありません！",
+      "scene_id": "01_c11",
+      "line_id": "meguri_01_c11_0254",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR030147.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR030147.wav"
+    }
+  },
+  {
+    "id": 50,
+    "data": {
+      "review_id": "emotion_pilot_050",
+      "voice_id": "MGR051461",
+      "text_jp": "叶先輩！",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0259",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051461.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051461.wav"
+    }
+  },
+  {
+    "id": 51,
+    "data": {
+      "review_id": "emotion_pilot_051",
+      "voice_id": "MGR010134",
+      "text_jp": "っ、やっぱり……！",
+      "scene_id": "01_a10",
+      "line_id": "meguri_01_a10_0409",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR010134.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR010134.wav"
+    }
+  },
+  {
+    "id": 52,
+    "data": {
+      "review_id": "emotion_pilot_052",
+      "voice_id": "MGR051776",
+      "text_jp": "あっ……！",
+      "scene_id": "01_e13c",
+      "line_id": "meguri_01_e13c_0034",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051776.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051776.wav"
+    }
+  },
+  {
+    "id": 53,
+    "data": {
+      "review_id": "emotion_pilot_053",
+      "voice_id": "MGR050827",
+      "text_jp": "ひゃわっ！",
+      "scene_id": "01_e08a",
+      "line_id": "meguri_01_e08a_0187",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050827.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050827.wav"
+    }
+  },
+  {
+    "id": 54,
+    "data": {
+      "review_id": "emotion_pilot_054",
+      "voice_id": "MGR020023",
+      "text_jp": "違いますってば！",
+      "scene_id": "01_b02",
+      "line_id": "meguri_01_b02_0030",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他中等情绪表达",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "无",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020023.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020023.wav"
+    }
+  },
+  {
+    "id": 55,
+    "data": {
+      "review_id": "emotion_pilot_055",
+      "voice_id": "MGR001037",
+      "text_jp": "あっ、もう",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0551",
+      "outfit_code": "05",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001037.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001037.wav"
+    }
+  },
+  {
+    "id": 56,
+    "data": {
+      "review_id": "emotion_pilot_056",
+      "voice_id": "MGR020002",
+      "text_jp": "もう……兄さん！",
+      "scene_id": "01_b01",
+      "line_id": "meguri_01_b01_0122",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020002.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020002.wav"
+    }
+  },
+  {
+    "id": 57,
+    "data": {
+      "review_id": "emotion_pilot_057",
+      "voice_id": "MGR040094",
+      "text_jp": "もう。兄さん、そんなにあたふたしないでください",
+      "scene_id": "01_d05",
+      "line_id": "meguri_01_d05_0105",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR040094.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR040094.wav"
+    }
+  },
+  {
+    "id": 58,
+    "data": {
+      "review_id": "emotion_pilot_058",
+      "voice_id": "MGR001036",
+      "text_jp": "もう、そんなことばっかり言ってないで、\n準備体操から始めますよ",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0549",
+      "outfit_code": "05",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001036.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001036.wav"
+    }
+  },
+  {
+    "id": 59,
+    "data": {
+      "review_id": "emotion_pilot_059",
+      "voice_id": "MGR020106",
+      "text_jp": "まったく、もう。デレデレした顔を見せてしまっては、\n百年の恋も冷めます",
+      "scene_id": "01_b07a",
+      "line_id": "meguri_01_b07a_0105",
+      "outfit_code": "02",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020106.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020106.wav"
+    }
+  },
+  {
+    "id": 60,
+    "data": {
+      "review_id": "emotion_pilot_060",
+      "voice_id": "MGR001007",
+      "text_jp": "もう、しっかりと、本当に気をつけてくださいね",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0019",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001007.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001007.wav"
+    }
+  },
+  {
+    "id": 61,
+    "data": {
+      "review_id": "emotion_pilot_061",
+      "voice_id": "MGR050742",
+      "text_jp": "……ふふ。もう、兄さんは過保護すぎます",
+      "scene_id": "01_e07",
+      "line_id": "meguri_01_e07_0157",
+      "outfit_code": "04",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050742.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050742.wav"
+    }
+  },
+  {
+    "id": 62,
+    "data": {
+      "review_id": "emotion_pilot_062",
+      "voice_id": "MGR051510",
+      "text_jp": "もう、兄さんはどうして、そうやって\n急に口説いてくるんですか。私の心臓がもちません",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0399",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051510.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051510.wav"
+    }
+  },
+  {
+    "id": 63,
+    "data": {
+      "review_id": "emotion_pilot_063",
+      "voice_id": "MGR000354",
+      "text_jp": "兄さんは本当に、本当に、もう",
+      "scene_id": "00_05",
+      "line_id": "meguri_00_05_0179",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR000354.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR000354.wav"
+    }
+  },
+  {
+    "id": 64,
+    "data": {
+      "review_id": "emotion_pilot_064",
+      "voice_id": "MGR060013",
+      "text_jp": "もう。うっかりにもほどがありますよ、兄さん",
+      "scene_id": "01_f01",
+      "line_id": "meguri_01_f01_0044",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR060013.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR060013.wav"
+    }
+  },
+  {
+    "id": 65,
+    "data": {
+      "review_id": "emotion_pilot_065",
+      "voice_id": "MGR050817",
+      "text_jp": "……もう、兄さんったら",
+      "scene_id": "01_e08a",
+      "line_id": "meguri_01_e08a_0147",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050817.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050817.wav"
+    }
+  },
+  {
+    "id": 66,
+    "data": {
+      "review_id": "emotion_pilot_066",
+      "voice_id": "MGR050035",
+      "text_jp": "はあ。もう……兄さんったら",
+      "scene_id": "01_e01",
+      "line_id": "meguri_01_e01_0101",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050035.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050035.wav"
+    }
+  },
+  {
+    "id": 67,
+    "data": {
+      "review_id": "emotion_pilot_067",
+      "voice_id": "MGR051556",
+      "text_jp": "も、もう、兄さん。そのことは……",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0534",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051556.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051556.wav"
+    }
+  },
+  {
+    "id": 68,
+    "data": {
+      "review_id": "emotion_pilot_068",
+      "voice_id": "MGR030081",
+      "text_jp": "もう、兄さんは本当に鈍いんですから",
+      "scene_id": "01_c05a",
+      "line_id": "meguri_01_c05a_0104",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR030081.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR030081.wav"
+    }
+  },
+  {
+    "id": 69,
+    "data": {
+      "review_id": "emotion_pilot_069",
+      "voice_id": "MGR040179",
+      "text_jp": "もう、皆さん興味津々なんですから",
+      "scene_id": "01_d09",
+      "line_id": "meguri_01_d09_0088",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR040179.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR040179.wav"
+    }
+  },
+  {
+    "id": 70,
+    "data": {
+      "review_id": "emotion_pilot_070",
+      "voice_id": "MGR051379",
+      "text_jp": "もう……今から、私の集中を乱してどうするんです",
+      "scene_id": "01_e11",
+      "line_id": "meguri_01_e11_0315",
+      "outfit_code": "06",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051379.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051379.wav"
+    }
+  },
+  {
+    "id": 71,
+    "data": {
+      "review_id": "emotion_pilot_071",
+      "voice_id": "MGR051168",
+      "text_jp": "あ……ん、もう……",
+      "scene_id": "01_e10a",
+      "line_id": "meguri_01_e10a_0274",
+      "outfit_code": "05",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051168.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051168.wav"
+    }
+  },
+  {
+    "id": 72,
+    "data": {
+      "review_id": "emotion_pilot_072",
+      "voice_id": "MGR070015",
+      "text_jp": "ハッキリと断言してくださいよ、もう",
+      "scene_id": "01_g01",
+      "line_id": "meguri_01_g01_0119",
+      "outfit_code": "01",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR070015.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR070015.wav"
+    }
+  },
+  {
+    "id": 73,
+    "data": {
+      "review_id": "emotion_pilot_073",
+      "voice_id": "MGR050725",
+      "text_jp": "もう……これじゃあ、今日も学園はお休みですね",
+      "scene_id": "01_e07",
+      "line_id": "meguri_01_e07_0012",
+      "outfit_code": "04",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050725.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050725.wav"
+    }
+  },
+  {
+    "id": 74,
+    "data": {
+      "review_id": "emotion_pilot_074",
+      "voice_id": "MGR051599",
+      "text_jp": "っ、も、もう、そういう殺し文句はいいですからっ……",
+      "scene_id": "01_e13a",
+      "line_id": "meguri_01_e13a_0023",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "low",
+      "proposed_category_zh": "无奈宠溺",
+      "proposed_base_action_zh": "保留",
+      "proposed_specialty_target_zh": "无奈宠溺专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051599.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051599.wav"
+    }
+  },
+  {
+    "id": 75,
+    "data": {
+      "review_id": "emotion_pilot_075",
+      "voice_id": "MGR050842",
+      "text_jp": "も、もうっ。やめてください、兄さんのばか！",
+      "scene_id": "01_e08a",
+      "line_id": "meguri_01_e08a_0252",
+      "outfit_code": "04",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "强烈愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050842.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050842.wav"
+    }
+  },
+  {
+    "id": 76,
+    "data": {
+      "review_id": "emotion_pilot_076",
+      "voice_id": "MGR051406",
+      "text_jp": "なんだじゃありません、いつまで見てるんですかっ！？",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0086",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "soft",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "强烈愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051406.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051406.wav"
+    }
+  },
+  {
+    "id": 77,
+    "data": {
+      "review_id": "emotion_pilot_077",
+      "voice_id": "MGR050028",
+      "text_jp": "ダメじゃないです！",
+      "scene_id": "01_e01",
+      "line_id": "meguri_01_e01_0073",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "soft",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "强烈愤怒",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050028.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050028.wav"
+    }
+  },
+  {
+    "id": 78,
+    "data": {
+      "review_id": "emotion_pilot_078",
+      "voice_id": "MGR010007",
+      "text_jp": "ひゃぅっ！？ もう、褒めてるんですよ",
+      "scene_id": "01_a01",
+      "line_id": "meguri_01_a01_0023",
+      "outfit_code": "06",
+      "relationship_stage": "unknown",
+      "voice_style": "cheerful",
+      "expression_intensity": "high",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR010007.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR010007.wav"
+    }
+  },
+  {
+    "id": 79,
+    "data": {
+      "review_id": "emotion_pilot_079",
+      "voice_id": "MGR051121",
+      "text_jp": "に、兄さんっ！？",
+      "scene_id": "01_e10a",
+      "line_id": "meguri_01_e10a_0141",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051121.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051121.wav"
+    }
+  },
+  {
+    "id": 80,
+    "data": {
+      "review_id": "emotion_pilot_080",
+      "voice_id": "MGR051404",
+      "text_jp": "かかっ、叶先輩！？",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0074",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051404.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051404.wav"
+    }
+  },
+  {
+    "id": 81,
+    "data": {
+      "review_id": "emotion_pilot_081",
+      "voice_id": "MGR050006",
+      "text_jp": "っ、そ、そんなことは考えてません！",
+      "scene_id": "01_e01",
+      "line_id": "meguri_01_e01_0020",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050006.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050006.wav"
+    }
+  },
+  {
+    "id": 82,
+    "data": {
+      "review_id": "emotion_pilot_082",
+      "voice_id": "MGR051387",
+      "text_jp": "……っ！？",
+      "scene_id": "01_e11",
+      "line_id": "meguri_01_e11_0350",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051387.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051387.wav"
+    }
+  },
+  {
+    "id": 83,
+    "data": {
+      "review_id": "emotion_pilot_083",
+      "voice_id": "MGR020009",
+      "text_jp": "に、兄さん！？ 本当に大丈夫ですか？",
+      "scene_id": "01_b01",
+      "line_id": "meguri_01_b01_0159",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "worried",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR020009.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR020009.wav"
+    }
+  },
+  {
+    "id": 84,
+    "data": {
+      "review_id": "emotion_pilot_084",
+      "voice_id": "MGR001015",
+      "text_jp": "え……！？",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0081",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001015.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001015.wav"
+    }
+  },
+  {
+    "id": 85,
+    "data": {
+      "review_id": "emotion_pilot_085",
+      "voice_id": "MGR050761",
+      "text_jp": "えっ！？",
+      "scene_id": "01_e07",
+      "line_id": "meguri_01_e07_0214",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050761.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050761.wav"
+    }
+  },
+  {
+    "id": 86,
+    "data": {
+      "review_id": "emotion_pilot_086",
+      "voice_id": "MGR051571",
+      "text_jp": "きゃぁ！？",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0628",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051571.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051571.wav"
+    }
+  },
+  {
+    "id": 87,
+    "data": {
+      "review_id": "emotion_pilot_087",
+      "voice_id": "MGR030143",
+      "text_jp": "えっ……！？",
+      "scene_id": "01_c11",
+      "line_id": "meguri_01_c11_0246",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR030143.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR030143.wav"
+    }
+  },
+  {
+    "id": 88,
+    "data": {
+      "review_id": "emotion_pilot_088",
+      "voice_id": "MGR001101",
+      "text_jp": "！？ な、ななななっ……",
+      "scene_id": "00_10",
+      "line_id": "meguri_00_10_0341",
+      "outfit_code": "03",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001101.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001101.wav"
+    }
+  },
+  {
+    "id": 89,
+    "data": {
+      "review_id": "emotion_pilot_089",
+      "voice_id": "MGR001010",
+      "text_jp": "っ、青葉ちゃん！？",
+      "scene_id": "00_08",
+      "line_id": "meguri_00_08_0060",
+      "outfit_code": "01",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR001010.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR001010.wav"
+    }
+  },
+  {
+    "id": 90,
+    "data": {
+      "review_id": "emotion_pilot_090",
+      "voice_id": "MGR051166",
+      "text_jp": "わ、ひゃあっ！？",
+      "scene_id": "01_e10a",
+      "line_id": "meguri_01_e10a_0270",
+      "outfit_code": "05",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051166.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051166.wav"
+    }
+  },
+  {
+    "id": 91,
+    "data": {
+      "review_id": "emotion_pilot_091",
+      "voice_id": "MGR051413",
+      "text_jp": "きゃっ……！？",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0116",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051413.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051413.wav"
+    }
+  },
+  {
+    "id": 92,
+    "data": {
+      "review_id": "emotion_pilot_092",
+      "voice_id": "MGR051139",
+      "text_jp": "えっ！？",
+      "scene_id": "01_e10a",
+      "line_id": "meguri_01_e10a_0196",
+      "outfit_code": "02",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051139.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051139.wav"
+    }
+  },
+  {
+    "id": 93,
+    "data": {
+      "review_id": "emotion_pilot_093",
+      "voice_id": "MGR051328",
+      "text_jp": "え……っ！？",
+      "scene_id": "01_e11",
+      "line_id": "meguri_01_e11_0055",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051328.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051328.wav"
+    }
+  },
+  {
+    "id": 94,
+    "data": {
+      "review_id": "emotion_pilot_094",
+      "voice_id": "MGR040305",
+      "text_jp": "ええっ！？",
+      "scene_id": "01_d13a",
+      "line_id": "meguri_01_d13a_0206",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR040305.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR040305.wav"
+    }
+  },
+  {
+    "id": 95,
+    "data": {
+      "review_id": "emotion_pilot_095",
+      "voice_id": "MGR040302",
+      "text_jp": "えっ！？",
+      "scene_id": "01_d13a",
+      "line_id": "meguri_01_d13a_0194",
+      "outfit_code": "08",
+      "relationship_stage": "unknown",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR040302.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR040302.wav"
+    }
+  },
+  {
+    "id": 96,
+    "data": {
+      "review_id": "emotion_pilot_096",
+      "voice_id": "MGR050198",
+      "text_jp": "あっ、兄さん……！",
+      "scene_id": "01_e03",
+      "line_id": "meguri_01_e03_0112",
+      "outfit_code": "04",
+      "relationship_stage": "pursuit",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR050198.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR050198.wav"
+    }
+  },
+  {
+    "id": 97,
+    "data": {
+      "review_id": "emotion_pilot_097",
+      "voice_id": "MGR051405",
+      "text_jp": "むうぅぅ……兄さんっ！",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0083",
+      "outfit_code": "08",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051405.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051405.wav"
+    }
+  },
+  {
+    "id": 98,
+    "data": {
+      "review_id": "emotion_pilot_098",
+      "voice_id": "MGR051388",
+      "text_jp": "兄さん……！",
+      "scene_id": "01_e11",
+      "line_id": "meguri_01_e11_0353",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051388.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051388.wav"
+    }
+  },
+  {
+    "id": 99,
+    "data": {
+      "review_id": "emotion_pilot_099",
+      "voice_id": "MGR000102",
+      "text_jp": "めっ！",
+      "scene_id": "00_01",
+      "line_id": "meguri_00_01_0361",
+      "outfit_code": "08",
+      "relationship_stage": "sibling",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR000102.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR000102.wav"
+    }
+  },
+  {
+    "id": 100,
+    "data": {
+      "review_id": "emotion_pilot_100",
+      "voice_id": "MGR051568",
+      "text_jp": "んっ！ んんんっ！",
+      "scene_id": "01_e12",
+      "line_id": "meguri_01_e12_0611",
+      "outfit_code": "01",
+      "relationship_stage": "lover",
+      "voice_style": "neutral",
+      "expression_intensity": "medium",
+      "proposed_category_zh": "其他强情绪",
+      "proposed_base_action_zh": "降低权重",
+      "proposed_specialty_target_zh": "强情绪专项",
+      "proposed_room_reverb_zh": "无",
+      "original_audio": "/data/local-files/?d=data/meguri/assets/voice_safe/MGR051568.ogg",
+      "denoised_audio": "/data/local-files/?d=training/tts_work/meguri_v2_02c3db0c507d7c2d/full_ja_003_extended_base_denoised/audio/MGR051568.wav"
+    }
+  }
+]

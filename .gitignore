@@ -20,6 +20,7 @@ coverage/
 /datasets/
 /configs/*
 !/configs/meguri_sprite_runtime_map.json
+!/configs/meguri_rag_query_aliases.json
 
 # Local generated reports and model/training artifacts
 /reports/*
@@ -49,6 +50,8 @@ coverage/
 !.env.example
 *.pem
 *.key
+/ops/secrets/
+/ops/env/*.local.env
 
 # OS/editor files
 .DS_Store

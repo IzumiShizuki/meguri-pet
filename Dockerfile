@@ -17,6 +17,7 @@ RUN addgroup --system --gid 10001 meguri \
 COPY pyproject.toml README.md ./
 COPY adapters ./adapters
 COPY configs ./configs
+COPY scripts ./scripts
 COPY services ./services
 
 RUN python -m pip install --upgrade pip \

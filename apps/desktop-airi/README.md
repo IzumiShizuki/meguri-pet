@@ -11,18 +11,29 @@ D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe src\demo.ts
 
 Future Live2D integration must implement `CharacterRenderer` by delegating to AIRI's `@proj-airi/stage-ui-live2d`. No Live2D assets or duplicate engine are included here.
 
-## Local visible desktop home
+## Legacy integration page and AIRI support gateway
 
-The repository does not vendor AIRI's Electron UI. For a visible local home
-that uses the Java runtime and the canonical Meguri PNG assets, start Java on
-`18080`, then run:
+The repository does not vendor AIRI's Electron UI. The small page in this
+folder is retained only as an integration diagnostic and never uses the
+operating-system Web Speech voice. The supported visible desktop is AIRI Stage
+Tamagotchi in `D:\program\airi-meguri`.
+
+Keep this loopback server running while AIRI is open:
 
 ```powershell
 D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe src\web-server.mjs
 ```
 
-Open `http://127.0.0.1:5173`. The page uses the same `/v1/turns` + SSE
-contract as the adapter; the DeepSeek credential remains in the Java process.
+For normal use, start the whole AIRI + Java gateway + GPT-SoVITS stack with:
+
+```powershell
+& D:\program\meguri-pet\ops\scripts\start-meguri-airi.ps1
+```
+
+`http://127.0.0.1:5173` serves canonical Meguri PNG assets and a restricted
+`/core` gateway used by AIRI. The gateway injects the remote Java Core token
+server-side, so neither that token nor the DeepSeek credential is stored in
+AIRI's renderer.
 
 When a message explicitly asks for current information or web search, Java
 uses the configured read-only search gateway and injects up to five bounded
@@ -37,6 +48,39 @@ taskbar. Start the web server first, then run `pnpm install` and `pnpm overlay`
 from this directory. `Ctrl+Shift+M` toggles visibility. This shell hosts the
 current Meguri web stage; AIRI's full Live2D/VRM renderer remains a later
 asset/runtime integration.
+
+The Electron preload exposes only three narrow operations: `webUtils.getPathForFile`
+for native file drops, an IPC request to open a generated report with its
+Windows default application, and an IPC request that returns the Windows
+default-application icon of a generated report as a small data URL. Both
+artifact IPCs are restricted to existing passive document files (Markdown, PDF,
+image, txt/csv/json/html) below this project's `reports` or `output` folders;
+executable or script-like extensions are never allow-listed, and ordinary
+HTTP(S) links are handed to the default browser. A dropped path is
+sent through the loopback Everything resource gate;
+it is attached only when it remains inside an allowed root and passes the same
+secret/path filters as `@` search. Dropping never reads the file contents and
+still requires a separate send confirmation.
+
+## Generated-file chat log and floating bubbles
+
+The loopback server exposes `GET /artifacts/recent?after=<ms>`, a metadata-only
+feed of files recently generated below `reports/` and `output/` (same passive
+extension allow-list, `latest.json` notice excluded, bounded depth/age/count).
+Cross-origin browser callers pass the same desktop-origin gate as `/core`;
+same-origin page requests stay local. No file contents are served through the
+feed — only name, loopback href, local path, mtime and size.
+
+The desktop page polls this feed. Every new file is appended to the on-page
+chat log (a persisted, bounded record of user/Meguri/file/notice entries) as a
+clickable link, and floats next to the pet as a bubble showing the file's
+Windows default-application icon (extension badge in plain browsers). Clicking
+a bubble or a log link opens the file with its default application in the
+Electron pet, or the loopback HTTP artifact in a normal browser; bubbles
+disappear after opening, keep a manual close control, and at most three are
+shown at once. The daily-report notice now carries the same clickable link.
+The AIRI Stage Tamagotchi checkout consumes the identical feed for its own
+bubbles and chat-history links.
 
 ## AIRI native stage adapter
 

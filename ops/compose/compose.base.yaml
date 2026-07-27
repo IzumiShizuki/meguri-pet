@@ -91,6 +91,7 @@ services:
       MEGURI_DATABASE_URL_FILE: /run/secrets/database_url
       MEGURI_TENANT_ID: ${MEGURI_TENANT_ID:?MEGURI_TENANT_ID is required}
       MEGURI_MEMORY_PROVIDER: ${MEGURI_MEMORY_PROVIDER:?MEGURI_MEMORY_PROVIDER is required}
+      MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS: ${MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS:?MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS is required}
       MEGURI_LLM_PROVIDER: ${MEGURI_LLM_PROVIDER:?MEGURI_LLM_PROVIDER is required}
       MEGURI_LLM_BASE_URL: ${MEGURI_LLM_BASE_URL:-}
       MEGURI_LLM_MODEL: ${MEGURI_LLM_MODEL:?MEGURI_LLM_MODEL is required}
@@ -108,6 +109,19 @@ services:
       MEGURI_LOG_LEVEL: ${MEGURI_LOG_LEVEL:?MEGURI_LOG_LEVEL is required}
       MEGURI_DATABASE_REVISION: ${MEGURI_DATABASE_REVISION:?MEGURI_DATABASE_REVISION is required}
       MEGURI_EMBEDDING_MODEL_REVISION: ${MEGURI_EMBEDDING_MODEL_REVISION:?MEGURI_EMBEDDING_MODEL_REVISION is required}
+      MEGURI_EMBEDDING_BACKEND: ${MEGURI_EMBEDDING_BACKEND:?MEGURI_EMBEDDING_BACKEND is required}
+      MEGURI_EMBEDDING_MODEL: ${MEGURI_EMBEDDING_MODEL:?MEGURI_EMBEDDING_MODEL is required}
+      MEGURI_EMBEDDING_DIMENSION: ${MEGURI_EMBEDDING_DIMENSION:?MEGURI_EMBEDDING_DIMENSION is required}
+      MEGURI_EMBEDDING_TIMEOUT_SECONDS: ${MEGURI_EMBEDDING_TIMEOUT_SECONDS:?MEGURI_EMBEDDING_TIMEOUT_SECONDS is required}
+      MEGURI_DASHSCOPE_EMBEDDING_BASE_URL: ${MEGURI_DASHSCOPE_EMBEDDING_BASE_URL:?MEGURI_DASHSCOPE_EMBEDDING_BASE_URL is required}
+      MEGURI_DASHSCOPE_RERANK_ENDPOINT: ${MEGURI_DASHSCOPE_RERANK_ENDPOINT:?MEGURI_DASHSCOPE_RERANK_ENDPOINT is required}
+      MEGURI_DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
+      MEGURI_RERANK_BACKEND: ${MEGURI_RERANK_BACKEND:?MEGURI_RERANK_BACKEND is required}
+      MEGURI_RERANK_MODEL: ${MEGURI_RERANK_MODEL:?MEGURI_RERANK_MODEL is required}
+      MEGURI_RERANK_TIMEOUT_SECONDS: ${MEGURI_RERANK_TIMEOUT_SECONDS:?MEGURI_RERANK_TIMEOUT_SECONDS is required}
+      MEGURI_RAG_BACKEND: ${MEGURI_RAG_BACKEND:?MEGURI_RAG_BACKEND is required}
+      MEGURI_RAG_VECTOR_ARTIFACT: /app/datasets/meguri/exports/rag/${MEGURI_RAG_VECTOR_ARTIFACT:?MEGURI_RAG_VECTOR_ARTIFACT is required}
+      MEGURI_RAG_CANDIDATE_LIMIT: ${MEGURI_RAG_CANDIDATE_LIMIT:?MEGURI_RAG_CANDIDATE_LIMIT is required}
       MEGURI_LLM_BASE_MODEL_REVISION: ${MEGURI_LLM_BASE_MODEL_REVISION:?MEGURI_LLM_BASE_MODEL_REVISION is required}
       MEGURI_LLM_ADAPTER_REVISION: ${MEGURI_LLM_ADAPTER_REVISION:?MEGURI_LLM_ADAPTER_REVISION is required}
       MEGURI_LLM_ADAPTER_SHA256: ${MEGURI_LLM_ADAPTER_SHA256:?MEGURI_LLM_ADAPTER_SHA256 is required}
@@ -119,6 +133,7 @@ services:
       - llm_api_key
       - jwt_secret
       - astrbot_shared_token
+      - dashscope_api_key
     volumes:
       - type: bind
         source: ${MEGURI_DATA_DIR:?MEGURI_DATA_DIR is required}
@@ -167,6 +182,53 @@ services:
       io.meguri.release-id: ${MEGURI_RELEASE_ID:?MEGURI_RELEASE_ID is required}
       io.meguri.data-build-id: ${MEGURI_DATA_BUILD_ID:?MEGURI_DATA_BUILD_ID is required}
 
+  embedding-worker:
+    image: ${MEGURI_CORE_IMAGE:?MEGURI_CORE_IMAGE is required}
+    restart: "no"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    environment:
+      MEGURI_ENV: ${MEGURI_ENV:?MEGURI_ENV is required}
+      MEGURI_TENANT_ID: ${MEGURI_TENANT_ID:?MEGURI_TENANT_ID is required}
+      MEGURI_DATABASE_URL_FILE: /run/secrets/database_url
+      MEGURI_DATABASE_REVISION: ${MEGURI_DATABASE_REVISION:?MEGURI_DATABASE_REVISION is required}
+      MEGURI_EMBEDDING_MODEL_REVISION: ${MEGURI_EMBEDDING_MODEL_REVISION:?MEGURI_EMBEDDING_MODEL_REVISION is required}
+      MEGURI_EMBEDDING_BACKEND: ${MEGURI_EMBEDDING_BACKEND:?MEGURI_EMBEDDING_BACKEND is required}
+      MEGURI_EMBEDDING_MODEL: ${MEGURI_EMBEDDING_MODEL:?MEGURI_EMBEDDING_MODEL is required}
+      MEGURI_EMBEDDING_DIMENSION: ${MEGURI_EMBEDDING_DIMENSION:?MEGURI_EMBEDDING_DIMENSION is required}
+      MEGURI_EMBEDDING_TIMEOUT_SECONDS: ${MEGURI_EMBEDDING_TIMEOUT_SECONDS:?MEGURI_EMBEDDING_TIMEOUT_SECONDS is required}
+      MEGURI_DASHSCOPE_EMBEDDING_BASE_URL: ${MEGURI_DASHSCOPE_EMBEDDING_BASE_URL:?MEGURI_DASHSCOPE_EMBEDDING_BASE_URL is required}
+      MEGURI_DASHSCOPE_API_KEY_FILE: /run/secrets/dashscope_api_key
+    secrets:
+      - database_url
+      - dashscope_api_key
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      migration:
+        condition: service_completed_successfully
+    command:
+      - python
+      - scripts/run_memory_embedding_worker.py
+      - --worker-id
+      - compose-embedding-worker
+      - --batch-size
+      - "20"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
 networks:
   edge:
     name: ${MEGURI_EDGE_NETWORK:?MEGURI_EDGE_NETWORK is required}
@@ -195,3 +257,5 @@ secrets:
     file: ${MEGURI_JWT_SECRET_FILE:?MEGURI_JWT_SECRET_FILE is required}
   astrbot_shared_token:
     file: ${MEGURI_ASTRBOT_SHARED_TOKEN_FILE:?MEGURI_ASTRBOT_SHARED_TOKEN_FILE is required}
+  dashscope_api_key:
+    file: ${MEGURI_DASHSCOPE_API_KEY_FILE:?MEGURI_DASHSCOPE_API_KEY_FILE is required}

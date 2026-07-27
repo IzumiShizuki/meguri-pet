@@ -26,3 +26,17 @@ turn explicitly. The runtime does not silently replace a failed real-model
 response with mock character text.
 
 Context is serialized as one JSON user message with bounded `runtime_state`, `user_message`, `canon_examples`, `long_term_memories` and `recent_context` fields. This keeps retrieved material and user text in data fields rather than promoting them to instruction roles.
+
+## Prompt-cache boundary
+
+Meguri intentionally does not implement a response cache for model replies.
+Only an exact full request could be safely reused, and doing so would suppress
+fresh generation while coupling correctness to changing runtime state, RAG,
+memory and tool results. Caching the local prompt string saves file reads but
+does not save provider token billing or model prefill work.
+
+The stable system prompt remains the first message so a provider-managed
+prefix/KV cache can reuse it. Java records numeric usage, including DeepSeek's
+`prompt_cache_hit_tokens` and `prompt_cache_miss_tokens`, without retaining any
+prompt or response content. See `java/meguri-core/README.md` for the local
+metrics endpoint and optional shizuki-site export settings.
