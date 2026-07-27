@@ -4,7 +4,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Response
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .api_auth import (
     PrincipalDependency,
@@ -23,8 +23,10 @@ from .memory_service.contracts import (
 from .memory_service.enums import (
     CandidateStatus,
     FeedbackKind,
+    MergePolicy,
     MemoryScope,
     MemoryType,
+    RiskLevel,
     SearchMode,
     Sensitivity,
     SourceKind,
@@ -38,6 +40,7 @@ from .memory_service.models import (
     MemorySearchQuery,
     MemoryUpdate,
     StrictModel,
+    validate_candidate_content_json,
 )
 
 
@@ -50,12 +53,19 @@ class CandidateCreateRequest(StrictModel):
     content_json: dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0, le=1)
     sensitivity: Sensitivity = Sensitivity.NORMAL
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    merge_policy: MergePolicy = MergePolicy.REVIEW
+    base_version_id: UUID | None = None
     source_session_id: str = Field(min_length=1, max_length=200)
     source_turn_id: str = Field(min_length=1, max_length=200)
     source_message_ids: list[str] = Field(default_factory=list, max_length=50)
     extraction_model: str | None = Field(default=None, max_length=300)
     extraction_prompt_hash: str | None = Field(default=None, max_length=64)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+    _validate_content_json = field_validator("content_json")(
+        validate_candidate_content_json
+    )
 
 
 class ReviewRequest(StrictModel):
@@ -71,19 +81,24 @@ class SearchRequest(StrictModel):
     modes: list[SearchMode] = Field(default_factory=lambda: [SearchMode.HYBRID])
     token_budget: int = Field(default=1200, ge=64, le=8192)
     query_embedding: list[float] | None = Field(
-        default=None, min_length=1024, max_length=1024
+        default=None, min_length=2048, max_length=2048
     )
     embedding_model: str | None = None
     embedding_revision: str | None = None
 
 
 class SupersedeRequest(StrictModel):
+    base_version_id: UUID
     content_text: str = Field(min_length=1, max_length=4000)
     content_json: dict[str, Any] = Field(default_factory=dict)
     change_reason: str = Field(min_length=1, max_length=1000)
     confidence: float | None = Field(default=None, ge=0, le=1)
     importance: float | None = Field(default=None, ge=0, le=1)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+    _validate_content_json = field_validator("content_json")(
+        validate_candidate_content_json
+    )
 
 
 class FeedbackRequest(StrictModel):
@@ -151,6 +166,9 @@ async def create_candidate(
                 content_json=body.content_json,
                 confidence=body.confidence,
                 sensitivity=body.sensitivity,
+                risk_level=body.risk_level,
+                merge_policy=body.merge_policy,
+                base_version_id=body.base_version_id,
                 source_client_id=principal.client_id,
                 source_session_id=body.source_session_id,
                 source_turn_id=body.source_turn_id,
@@ -274,7 +292,7 @@ async def supersede_memory(
 ):
     require_formal_memory(principal)
     return await memory_call(
-        provider.supersede(
+        provider.propose_supersede(
             memory_id,
             MemoryUpdate(
                 tenant_id=principal.tenant_id,
@@ -282,6 +300,9 @@ async def supersede_memory(
                 **body.model_dump(),
             ),
             actor=principal.memory_actor(),
+            source_client_id=principal.client_id,
+            source_session_id=principal.session_id or f"memory:{memory_id}",
+            source_turn_id=request_id,
             request_id=request_id,
         )
     )

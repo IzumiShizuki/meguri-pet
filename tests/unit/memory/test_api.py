@@ -27,6 +27,8 @@ class ProviderStub:
         self.binding = None
         self.hard_delete_call = None
         self.feedback = None
+        self.propose_supersede_call = None
+        self.direct_supersede_calls = 0
         self.raise_on_create: Exception | None = None
 
     async def create_candidate(self, candidate, *, request_id):
@@ -64,6 +66,14 @@ class ProviderStub:
             "feedback_id": str(uuid4()),
             "created_at": "2026-07-14T00:00:00Z",
         }
+
+    async def propose_supersede(self, memory_id, update, **kwargs):
+        self.propose_supersede_call = (memory_id, update, kwargs)
+        return {"candidate_id": str(uuid4()), "status": "pending_review"}
+
+    async def supersede(self, *_args, **_kwargs):
+        self.direct_supersede_calls += 1
+        raise AssertionError("direct supersede must not be called")
 
 
 def build_client(
@@ -134,6 +144,93 @@ def test_candidate_scope_and_client_are_derived_from_principal() -> None:
     assert candidate.user_id == "user-server"
     assert candidate.source_client_id == "website"
     assert request_id == "request-1"
+
+
+def test_candidate_merge_contract_is_accepted_from_the_review_entrypoint() -> None:
+    provider = ProviderStub()
+    client = build_client(provider, user_principal())
+    base_version_id = uuid4()
+
+    response = client.post(
+        "/v1/memory/candidates",
+        headers={"X-Request-ID": "request-merge"},
+        json=candidate_body()
+        | {
+            "risk_level": "high",
+            "merge_policy": "supersede",
+            "base_version_id": str(base_version_id),
+        },
+    )
+
+    assert response.status_code == 201
+    candidate, _ = provider.candidate
+    assert candidate.risk_level.value == "high"
+    assert candidate.merge_policy.value == "supersede"
+    assert candidate.base_version_id == base_version_id
+
+
+def test_supersede_route_creates_review_candidate_without_direct_write() -> None:
+    provider = ProviderStub()
+    client = build_client(provider, user_principal())
+    memory_id = uuid4()
+    payload = {
+        "content_text": "updated",
+        "change_reason": "user correction",
+    }
+
+    assert client.post(
+        f"/v1/memories/{memory_id}/supersede",
+        headers={"X-Request-ID": "supersede-missing-base"},
+        json=payload,
+    ).status_code == 422
+
+    base_version_id = uuid4()
+    response = client.post(
+        f"/v1/memories/{memory_id}/supersede",
+        headers={"X-Request-ID": "supersede-with-base"},
+        json=payload | {"base_version_id": str(base_version_id)},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending_review"
+    _, update, kwargs = provider.propose_supersede_call
+    assert update.base_version_id == base_version_id
+    assert kwargs["source_client_id"] == "website"
+    assert kwargs["source_turn_id"] == "supersede-with-base"
+    assert provider.direct_supersede_calls == 0
+
+
+@pytest.mark.parametrize(
+    "path,payload",
+    [
+        (
+            "/v1/memory/candidates",
+            candidate_body() | {"content_json": {"relationship_stage": "lover"}},
+        ),
+        (
+            f"/v1/memories/{uuid4()}/supersede",
+            {
+                "base_version_id": str(uuid4()),
+                "content_text": "updated",
+                "content_json": {"nested": {"relationship-state": "lover"}},
+                "change_reason": "unsafe relationship mutation",
+            },
+        ),
+    ],
+)
+def test_memory_write_routes_reject_protected_relationship_fields(path, payload):
+    provider = ProviderStub()
+    client = build_client(provider, user_principal())
+
+    response = client.post(
+        path,
+        headers={"X-Request-ID": "protected-field-attempt"},
+        json=payload,
+    )
+
+    assert response.status_code == 422
+    assert provider.candidate is None
+    assert provider.propose_supersede_call is None
 
 
 def test_unverified_identity_cannot_access_formal_memory() -> None:
@@ -329,6 +426,33 @@ async def test_authoritative_chat_scope_comes_only_from_authenticated_principal(
     assert secured.client_id == "airi"
     assert secured.session_id == "trusted-session"
     assert secured.formal_memory_allowed is False
+
+
+@pytest.mark.asyncio
+async def test_trusted_identity_headers_cannot_grant_formal_memory(monkeypatch) -> None:
+    monkeypatch.setenv("MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS", "true")
+    headers = {
+        "X-Meguri-Tenant-ID": "tenant-a",
+        "X-Meguri-User-ID": "header-user",
+        "X-Meguri-Client-ID": "astrbot",
+        "X-Meguri-Actor-ID": "header-user",
+        "X-Meguri-Session-ID": "header-session",
+        "X-Meguri-Formal-Memory-Allowed": "true",
+    }
+    request = Request(
+        {
+            "type": "http",
+            "headers": [
+                (name.lower().encode("ascii"), value.encode("ascii"))
+                for name, value in headers.items()
+            ],
+        }
+    )
+
+    principal = await get_api_principal(request)
+
+    assert principal.user_id == "header-user"
+    assert principal.formal_memory_allowed is False
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import timezone
+import hashlib
+import json
 import os
 from typing import overload
 from uuid import UUID, uuid4
@@ -25,6 +27,7 @@ from .database import (
     create_session_factory,
 )
 from .embedding import create_runtime_embedding_provider
+from .rerank import create_runtime_rerank_provider
 from .enums import ActorType, MemoryStatus, MemoryType, SearchMode, SourceKind
 from .models import (
     CandidateReview,
@@ -89,6 +92,7 @@ class NativePgvectorMemoryProvider:
                     expected_revision=settings.expected_embedding_model_revision
                 )
             )
+            rerank_provider = create_runtime_rerank_provider()
             self.engine = create_memory_engine(settings)
             session_factory = create_session_factory(self.engine)
             self.uow_factory = MemoryUnitOfWorkFactory(session_factory)
@@ -99,6 +103,7 @@ class NativePgvectorMemoryProvider:
                 ).lower()
                 == "true",
                 embedding_provider=query_embedding_provider,
+                rerank_provider=rerank_provider,
             )
             self.tenant_id = settings.tenant_id
         else:
@@ -110,14 +115,9 @@ class NativePgvectorMemoryProvider:
             self.service = service
             self.tenant_id = tenant_id
         self.query_embedding_provider = query_embedding_provider
-        self.allow_legacy_auto_approval = (
-            allow_legacy_auto_approval
-            if allow_legacy_auto_approval is not None
-            else os.getenv(
-                "MEGURI_ALLOW_LEGACY_MEMORY_AUTO_APPROVAL", "false"
-            ).lower()
-            == "true"
-        )
+        # Retain the constructor argument for callers during migration, but the
+        # compatibility facade is no longer allowed to approve its own writes.
+        self.allow_legacy_auto_approval = False
 
     @classmethod
     def from_env(cls) -> "NativePgvectorMemoryProvider":
@@ -250,20 +250,55 @@ class NativePgvectorMemoryProvider:
             feedback, request_id=request_id
         )
 
+    async def propose_supersede(
+        self,
+        memory_id: UUID,
+        update: MemoryUpdate,
+        *,
+        actor: MemoryActor,
+        source_client_id: str,
+        source_session_id: str,
+        source_turn_id: str,
+        request_id: str,
+    ) -> MemoryCandidate:
+        return await self.service.propose_supersede(
+            memory_id,
+            update,
+            actor=actor,
+            source_client_id=source_client_id,
+            source_session_id=source_session_id,
+            source_turn_id=source_turn_id,
+            request_id=request_id,
+        )
+
     async def supersede(self, memory_id, update, **kwargs):
         if isinstance(update, MemoryUpdate):
-            return await self.service.supersede(memory_id, update, **kwargs)
+            raise MemoryStateError(
+                "direct supersede is disabled; submit a supersede candidate"
+            )
         if not isinstance(update, LegacyUpsertInput):
             raise TypeError("supersede requires MemoryUpdate or legacy MemoryUpsertInput")
         parsed_id = UUID(str(memory_id))
         actor = MemoryActor(actor_type=ActorType.SYSTEM, actor_id="legacy-runtime")
-        result = await self.service.supersede(
-            parsed_id,
-            self._authoritative_update(update),
-            actor=actor,
-            request_id=f"legacy-supersede-{uuid4()}",
+        user_id = await self._owner_for_legacy_call(parsed_id)
+        if update.user_id != user_id:
+            raise MemoryStateError("legacy supersede owner does not match memory owner")
+        current = await self.get(
+            parsed_id, tenant_id=self.tenant_id, user_id=user_id
         )
-        return self._legacy_record(result)
+        request_id = f"legacy-supersede-{uuid4()}"
+        await self.propose_supersede(
+            parsed_id,
+            self._authoritative_update(update, current.current_version_id),
+            actor=actor,
+            source_client_id=update.source_client,
+            source_session_id=update.source_session,
+            source_turn_id=request_id,
+            request_id=request_id,
+        )
+        raise MemoryStateError(
+            "legacy supersede was queued as a candidate; explicit approval is required"
+        )
 
     async def delete(self, memory_id, **kwargs) -> None:
         parsed_id = UUID(str(memory_id))
@@ -393,18 +428,38 @@ class NativePgvectorMemoryProvider:
             client_id=summary.client_id,
             session_id=summary.session_id,
             summary_text=content[:10000],
-            summary_json={"message_count": len(summary.messages)},
+            summary_json={
+                "message_count": len(summary.messages),
+                "structured_candidates": [
+                    candidate.model_dump(mode="json")
+                    for candidate in summary.structured_candidates
+                ],
+                "candidate_status": "audit_only",
+            },
             source_range={"message_count": len(summary.messages)},
         )
-        await self.service.summarize_session(
-            authoritative, request_id=f"legacy-summary-{uuid4()}"
-        )
+        request_material = {
+            "user_id": summary.user_id,
+            "client_id": summary.client_id,
+            "session_id": summary.session_id,
+            "messages": [message.model_dump(mode="json") for message in summary.messages],
+            "structured_candidates": [
+                candidate.model_dump(mode="json")
+                for candidate in summary.structured_candidates
+            ],
+        }
+        request_id = "legacy-summary-" + hashlib.sha256(
+            json.dumps(request_material, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()[:32]
+        await self.service.summarize_session(authoritative, request_id=request_id)
         return LegacySessionSummary(
             user_id=summary.user_id,
             client_id=summary.client_id,
             session_id=summary.session_id,
             summary=authoritative.summary_text[:1000],
             message_count=len(summary.messages),
+            structured_candidates=summary.structured_candidates,
+            candidate_status="audit_only",
         )
 
     async def extract_candidates(
@@ -487,20 +542,10 @@ class NativePgvectorMemoryProvider:
             request_id=request_id,
         )
         if candidate.status.value == "rejected":
-            raise ValueError(f"legacy memory candidate rejected: {candidate.review_reason}")
-        if not self.allow_legacy_auto_approval:
-            raise MemoryStateError(
-                "legacy candidate was queued; automatic approval is disabled"
-            )
-        item = await self.review_candidate(
-            candidate.candidate_id,
-            CandidateReview(decision="approve", reason="legacy compatibility review"),
-            actor=MemoryActor(actor_type=ActorType.POLICY, actor_id="legacy-runtime"),
-            request_id=f"{request_id}-review",
+            raise ValueError("legacy memory candidate was rejected by policy")
+        raise MemoryStateError(
+            "legacy memory candidate was queued; explicit approval is required"
         )
-        if item is None:
-            raise RuntimeError("approved legacy candidate did not produce a memory item")
-        return self._legacy_record(item)
 
     async def list_records(
         self, user_id: str, include_deleted: bool = False
@@ -526,11 +571,14 @@ class NativePgvectorMemoryProvider:
             raise MemoryNotFoundError("memory not found")
         return user_id
 
-    def _authoritative_update(self, legacy: LegacyUpsertInput) -> MemoryUpdate:
+    def _authoritative_update(
+        self, legacy: LegacyUpsertInput, base_version_id: UUID
+    ) -> MemoryUpdate:
         return MemoryUpdate(
             tenant_id=self.tenant_id,
             user_id=legacy.user_id,
             content_text=legacy.canonical_text,
+            base_version_id=base_version_id,
             content_json={
                 "importance": legacy.importance / 5,
                 "legacy_memory_type": legacy.memory_type,

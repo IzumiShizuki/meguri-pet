@@ -50,7 +50,7 @@ def run_synthetic_exact_ann_benchmark(
     *,
     corpus_size: int = 500,
     query_count: int = 40,
-    dimension: int = 1024,
+    dimension: int = 2048,
     top_k: int = 5,
     seed: int = 20260714,
 ) -> ExactAnnBenchmark:

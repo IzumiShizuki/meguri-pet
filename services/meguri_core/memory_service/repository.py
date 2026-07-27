@@ -8,6 +8,9 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Text, and_, cast, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.exc import IntegrityError
+
+from .contracts import MemoryConflictError
 
 from .enums import (
     ActorType,
@@ -45,6 +48,7 @@ from .orm import (
     MemoryVersionRow,
     SessionSummaryRow,
 )
+from .review_policy import CandidateReviewPolicy, is_redacted_candidate
 
 
 def utc_now() -> datetime:
@@ -68,6 +72,9 @@ def candidate_model(row: MemoryCandidateRow) -> MemoryCandidate:
         content_json=row.content_json,
         confidence=row.confidence,
         sensitivity=row.sensitivity,
+        risk_level=row.risk_level,
+        merge_policy=row.merge_policy,
+        base_version_id=row.base_version_id,
         source_client_id=row.source_client_id,
         source_session_id=row.source_session_id,
         source_turn_id=row.source_turn_id,
@@ -212,6 +219,11 @@ class SqlAlchemyMemoryRepository:
         status: CandidateStatus,
         review_reason: str | None = None,
     ) -> MemoryCandidate:
+        evaluation = CandidateReviewPolicy().evaluate(candidate)
+        if evaluation.rejected and not is_redacted_candidate(candidate):
+            raise ValueError(
+                "rejected candidate content must be redacted before persistence"
+            )
         row = MemoryCandidateRow(
             candidate_id=uuid4(),
             **candidate.model_dump(mode="json"),
@@ -413,7 +425,7 @@ class SqlAlchemyMemoryRepository:
             content_text=candidate.content_text,
             content_json=candidate.content_json,
             language=candidate.content_json.get("language"),
-            relationship_stage=candidate.content_json.get("relationship_stage"),
+            relationship_stage=None,
             change_reason="candidate_approved",
             provenance={
                 **candidate.provenance,
@@ -432,7 +444,12 @@ class SqlAlchemyMemoryRepository:
         item_row.current_version_id = version_row.version_id
         item_row.status = MemoryStatus.ACTIVE.value
         await self.enqueue_embedding(version_row.version_id, candidate.tenant_id)
-        await self.session.flush()
+        try:
+            await self.session.flush()
+        except IntegrityError as exc:
+            raise MemoryConflictError(
+                "an active memory with the same canonical key already exists"
+            ) from exc
         return item_model(item_row, version_row)
 
     async def supersede_item(
@@ -456,6 +473,10 @@ class SqlAlchemyMemoryRepository:
         )
         if previous is None:
             raise RuntimeError("current memory version is missing")
+        if update.base_version_id is None:
+            raise MemoryConflictError("base_version_id is required for supersede")
+        if update.base_version_id != previous.version_id:
+            raise MemoryConflictError("memory base version changed before supersede")
         now = utc_now()
         version_row = MemoryVersionRow(
             version_id=uuid4(),
@@ -464,7 +485,7 @@ class SqlAlchemyMemoryRepository:
             content_text=update.content_text,
             content_json=update.content_json,
             language=update.content_json.get("language"),
-            relationship_stage=update.relationship_stage,
+            relationship_stage=previous.relationship_stage,
             supersedes_version_id=previous.version_id,
             change_reason=update.change_reason,
             provenance=update.provenance,

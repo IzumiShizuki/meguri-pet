@@ -6,10 +6,10 @@ import pytest
 from services.meguri_core.memory_service.embedding import (
     BgeM3EmbeddingProvider,
     EmbeddingWorker,
+    LEGACY_BGE_M3_REVISION,
     SentenceTransformerBgeM3EmbeddingProvider,
     content_sha256,
 )
-from services.meguri_core.memory_service.release import EMBEDDING_MODEL_REVISION
 
 
 @pytest.mark.asyncio
@@ -48,14 +48,14 @@ async def test_sentence_transformer_adapter_is_lazy_pinned_and_normalized():
         return Model()
 
     provider = SentenceTransformerBgeM3EmbeddingProvider(
-        revision=EMBEDDING_MODEL_REVISION,
+        revision=LEGACY_BGE_M3_REVISION,
         local_files_only=True,
         model_loader=loader,
     )
     assert calls == []
     assert len((await provider.embed(["tea"]))[0]) == 1024
     assert calls[0][0] == "load"
-    assert calls[0][1]["revision"] == EMBEDDING_MODEL_REVISION
+    assert calls[0][1]["revision"] == LEGACY_BGE_M3_REVISION
     assert calls[0][1]["local_files_only"] is True
     assert calls[0][1]["trust_remote_code"] is False
 

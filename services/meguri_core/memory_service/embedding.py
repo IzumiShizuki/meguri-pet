@@ -4,10 +4,13 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 import hashlib
 import inspect
+import math
 import os
 import re
 from typing import Any
 from uuid import UUID
+
+import httpx
 
 from .contracts import EmbeddingProvider, MemoryUnavailableError
 from .repository import MemoryUnitOfWorkFactory
@@ -17,14 +20,20 @@ from .release import (
     EMBEDDING_MODEL,
     EMBEDDING_MODEL_REVISION,
 )
+from ..secrets import SecretConfigurationError, read_secret
+
+
+LEGACY_BGE_M3_MODEL = "BAAI/bge-m3"
+LEGACY_BGE_M3_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
+LEGACY_BGE_M3_DIMENSION = 1024
 
 
 EmbedCallable = Callable[[Sequence[str]], list[list[float]] | Awaitable[list[list[float]]]]
 
 
 class BgeM3EmbeddingProvider:
-    model = EMBEDDING_MODEL
-    dimension = EMBEDDING_DIMENSION
+    model = LEGACY_BGE_M3_MODEL
+    dimension = LEGACY_BGE_M3_DIMENSION
 
     def __init__(self, *, revision: str, embed_callable: EmbedCallable) -> None:
         if revision.casefold() in {"main", "master", "latest"} or not re.fullmatch(
@@ -46,6 +55,110 @@ class BgeM3EmbeddingProvider:
         return vectors
 
 
+class DashScopeEmbeddingProvider:
+    """HTTPS adapter for Model Studio's OpenAI-compatible embeddings API.
+
+    The provider deliberately owns no model weights.  It validates every
+    response before pgvector sees it, preventing mixed dimensions or malformed
+    provider responses from becoming durable memory state.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: str,
+        model: str,
+        revision: str,
+        dimension: int,
+        timeout_seconds: float = 20.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        parsed = httpx.URL(base_url)
+        loopback = parsed.host in {"127.0.0.1", "localhost", "::1"}
+        if parsed.scheme not in {"http", "https"} or not parsed.host:
+            raise ValueError("MEGURI_DASHSCOPE_EMBEDDING_BASE_URL must be an HTTP(S) URL")
+        if parsed.scheme != "https" and not loopback:
+            raise ValueError("remote embedding endpoints must use HTTPS")
+        if not api_key.strip():
+            raise ValueError("DashScope embedding API key must not be empty")
+        if not model.strip() or not revision.strip():
+            raise ValueError("DashScope embedding model and revision are required")
+        if dimension <= 0:
+            raise ValueError("DashScope embedding dimension must be positive")
+        if timeout_seconds <= 0:
+            raise ValueError("DashScope embedding timeout must be positive")
+        self.base_url = base_url.rstrip("/") + "/"
+        self.api_key = api_key
+        self.model = model.strip()
+        self.revision = revision.strip()
+        self.dimension = dimension
+        self.timeout = httpx.Timeout(timeout_seconds)
+        self.transport = transport
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        values = [str(text) for text in texts]
+        if not values:
+            return []
+        if any(not value.strip() for value in values):
+            raise ValueError("embedding texts must not be empty")
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": self.model,
+            "input": values,
+            "dimensions": self.dimension,
+        }
+        response: httpx.Response | None = None
+        failure: Exception | None = None
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=self.base_url,
+                    headers=headers,
+                    timeout=self.timeout,
+                    transport=self.transport,
+                ) as client:
+                    response = await client.post("embeddings", json=payload)
+                if response.status_code == 429 or response.status_code >= 500:
+                    failure = httpx.HTTPStatusError(
+                        "retryable embedding API response", request=response.request, response=response
+                    )
+                else:
+                    response.raise_for_status()
+                    break
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code < 500 and exc.response.status_code != 429:
+                    raise MemoryUnavailableError("embedding API rejected the request") from exc
+                failure = exc
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                failure = exc
+            if attempt < 2:
+                await asyncio.sleep(0.25 * (attempt + 1))
+        else:
+            if isinstance(failure, httpx.TimeoutException):
+                raise MemoryUnavailableError("embedding API timed out") from failure
+            raise MemoryUnavailableError("embedding API request failed") from failure
+        assert response is not None
+        try:
+            payload = response.json()
+            rows = payload["data"]
+            ordered = sorted(rows, key=lambda item: int(item.get("index", 0)))
+            vectors = [list(item["embedding"]) for item in ordered]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MemoryUnavailableError("embedding API returned an invalid response") from exc
+        if len(vectors) != len(values):
+            raise MemoryUnavailableError("embedding API returned the wrong number of vectors")
+        for vector in vectors:
+            if len(vector) != self.dimension:
+                raise MemoryUnavailableError("embedding API returned an unexpected dimension")
+            if any(not isinstance(item, int | float) or not math.isfinite(float(item)) for item in vector):
+                raise MemoryUnavailableError("embedding API returned an invalid vector")
+        return [[float(item) for item in vector] for vector in vectors]
+
+
 ModelLoader = Callable[..., Any]
 
 
@@ -65,7 +178,7 @@ class SentenceTransformerBgeM3EmbeddingProvider(BgeM3EmbeddingProvider):
     def __init__(
         self,
         *,
-        revision: str = EMBEDDING_MODEL_REVISION,
+        revision: str = LEGACY_BGE_M3_REVISION,
         device: str = "cpu",
         cache_folder: str | None = None,
         local_files_only: bool = True,
@@ -116,32 +229,53 @@ class SentenceTransformerBgeM3EmbeddingProvider(BgeM3EmbeddingProvider):
 def create_runtime_embedding_provider(
     *,
     expected_revision: str | None = None,
+    env: dict[str, str] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> EmbeddingProvider | None:
-    backend = os.getenv(
-        "MEGURI_EMBEDDING_BACKEND", "sentence_transformers"
-    ).strip().casefold()
+    values = os.environ if env is None else env
+    backend = values.get("MEGURI_EMBEDDING_BACKEND", "sentence_transformers").strip().casefold()
     if backend in {"none", "disabled"}:
         return None
-    if backend != "sentence_transformers":
-        raise RuntimeError(
-            "MEGURI_EMBEDDING_BACKEND must be sentence_transformers or disabled"
+    revision = values.get(
+        "MEGURI_EMBEDDING_MODEL_REVISION", expected_revision or EMBEDDING_MODEL_REVISION
+    ).strip()
+    if expected_revision and revision != expected_revision:
+        raise RuntimeError("configured embedding revision does not match the release revision")
+    if backend == "sentence_transformers":
+        if revision != LEGACY_BGE_M3_REVISION:
+            raise RuntimeError("local BGE-M3 backend requires its pinned BGE-M3 revision")
+        return SentenceTransformerBgeM3EmbeddingProvider(
+            revision=revision,
+            device=values.get("MEGURI_EMBEDDING_DEVICE", "cpu"),
+            cache_folder=values.get("MEGURI_EMBEDDING_CACHE_DIR"),
+            local_files_only=values.get("MEGURI_EMBEDDING_LOCAL_FILES_ONLY", "true").lower()
+            == "true",
         )
-    revision = os.getenv(
-        "MEGURI_EMBEDDING_MODEL_REVISION",
-        expected_revision or EMBEDDING_MODEL_REVISION,
-    )
-    if revision != EMBEDDING_MODEL_REVISION:
+    if backend != "dashscope":
         raise RuntimeError(
-            "configured embedding revision does not match the release revision"
+            "MEGURI_EMBEDDING_BACKEND must be dashscope, sentence_transformers or disabled"
         )
-    return SentenceTransformerBgeM3EmbeddingProvider(
+    model = values.get("MEGURI_EMBEDDING_MODEL", EMBEDDING_MODEL).strip()
+    try:
+        dimension = int(values.get("MEGURI_EMBEDDING_DIMENSION", str(EMBEDDING_DIMENSION)))
+        timeout = float(values.get("MEGURI_EMBEDDING_TIMEOUT_SECONDS", "20"))
+    except ValueError as exc:
+        raise RuntimeError("DashScope embedding dimension and timeout must be numeric") from exc
+    try:
+        api_key = read_secret(values, "MEGURI_DASHSCOPE_API_KEY", required=True)
+    except SecretConfigurationError as exc:
+        raise RuntimeError(str(exc)) from exc
+    return DashScopeEmbeddingProvider(
+        base_url=values.get(
+            "MEGURI_DASHSCOPE_EMBEDDING_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        api_key=api_key or "",
+        model=model,
         revision=revision,
-        device=os.getenv("MEGURI_EMBEDDING_DEVICE", "cpu"),
-        cache_folder=os.getenv("MEGURI_EMBEDDING_CACHE_DIR"),
-        local_files_only=os.getenv(
-            "MEGURI_EMBEDDING_LOCAL_FILES_ONLY", "true"
-        ).lower()
-        == "true",
+        dimension=dimension,
+        timeout_seconds=timeout,
+        transport=transport,
     )
 
 

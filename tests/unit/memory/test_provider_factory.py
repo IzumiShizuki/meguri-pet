@@ -36,6 +36,7 @@ async def test_configured_dev_database_file_selects_native_by_default(monkeypatc
     monkeypatch.setenv("MEGURI_DATABASE_URL_FILE", str(secret))
     monkeypatch.setenv("MEGURI_DATABASE_REVISION", "20260714_0004")
     monkeypatch.setenv("MEGURI_EMBEDDING_MODEL_REVISION", EMBEDDING_MODEL_REVISION)
+    monkeypatch.setenv("MEGURI_EMBEDDING_BACKEND", "disabled")
 
     provider = create_memory_provider_from_env()
     assert isinstance(provider, NativePgvectorMemoryProvider)

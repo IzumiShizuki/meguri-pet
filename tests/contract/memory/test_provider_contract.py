@@ -10,6 +10,13 @@ from services.meguri_core.memory import (
     MemoryUpsertInput,
 )
 from services.meguri_core.memory_service.database import MemoryDatabaseSettings
+from services.meguri_core.memory_service.contracts import MemoryStateError
+from services.meguri_core.memory_service.enums import ActorType
+from services.meguri_core.memory_service.models import (
+    CandidateReview,
+    MemoryActor,
+    MemoryUpdate,
+)
 from services.meguri_core.memory_service.native_pgvector import (
     NativePgvectorMemoryProvider,
 )
@@ -32,7 +39,7 @@ def memory_input(user_id, **overrides):
 @pytest_asyncio.fixture(params=["fake", "native_pgvector"])
 async def provider(request):
     if request.param == "fake":
-        yield FakeMemoryProvider()
+        yield "fake", FakeMemoryProvider()
         return
     database_url = os.getenv("MEGURI_TEST_DATABASE_URL")
     if not database_url:
@@ -44,17 +51,66 @@ async def provider(request):
             database_url=database_url,
             mutation_allowed=True,
         ),
-        allow_legacy_auto_approval=True,
     )
     try:
-        yield native
+        yield "native_pgvector", native
     finally:
         await native.close()
 
 
 @pytest.mark.asyncio
 async def test_provider_contract_version_visibility_and_delete(provider):
+    provider_kind, provider = provider
     user_id = f"contract-{uuid4()}"
+    if provider_kind == "native_pgvector":
+        proposed = memory_input(user_id)
+        with pytest.raises(MemoryStateError, match="explicit approval is required"):
+            await provider.upsert(proposed)
+        assert await provider.search(
+            MemorySearchInput(user_id=user_id, query="unsweetened tea")
+        ) == []
+        pending = await provider.list_candidates(
+            tenant_id=provider.tenant_id,
+            user_id=user_id,
+            status="pending_review",
+        )
+        first_item = await provider.review_candidate(
+            pending[0].candidate_id,
+            CandidateReview(decision="approve", reason="contract approval"),
+            actor=MemoryActor(actor_type=ActorType.ADMIN, actor_id="contract-admin"),
+            request_id=f"contract-approve-{uuid4()}",
+        )
+        assert first_item is not None
+        supersede_candidate = await provider.propose_supersede(
+            first_item.memory_id,
+            MemoryUpdate(
+                tenant_id=provider.tenant_id,
+                user_id=user_id,
+                content_text="User now prefers black coffee",
+                change_reason="contract correction",
+                base_version_id=first_item.current_version_id,
+            ),
+            actor=MemoryActor(actor_type=ActorType.USER, actor_id=user_id),
+            source_client_id="astrbot",
+            source_session_id="contract-session",
+            source_turn_id="contract-turn",
+            request_id=f"contract-supersede-{uuid4()}",
+        )
+        current_item = await provider.review_candidate(
+            supersede_candidate.candidate_id,
+            CandidateReview(decision="approve", reason="contract correction approval"),
+            actor=MemoryActor(actor_type=ActorType.ADMIN, actor_id="contract-admin"),
+            request_id=f"contract-supersede-approve-{uuid4()}",
+        )
+        assert current_item is not None
+        assert current_item.current_version is not None
+        assert current_item.current_version.version_no == 2
+        await provider.delete(current_item.memory_id)
+        assert await provider.search(
+            MemorySearchInput(user_id=user_id, query="black coffee")
+        ) == []
+        return
+
     first = await provider.upsert(memory_input(user_id))
     hits = await provider.search(MemorySearchInput(user_id=user_id, query="unsweetened tea"))
     assert hits and hits[0].record.canonical_text == first.canonical_text

@@ -20,6 +20,19 @@ class Sensitivity(StrEnum):
     SENSITIVE = "sensitive"
 
 
+class RiskLevel(StrEnum):
+    LOW = "low"
+    MODERATE = "moderate"
+    HIGH = "high"
+    PROHIBITED = "prohibited"
+
+
+class MergePolicy(StrEnum):
+    REVIEW = "review"
+    CREATE_ONLY = "create_only"
+    SUPERSEDE = "supersede"
+
+
 class MemoryScope(StrEnum):
     GLOBAL_USER = "global_user"
     CLIENT_PRIVATE = "client_private"

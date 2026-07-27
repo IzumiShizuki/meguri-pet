@@ -30,8 +30,10 @@ def render_downgrade_sql() -> str:
 
 def test_revision_chain_is_linear_and_complete():
     scripts = ScriptDirectory.from_config(alembic_config())
-    assert scripts.get_current_head() == "20260714_0004"
+    assert scripts.get_current_head() == "20260728_0006"
     assert [revision.revision for revision in scripts.walk_revisions()] == [
+        "20260728_0006",
+        "20260725_0005",
         "20260714_0004",
         "20260714_0003",
         "20260714_0002",
@@ -56,6 +58,11 @@ def test_offline_upgrade_contains_required_schema_and_no_hnsw():
         assert f"create table {table}" in sql
     assert "memory_versions are immutable" in sql
     assert "memory_audit_log is append-only" in sql
+    assert "risk_level" in sql
+    assert "merge_policy" in sql
+    assert "base_version_id" in sql
+    assert "on delete set null" in sql
+    assert "uq_memory_items_active_canonical_key" in sql
     assert "using hnsw" not in sql
 
 

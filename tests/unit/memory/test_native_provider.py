@@ -3,7 +3,12 @@ from uuid import uuid4
 
 import pytest
 
-from services.meguri_core.memory import MemoryUpsertInput
+from services.meguri_core.memory import (
+    MemoryUpsertInput,
+    SessionMessage,
+    SessionSummaryInput,
+)
+from services.meguri_core.schemas import MemoryCandidate as RuntimeMemoryCandidate
 from services.meguri_core.memory_service.enums import (
     ActorType,
     CandidateStatus,
@@ -18,6 +23,7 @@ from services.meguri_core.memory_service.models import (
     MemoryCandidate,
     MemoryItem,
     MemorySearchQuery,
+    MemoryUpdate,
     MemoryVersion,
 )
 from services.meguri_core.memory_service.native_pgvector import (
@@ -34,6 +40,7 @@ class StubService:
         self.created = []
         self.reviewed = []
         self.searches = []
+        self.summaries = []
 
     async def search(self, query):
         self.searches.append(query)
@@ -78,30 +85,33 @@ class StubService:
             current_version=version,
         )
 
+    async def summarize_session(self, summary, *, request_id):
+        self.summaries.append((summary, request_id))
+        return summary
+
 
 @pytest.mark.asyncio
-async def test_legacy_upsert_runs_candidate_and_review_flow():
+async def test_legacy_auto_approval_flag_cannot_bypass_explicit_review():
     service = StubService()
     provider = NativePgvectorMemoryProvider(
         service=service,  # type: ignore[arg-type]
         tenant_id="meguri-dev",
         allow_legacy_auto_approval=True,
     )
-    record = await provider.upsert(
-        MemoryUpsertInput(
-            user_id="user-a",
-            memory_type="preference",
-            canonical_text="User prefers tea",
-            source_client="website",
-            source_session="session-web",
-            confidence=0.9,
+    with pytest.raises(MemoryStateError, match="explicit approval is required"):
+        await provider.upsert(
+            MemoryUpsertInput(
+                user_id="user-a",
+                memory_type="preference",
+                canonical_text="User prefers tea",
+                source_client="website",
+                source_session="session-web",
+                confidence=0.9,
+            )
         )
-    )
-    assert record.canonical_text == "User prefers tea"
-    assert record.status == "active"
     assert service.created[0][0].tenant_id == "meguri-dev"
     assert service.created[0][0].source_kind.value == "llm_candidate"
-    assert service.reviewed[0][1].decision.value == "approve"
+    assert service.reviewed == []
 
 
 @pytest.mark.asyncio
@@ -131,7 +141,7 @@ async def test_legacy_upsert_queues_without_explicit_compatibility_flag():
         tenant_id="meguri-dev",
         allow_legacy_auto_approval=False,
     )
-    with pytest.raises(MemoryStateError, match="automatic approval is disabled"):
+    with pytest.raises(MemoryStateError, match="explicit approval is required"):
         await provider.upsert(
             MemoryUpsertInput(
                 user_id="user-a",
@@ -144,6 +154,26 @@ async def test_legacy_upsert_queues_without_explicit_compatibility_flag():
         )
     assert len(service.created) == 1
     assert service.reviewed == []
+
+
+@pytest.mark.asyncio
+async def test_direct_authoritative_supersede_is_fail_closed():
+    provider = NativePgvectorMemoryProvider(
+        service=StubService(),  # type: ignore[arg-type]
+        tenant_id="meguri-dev",
+    )
+
+    with pytest.raises(MemoryStateError, match="direct supersede is disabled"):
+        await provider.supersede(
+            uuid4(),
+            MemoryUpdate(
+                tenant_id="meguri-dev",
+                user_id="user-a",
+                content_text="User now prefers coffee",
+                change_reason="unsafe direct update",
+                base_version_id=uuid4(),
+            ),
+        )
 
 
 @pytest.mark.asyncio
@@ -172,3 +202,37 @@ async def test_authoritative_search_generates_pinned_query_embedding():
     assert query.query_embedding == [0.25] * 1024
     assert query.embedding_model == "BAAI/bge-m3"
     assert query.embedding_revision == "0123456789abcdef"
+
+
+@pytest.mark.asyncio
+async def test_legacy_session_summary_persists_candidates_with_stable_idempotency():
+    service = StubService()
+    provider = NativePgvectorMemoryProvider(
+        service=service,  # type: ignore[arg-type]
+        tenant_id="meguri-dev",
+    )
+    summary = SessionSummaryInput(
+        user_id="user-a",
+        client_id="desktop_pet",
+        session_id="session-a",
+        messages=[
+            SessionMessage(role="user", content="I am maintaining Meguri"),
+            SessionMessage(role="assistant", content="Understood"),
+        ],
+        structured_candidates=[
+            RuntimeMemoryCandidate(
+                type="project",
+                summary="User is maintaining Meguri",
+                confidence=0.9,
+                source_scope="conversation",
+            )
+        ],
+    )
+
+    await provider.summarize_session(summary)
+    await provider.summarize_session(summary)
+
+    persisted, first_request_id = service.summaries[0]
+    assert persisted.summary_json["candidate_status"] == "audit_only"
+    assert persisted.summary_json["structured_candidates"][0]["type"] == "project"
+    assert first_request_id == service.summaries[1][1]

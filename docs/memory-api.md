@@ -42,7 +42,7 @@ not change PostgreSQL/pgvector authority.
 
 ## Search contract
 
-`query`, optional `canonical_key`, `limit`, typed memory filters, scopes, modes and token budget are accepted. Exact-vector input must contain 1024 floats and identify the configured embedding model/revision. When no vector is supplied, the native runtime generates one using the pinned local embedding adapter for hybrid/exact-vector modes; if the adapter is unavailable, hybrid search degrades to keyword/structured retrieval and records a failure metric. Normal recall returns only active, unexpired current versions in the authenticated tenant/user scope. Candidate, deleted and historical versions are excluded.
+`query`, optional `canonical_key`, `limit`, typed memory filters, scopes, modes and token budget are accepted. Exact-vector input must contain 2048 floats and identify the configured `text-embedding-v4` release fingerprint. When no vector is supplied, the native runtime calls the configured HTTPS Model Studio Embedding API for hybrid/exact-vector modes; if the provider is unavailable, hybrid search degrades to keyword/structured retrieval and records a failure metric. Normal recall returns only active, unexpired current versions in the authenticated tenant/user scope. Candidate, deleted and historical versions are excluded.
 
 ## Compatibility boundary
 

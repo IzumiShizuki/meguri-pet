@@ -90,14 +90,17 @@ class AuthoritativeMemoryProvider(Protocol):
         request_id: str,
     ) -> MemoryFeedback: ...
 
-    async def supersede(
+    async def propose_supersede(
         self,
         memory_id: UUID,
         update: MemoryUpdate,
         *,
         actor: MemoryActor,
+        source_client_id: str,
+        source_session_id: str,
+        source_turn_id: str,
         request_id: str,
-    ) -> MemoryItem: ...
+    ) -> MemoryCandidate: ...
 
     async def delete(
         self,

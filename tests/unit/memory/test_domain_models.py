@@ -38,11 +38,40 @@ def test_unknown_domain_enums_are_rejected():
         MemoryCandidateCreate(**candidate_payload(memory_type="invented_type"))
     with pytest.raises(ValidationError):
         MemoryCandidateCreate(**candidate_payload(sensitivity="secretish"))
+    with pytest.raises(ValidationError):
+        MemoryCandidateCreate(**candidate_payload(risk_level="unknown"))
+    with pytest.raises(ValidationError):
+        MemoryCandidateCreate(**candidate_payload(merge_policy="overwrite"))
 
 
 def test_domain_models_forbid_unknown_fields():
     with pytest.raises(ValidationError):
         MemoryCandidateCreate(**candidate_payload(database_row={"private": True}))
+
+
+@pytest.mark.parametrize(
+    "content_json",
+    [
+        {"relationship_stage": "lover"},
+        {"nested": {"relationship-state": "lover"}},
+        {"changes": [{"relationship score": 99}]},
+        {"relationshipStage": "lover"},
+    ],
+)
+def test_candidates_cannot_modify_protected_relationship_fields(content_json):
+    with pytest.raises(ValidationError, match="protected field"):
+        MemoryCandidateCreate(**candidate_payload(content_json=content_json))
+
+
+def test_generic_memory_update_has_no_relationship_stage_escape_hatch():
+    with pytest.raises(ValidationError):
+        MemoryUpdate(
+            tenant_id="meguri-dev",
+            user_id="user-a",
+            content_text="User prefers coffee",
+            change_reason="user correction",
+            relationship_stage="lover",
+        )
 
 
 def test_search_requires_exact_embedding_dimension():
@@ -57,9 +86,9 @@ def test_search_requires_exact_embedding_dimension():
         tenant_id="meguri-dev",
         user_id="user-a",
         query="tea",
-        query_embedding=[0.0] * 1024,
+        query_embedding=[0.0] * 2048,
     )
-    assert len(query.query_embedding or []) == 1024
+    assert len(query.query_embedding or []) == 2048
 
 
 def test_updates_require_timezone_aware_dates():

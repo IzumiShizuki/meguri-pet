@@ -11,11 +11,11 @@
     "app_role_variable": "MEGURI_POSTGRES_APP_USER",
     "migration_job": "migration upgrade head",
     "revision_variable": "MEGURI_DATABASE_REVISION",
-    "schema_head": "20260714_0004",
+    "schema_head": "20260728_0006",
     "embedding_revision_variable": "MEGURI_EMBEDDING_MODEL_REVISION",
-    "embedding_model": "BAAI/bge-m3",
-    "embedding_model_revision": "5617a9f61b028005a4858fdac845db406aefb181",
-    "embedding_dimension": 1024
+    "embedding_model": "text-embedding-v4",
+    "embedding_model_revision": "dashscope-text-embedding-v4-2048-r20260725",
+    "embedding_dimension": 2048
   },
   "environments": {
     "dev": {"project": "meguri-dev", "internal_network": "meguri-dev-internal", "database": "meguri_dev"},
@@ -38,7 +38,7 @@
   "handoff_gates": [
     "run native provider and recovery contracts against an empty isolated PostgreSQL plus pgvector database",
     "prove user and environment data isolation on empty staging database",
-    "run the embedding worker against the pinned BGE-M3 revision without public database ports",
+    "run the API embedding worker and remote reranker through file-mounted DashScope credentials without public database ports",
     "record live exact-search latency recall RPO and RTO evidence"
   ]
 }

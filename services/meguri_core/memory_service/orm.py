@@ -33,7 +33,9 @@ from .enums import (
     MemoryScope,
     MemoryStatus,
     MemoryType,
+    MergePolicy,
     OutboxStatus,
+    RiskLevel,
     Sensitivity,
     SourceKind,
 )
@@ -97,6 +99,8 @@ class MemoryCandidateRow(Base):
     __table_args__ = (
         _enum_check("memory_type", MemoryType, "valid_memory_type"),
         _enum_check("sensitivity", Sensitivity, "valid_sensitivity"),
+        _enum_check("risk_level", RiskLevel, "valid_risk_level"),
+        _enum_check("merge_policy", MergePolicy, "valid_merge_policy"),
         _enum_check("status", CandidateStatus, "valid_status"),
         _enum_check("source_kind", SourceKind, "valid_source_kind"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
@@ -114,6 +118,16 @@ class MemoryCandidateRow(Base):
     )
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     sensitivity: Mapped[str] = mapped_column(String(30), nullable=False)
+    risk_level: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default=text("'moderate'")
+    )
+    merge_policy: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default=text("'review'")
+    )
+    base_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("memory_versions.version_id", ondelete="SET NULL"),
+    )
     source_client_id: Mapped[str] = mapped_column(String(100), nullable=False)
     source_session_id: Mapped[str] = mapped_column(String(200), nullable=False)
     source_turn_id: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -233,7 +247,7 @@ class MemoryEmbeddingRow(Base):
             name="uq_memory_embeddings_version_model_revision",
         ),
         _enum_check("status", EmbeddingStatus, "valid_status"),
-        CheckConstraint("embedding_dimension = 1024", name="dimension_1024"),
+        CheckConstraint("embedding_dimension = 2048", name="dimension_2048"),
     )
 
     embedding_id: Mapped[UUID] = mapped_column(
@@ -247,7 +261,7 @@ class MemoryEmbeddingRow(Base):
     embedding_model: Mapped[str] = mapped_column(String(300), nullable=False)
     embedding_revision: Mapped[str] = mapped_column(String(300), nullable=False)
     embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(VECTOR(1024), nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(VECTOR(2048), nullable=False)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

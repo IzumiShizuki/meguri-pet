@@ -8,6 +8,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
+from services.meguri_core.memory_service.contracts import MemoryStateError
 from services.meguri_core.memory_service.database import MemoryDatabaseSettings
 from services.meguri_core.memory_service.embedding import (
     BgeM3EmbeddingProvider,
@@ -107,17 +108,29 @@ async def test_candidate_version_delete_restore_and_environment_isolation(
         )
     ) == []
 
-    updated = await native_provider.supersede(
+    supersede_candidate = await native_provider.propose_supersede(
         item.memory_id,
         MemoryUpdate(
             tenant_id=tenant_id,
             user_id=user_id,
             content_text="User now prefers black coffee",
             change_reason="explicit correction",
+            base_version_id=item.current_version_id,
         ),
         actor=MemoryActor(actor_type=ActorType.USER, actor_id=user_id),
+        source_client_id="website",
+        source_session_id="session-correction",
+        source_turn_id="turn-correction",
         request_id=f"supersede-{uuid4()}",
     )
+    assert supersede_candidate.status is CandidateStatus.PENDING_REVIEW
+    updated = await native_provider.review_candidate(
+        supersede_candidate.candidate_id,
+        CandidateReview(decision="approve", reason="integration correction approval"),
+        actor=admin,
+        request_id=f"approve-supersede-{uuid4()}",
+    )
+    assert updated is not None
 
     rejected = await native_provider.create_candidate(
         candidate(tenant_id, user_id, "User prefers mint tea"),
@@ -185,6 +198,39 @@ async def test_candidate_version_delete_restore_and_environment_isolation(
             modes=[SearchMode.KEYWORD],
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_l0_candidate_persists_only_fingerprint_and_never_creates_memory(
+    native_provider,
+) -> None:
+    tenant_id = f"tenant-{uuid4().hex}"
+    user_id = f"user-{uuid4().hex}"
+    secret = "My API key is sk-postgres-must-not-store"
+    unsafe = candidate(tenant_id, user_id, secret).model_copy(
+        update={
+            "risk_level": "prohibited",
+            "content_json": {"raw_source": secret},
+            "provenance": {"raw_excerpt": secret},
+        }
+    )
+
+    rejected = await native_provider.create_candidate(
+        unsafe,
+        request_id=f"l0-{uuid4()}",
+    )
+
+    assert rejected.status is CandidateStatus.REJECTED
+    assert secret not in rejected.model_dump_json()
+    assert len(rejected.content_json["content_sha256"]) == 64
+    assert await native_provider.list_records(user_id) == []
+    with pytest.raises(MemoryStateError):
+        await native_provider.review_candidate(
+            rejected.candidate_id,
+            CandidateReview(decision="approve", reason="must remain rejected"),
+            actor=MemoryActor(actor_type=ActorType.ADMIN, actor_id="integration-admin"),
+            request_id=f"l0-approve-{uuid4()}",
+        )
 
 
 @pytest.mark.asyncio

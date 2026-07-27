@@ -88,8 +88,26 @@ def test_policy_rejects_credentials_raw_sources_sensitive_inference_and_transien
 def test_auto_approval_is_disabled_by_default_and_strict_when_enabled():
     assert CandidateReviewPolicy().evaluate(candidate()).disposition == "queue"
     enabled = CandidateReviewPolicy(auto_approve_enabled=True)
-    assert enabled.evaluate(candidate()).auto_approved
+    assert enabled.evaluate(candidate(risk_level="low")).auto_approved
+    assert enabled.evaluate(candidate(risk_level="high")).disposition == "queue"
+    assert enabled.evaluate(candidate(risk_level="prohibited")).rejected
     assert enabled.evaluate(candidate(source_kind="llm_candidate")).disposition == "queue"
+
+
+def test_policy_detects_credentials_in_structured_content_and_provenance():
+    policy = CandidateReviewPolicy()
+    assert policy.evaluate(
+        candidate(
+            "User shared an account setting",
+            content_json={"api_key": "sk-structured-secret"},
+        )
+    ).rejected
+    assert policy.evaluate(
+        candidate(
+            "User shared an account setting",
+            provenance={"raw_excerpt": "My access token is secret"},
+        )
+    ).rejected
 
 
 def test_structured_conflict_supersedes_but_exact_content_deduplicates():

@@ -81,9 +81,9 @@ async def test_fixed_recall_validates_expected_memory_and_current_version() -> N
                     expected_memory_ids=[memory_a],
                     expected_version_ids={memory_a: version_a},
                     modes=[SearchMode.EXACT_VECTOR],
-                    query_embedding=[1.0, *([0.0] * 1023)],
-                    embedding_model="BAAI/bge-m3",
-                    embedding_revision="5617a9f61b028005a4858fdac845db406aefb181",
+                    query_embedding=[1.0, *([0.0] * 2047)],
+                    embedding_model="text-embedding-v4",
+                    embedding_revision="dashscope-text-embedding-v4-2048-r20260725",
                 ),
                 RecoveryRecallCase(
                     case_id="missing-result-fails",

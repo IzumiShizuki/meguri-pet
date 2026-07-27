@@ -15,6 +15,8 @@ from .enums import (
     MemoryScope,
     MemoryStatus,
     MemoryType,
+    MergePolicy,
+    RiskLevel,
     ReviewDecision,
     SearchMode,
     Sensitivity,
@@ -40,6 +42,50 @@ class StrictModel(BaseModel):
     )
 
 
+PROTECTED_CANDIDATE_FIELDS = frozenset(
+    {
+        "relationship_level",
+        "relationship_profile",
+        "relationship_score",
+        "relationship_stage",
+        "relationship_status",
+        "relationship_state",
+    }
+)
+PROTECTED_CANDIDATE_FIELD_TOKENS = frozenset(
+    field.replace("_", "") for field in PROTECTED_CANDIDATE_FIELDS
+)
+
+
+def _protected_candidate_field(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = str(key).strip().casefold().replace("-", "_").replace(" ", "_")
+            if (
+                normalized in PROTECTED_CANDIDATE_FIELDS
+                or normalized.replace("_", "") in PROTECTED_CANDIDATE_FIELD_TOKENS
+            ):
+                return normalized
+            found = _protected_candidate_field(nested)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for nested in value:
+            found = _protected_candidate_field(nested)
+            if found is not None:
+                return found
+    return None
+
+
+def validate_candidate_content_json(value: dict[str, Any]) -> dict[str, Any]:
+    protected = _protected_candidate_field(value)
+    if protected is not None:
+        raise ValueError(
+            f"candidate content cannot modify protected field: {protected}"
+        )
+    return value
+
+
 class MemoryActor(StrictModel):
     actor_type: ActorType
     actor_id: str = Field(min_length=1, max_length=200)
@@ -53,6 +99,9 @@ class MemoryCandidateCreate(StrictModel):
     content_json: dict[str, Any] = Field(default_factory=dict)
     confidence: float = Field(ge=0, le=1)
     sensitivity: Sensitivity = Sensitivity.NORMAL
+    risk_level: RiskLevel = RiskLevel.MODERATE
+    merge_policy: MergePolicy = MergePolicy.REVIEW
+    base_version_id: UUID | None = None
     source_client_id: str = Field(min_length=1, max_length=100)
     source_session_id: str = Field(min_length=1, max_length=200)
     source_turn_id: str = Field(min_length=1, max_length=200)
@@ -61,6 +110,10 @@ class MemoryCandidateCreate(StrictModel):
     extraction_model: str | None = Field(default=None, max_length=300)
     extraction_prompt_hash: str | None = Field(default=None, max_length=64)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+    _validate_content_json = field_validator("content_json")(
+        validate_candidate_content_json
+    )
 
 
 class MemoryCandidate(MemoryCandidateCreate):
@@ -91,11 +144,11 @@ class MemoryUpdate(StrictModel):
     content_text: str = Field(min_length=1, max_length=4000)
     content_json: dict[str, Any] = Field(default_factory=dict)
     change_reason: str = Field(min_length=1, max_length=1000)
+    base_version_id: UUID | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     importance: float | None = Field(default=None, ge=0, le=1)
     effective_at: datetime | None = None
     expires_at: datetime | None = None
-    relationship_stage: str | None = Field(default=None, max_length=100)
     provenance: dict[str, Any] = Field(default_factory=dict)
 
     _validate_datetimes = field_validator("effective_at", "expires_at")(
@@ -201,7 +254,7 @@ class MemorySearchQuery(StrictModel):
     )
     token_budget: int = Field(default=1200, ge=64, le=8192)
     query_embedding: list[float] | None = Field(
-        default=None, min_length=1024, max_length=1024
+        default=None, min_length=2048, max_length=2048
     )
     embedding_model: str | None = Field(default=None, max_length=300)
     embedding_revision: str | None = Field(default=None, max_length=300)

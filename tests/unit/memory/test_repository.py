@@ -4,7 +4,11 @@ import pytest
 from sqlalchemy.dialects import postgresql
 
 from services.meguri_core.memory_service.database import MemoryDatabaseSettings
-from services.meguri_core.memory_service.models import MemorySearchQuery
+from services.meguri_core.memory_service.enums import CandidateStatus
+from services.meguri_core.memory_service.models import (
+    MemoryCandidateCreate,
+    MemorySearchQuery,
+)
 from services.meguri_core.memory_service.repository import (
     MemoryUnitOfWork,
     SqlAlchemyMemoryRepository,
@@ -113,6 +117,28 @@ async def test_idempotency_uses_transaction_advisory_lock():
 
 
 @pytest.mark.asyncio
+async def test_repository_refuses_unredacted_rejected_candidate():
+    repository = SqlAlchemyMemoryRepository(CapturingSession())  # type: ignore[arg-type]
+    unsafe = MemoryCandidateCreate(
+        tenant_id="meguri-dev",
+        user_id="user-a",
+        memory_type="user_profile",
+        content_text="My API key is sk-repository-bypass",
+        content_json={"raw": "sk-repository-bypass"},
+        confidence=1.0,
+        source_client_id="website",
+        source_session_id="session-web",
+        source_turn_id="turn-unsafe",
+    )
+
+    with pytest.raises(ValueError, match="must be redacted"):
+        await repository.create_candidate(
+            unsafe,
+            status=CandidateStatus.PENDING_REVIEW,
+        )
+
+
+@pytest.mark.asyncio
 async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     session = CapturingSession()
     repository = SqlAlchemyMemoryRepository(session)  # type: ignore[arg-type]
@@ -120,8 +146,8 @@ async def test_exact_vector_and_keyword_queries_apply_authority_filters():
         tenant_id="meguri-dev",
         user_id="user-a",
         query="tea",
-        query_embedding=[0.0] * 1024,
-        embedding_model="BAAI/bge-m3",
+        query_embedding=[0.0] * 2048,
+        embedding_model="text-embedding-v4",
         embedding_revision="0123456789abcdef",
     )
     await repository.vector_search(query)

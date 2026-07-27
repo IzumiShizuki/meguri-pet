@@ -75,10 +75,15 @@ class FakeMemoryProviderTests(unittest.IsolatedAsyncioTestCase):
                     SessionMessage(role="user", content="Continue the project"),
                     SessionMessage(role="assistant", content="I will continue"),
                 ],
+                structured_candidates=[
+                    MemoryCandidate(type="project", summary="Meguri remains an active project", confidence=0.9)
+                ],
             )
         )
         self.assertEqual(summary.message_count, 2)
         self.assertIn("Continue the project", summary.summary)
+        self.assertEqual(len(summary.structured_candidates), 1)
+        self.assertEqual(summary.candidate_status, "audit_only")
 
 
 class CompanionMemoryPolicyTests(unittest.TestCase):

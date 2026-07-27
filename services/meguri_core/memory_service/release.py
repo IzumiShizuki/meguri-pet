@@ -3,10 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 
-DATABASE_REVISION = "20260714_0004"
-EMBEDDING_MODEL = "BAAI/bge-m3"
-EMBEDDING_MODEL_REVISION = "5617a9f61b028005a4858fdac845db406aefb181"
-EMBEDDING_DIMENSION = 1024
+DATABASE_REVISION = "20260728_0006"
+# The managed RAG release uses Alibaba Cloud Model Studio's multilingual
+# embedding endpoint.  The revision is a Meguri release fingerprint: Model
+# Studio does not expose an immutable model-commit identifier in its response,
+# so changing the provider model, dimensions, or validation date requires a
+# new value and a full rebuild of the derived vectors.
+EMBEDDING_MODEL = "text-embedding-v4"
+EMBEDDING_MODEL_REVISION = "dashscope-text-embedding-v4-2048-r20260725"
+EMBEDDING_DIMENSION = 2048
 
 
 def memory_release_metadata() -> dict[str, Any]:

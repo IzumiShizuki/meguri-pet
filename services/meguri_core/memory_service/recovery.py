@@ -44,7 +44,7 @@ class RecoveryRecallCase(StrictModel):
     modes: list[SearchMode] = Field(default_factory=lambda: [SearchMode.HYBRID])
     token_budget: int = Field(default=1200, ge=64, le=8192)
     query_embedding: list[float] | None = Field(
-        default=None, min_length=1024, max_length=1024
+        default=None, min_length=2048, max_length=2048
     )
     embedding_model: str | None = Field(default=None, max_length=300)
     embedding_revision: str | None = Field(default=None, max_length=300)

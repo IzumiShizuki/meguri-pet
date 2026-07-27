@@ -1,10 +1,81 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import re
 
-from .enums import MemoryType, Sensitivity, SourceKind
+from .enums import MemoryType, RiskLevel, Sensitivity, SourceKind
 from .models import MemoryCandidateCreate
+
+
+REDACTED_CANDIDATE_TEXT = "[redacted unsafe memory candidate]"
+L0_REJECTION_REASONS = frozenset(
+    {
+        "candidate_risk_is_prohibited",
+        "credential_or_high_risk_identifier",
+        "sensitive_candidate_requires_separate_workflow",
+        "unconfirmed_sensitive_inference",
+    }
+)
+SAFE_REDACTION_KEYS = frozenset(
+    {"content_sha256", "redacted", "rejection_reason", "risk_class"}
+)
+
+
+def candidate_payload_sha256(candidate: MemoryCandidateCreate) -> str:
+    serialized = candidate.model_dump(mode="json")
+    content_payload = {
+        "content_text": serialized["content_text"],
+        "content_json": serialized["content_json"],
+        "provenance": serialized["provenance"],
+    }
+    encoded = json.dumps(
+        content_payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def redact_rejected_candidate(
+    candidate: MemoryCandidateCreate,
+    evaluation: "PolicyEvaluation",
+) -> MemoryCandidateCreate:
+    digest = candidate_payload_sha256(candidate)
+    is_l0 = evaluation.reason in L0_REJECTION_REASONS
+    safe_details = {
+        "content_sha256": digest,
+        "redacted": True,
+        "rejection_reason": evaluation.reason,
+        "risk_class": "l0" if is_l0 else "policy_rejected",
+    }
+    return candidate.model_copy(
+        update={
+            "content_text": REDACTED_CANDIDATE_TEXT,
+            "content_json": safe_details,
+            "provenance": safe_details,
+            "risk_level": RiskLevel.PROHIBITED if is_l0 else candidate.risk_level,
+            "sensitivity": Sensitivity.SENSITIVE if is_l0 else candidate.sensitivity,
+        }
+    )
+
+
+def is_redacted_candidate(candidate: MemoryCandidateCreate) -> bool:
+    details = candidate.content_json
+    digest = details.get("content_sha256")
+    return (
+        candidate.content_text == REDACTED_CANDIDATE_TEXT
+        and frozenset(details) == SAFE_REDACTION_KEYS
+        and details.get("redacted") is True
+        and details.get("risk_class") in {"l0", "policy_rejected"}
+        and isinstance(details.get("rejection_reason"), str)
+        and bool(details["rejection_reason"])
+        and isinstance(digest, str)
+        and re.fullmatch(r"[0-9a-f]{64}", digest) is not None
+        and candidate.provenance == details
+    )
 
 
 @dataclass(frozen=True)
@@ -59,7 +130,16 @@ class CandidateReviewPolicy:
         self.confidence_threshold = confidence_threshold
 
     def evaluate(self, candidate: MemoryCandidateCreate) -> PolicyEvaluation:
-        text = candidate.content_text
+        serialized = candidate.model_dump(mode="json")
+        text = "\n".join(
+            (
+                candidate.content_text,
+                json.dumps(serialized["content_json"], ensure_ascii=False, sort_keys=True),
+                json.dumps(serialized["provenance"], ensure_ascii=False, sort_keys=True),
+            )
+        )
+        if candidate.risk_level is RiskLevel.PROHIBITED:
+            return PolicyEvaluation("reject", "candidate_risk_is_prohibited")
         if self._credential_pattern.search(text):
             return PolicyEvaluation("reject", "credential_or_high_risk_identifier")
         if candidate.sensitivity is Sensitivity.SENSITIVE:
@@ -76,6 +156,7 @@ class CandidateReviewPolicy:
             self.auto_approve_enabled
             and candidate.memory_type in self._auto_approve_types
             and candidate.sensitivity is Sensitivity.NORMAL
+            and candidate.risk_level is RiskLevel.LOW
             and candidate.confidence >= self.confidence_threshold
             and candidate.source_kind is SourceKind.DIRECT_USER
         ):

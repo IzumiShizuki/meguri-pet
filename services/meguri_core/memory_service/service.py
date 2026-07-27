@@ -19,11 +19,15 @@ from .enums import (
     ConflictAction,
     MemoryStatus,
     MemoryType,
+    MergePolicy,
+    RiskLevel,
     ReviewDecision,
     SearchMode,
+    SourceKind,
 )
 from .models import (
     CandidateReview,
+    ConflictResolution,
     HardDeleteResult,
     IdentityBinding,
     IdentityBindingCreate,
@@ -45,8 +49,10 @@ from .repository import (
     candidate_model,
 )
 from .retrieval import build_hit, rerank_and_budget
-from .review_policy import CandidateReviewPolicy
+from .rerank import DashScopeRerankProvider
+from .review_policy import CandidateReviewPolicy, redact_rejected_candidate
 from .metrics import MemoryMetrics, memory_metrics
+from .token_budget import take_within_token_budget
 
 
 def require_request_id(request_id: str) -> str:
@@ -110,6 +116,7 @@ class MemoryService:
         metrics: MemoryMetrics | None = None,
         hard_delete_enabled: bool = False,
         embedding_provider: EmbeddingProvider | None = None,
+        rerank_provider: DashScopeRerankProvider | None = None,
     ) -> None:
         self.uow_factory = unit_of_work_factory
         self.review_policy = review_policy or CandidateReviewPolicy()
@@ -117,6 +124,7 @@ class MemoryService:
         self.metrics = metrics or memory_metrics
         self.hard_delete_enabled = hard_delete_enabled
         self.embedding_provider = embedding_provider
+        self.rerank_provider = rerank_provider
 
     async def create_candidate(
         self,
@@ -141,8 +149,13 @@ class MemoryService:
                 else CandidateStatus.PENDING_REVIEW
             )
             reason = evaluation.reason
+            durable_candidate = (
+                redact_rejected_candidate(candidate, evaluation)
+                if evaluation.rejected
+                else candidate
+            )
             created = await repository.create_candidate(
-                candidate,
+                durable_candidate,
                 status=status,
                 review_reason=reason if evaluation.rejected else None,
             )
@@ -274,11 +287,48 @@ class MemoryService:
                     }
                 except Exception:
                     self.metrics.inc("memory_embedding_failure_total")
-            resolution = self.conflict_resolver.resolve(
-                candidate_create,
-                existing,
-                semantic_scores=semantic_scores,
-            )
+            if candidate_create.merge_policy is MergePolicy.SUPERSEDE:
+                if candidate_create.base_version_id is None:
+                    raise MemoryStateError(
+                        "supersede candidate requires base_version_id"
+                    )
+                target = next(
+                    (
+                        entry
+                        for entry in existing
+                        if entry.current_version_id == candidate_create.base_version_id
+                    ),
+                    None,
+                )
+                if target is None:
+                    raise MemoryStateError(
+                        "supersede candidate target is no longer the active version"
+                    )
+                resolution = ConflictResolution(
+                    action=ConflictAction.SUPERSEDE,
+                    reason="explicit_supersede_candidate",
+                    existing_memory_id=target.memory_id,
+                    existing_version_id=target.current_version_id,
+                )
+            else:
+                resolution = self.conflict_resolver.resolve(
+                    candidate_create,
+                    existing,
+                    semantic_scores=semantic_scores,
+                )
+            if (
+                resolution.action is ConflictAction.SUPERSEDE
+                and candidate_create.merge_policy is MergePolicy.CREATE_ONLY
+            ):
+                raise MemoryStateError(
+                    "candidate merge policy forbids superseding an existing memory"
+                )
+            if (
+                resolution.action is ConflictAction.SUPERSEDE
+                and candidate_create.base_version_id is not None
+                and candidate_create.base_version_id != resolution.existing_version_id
+            ):
+                raise MemoryStateError("memory base version changed during candidate review")
             if resolution.action in {ConflictAction.SUPERSEDE, ConflictAction.REJECT}:
                 self.metrics.inc("memory_conflict_total")
             action = AuditAction.ITEM_CREATE
@@ -299,6 +349,7 @@ class MemoryService:
                         content_json=row.content_json,
                         confidence=row.confidence,
                         change_reason=decision.reason,
+                        base_version_id=resolution.existing_version_id,
                         provenance={
                             **row.provenance,
                             "candidate_id": str(row.candidate_id),
@@ -387,9 +438,31 @@ class MemoryService:
             )
             for entry in combined.values()
         ]
+        # First preserve the deterministic hybrid scorer as a bounded recall
+        # stage.  A managed reranker may then reorder only those candidates; it
+        # never broadens tenant/user scope or bypasses the token budget.
+        shortlist = rerank_and_budget(
+            hits,
+            token_budget=8192,
+            limit=min(50, max(query.limit, query.limit * 4)),
+        )
         results = rerank_and_budget(
             hits, token_budget=query.token_budget, limit=query.limit
         )
+        if self.rerank_provider is not None and len(shortlist) > 1:
+            try:
+                reranked = await self.rerank_provider.rerank(
+                    query.query,
+                    [hit.content_text for hit in shortlist],
+                    top_n=min(query.limit, len(shortlist)),
+                )
+                results = take_within_token_budget(
+                    [shortlist[item.index] for item in reranked],
+                    text_of=lambda hit: hit.content_text,
+                    token_budget=query.token_budget,
+                )
+            except Exception:
+                self.metrics.inc("memory_rerank_failure_total")
         self.metrics.set_gauge(
             "memory_search_latency_ms", (perf_counter() - started) * 1000
         )
@@ -448,54 +521,67 @@ class MemoryService:
                 self.metrics.inc("memory_false_recall_feedback_total")
             return result
 
-    async def supersede(
+    async def propose_supersede(
         self,
         memory_id: UUID,
         update: MemoryUpdate,
         *,
         actor: MemoryActor,
+        source_client_id: str,
+        source_session_id: str,
+        source_turn_id: str,
         request_id: str,
-    ) -> MemoryItem:
+    ) -> MemoryCandidate:
         request_id = require_request_id(request_id)
-        operation = f"memory.supersede.{memory_id}"
         async with self.uow_factory() as uow:
             repository = repository_of(uow)
-            await lock_idempotency(
-                repository, update.tenant_id, operation, request_id
-            )
-            cached = await repository.get_idempotent(update.tenant_id, operation, request_id)
-            if cached:
-                return MemoryItem.model_validate(cached)
             current = await repository.get_item(
                 memory_id,
                 tenant_id=update.tenant_id,
                 user_id=update.user_id,
-                for_update=True,
             )
             if current is None:
                 raise MemoryNotFoundError("memory not found")
             if current.status is not MemoryStatus.ACTIVE:
                 raise MemoryStateError("only active memory can be superseded")
-            updated = await repository.supersede_item(current, update, actor=actor)
-            await repository.append_audit(
+            if update.base_version_id is None:
+                raise MemoryStateError("base_version_id is required for supersede")
+            if update.base_version_id != current.current_version_id:
+                raise MemoryStateError("memory base version changed before supersede proposal")
+
+        content_json = dict(update.content_json)
+        if update.importance is not None:
+            content_json["importance"] = update.importance
+        source_kind = (
+            SourceKind.DIRECT_USER
+            if actor.actor_type is ActorType.USER
+            else SourceKind.ADMIN
+            if actor.actor_type is ActorType.ADMIN
+            else SourceKind.LLM_CANDIDATE
+        )
+        return await self.create_candidate(
+            MemoryCandidateCreate(
                 tenant_id=update.tenant_id,
-                request_id=request_id,
-                action=AuditAction.SUPERSEDE,
-                aggregate_type="memory",
-                aggregate_id=str(memory_id),
-                actor=actor,
-                details={
-                    "user_id": update.user_id,
-                    "version_id": str(updated.current_version_id),
+                user_id=update.user_id,
+                memory_type=current.memory_type,
+                content_text=update.content_text,
+                content_json=content_json,
+                confidence=update.confidence if update.confidence is not None else current.confidence,
+                risk_level=RiskLevel.HIGH,
+                merge_policy=MergePolicy.SUPERSEDE,
+                base_version_id=update.base_version_id,
+                source_client_id=source_client_id,
+                source_session_id=source_session_id,
+                source_turn_id=source_turn_id,
+                source_kind=source_kind,
+                provenance={
+                    **update.provenance,
+                    "change_reason": update.change_reason,
+                    "proposed_supersedes_memory_id": str(memory_id),
                 },
-            )
-            await repository.put_idempotent(
-                update.tenant_id,
-                operation,
-                request_id,
-                updated.model_dump(mode="json"),
-            )
-            return updated
+            ),
+            request_id=request_id,
+        )
 
     async def delete(
         self,
