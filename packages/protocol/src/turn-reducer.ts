@@ -15,6 +15,12 @@ export interface TurnViewState {
   error?: string
 }
 
+export interface SessionEventCheckpoint {
+  session_id?: string
+  last_sequence: number
+  processed_event_ids: string[]
+}
+
 export class SequenceGapError extends Error {
   readonly expected: number
   readonly received: number
@@ -28,11 +34,28 @@ export class SequenceGapError extends Error {
 
 export class SessionTurnReducer {
   readonly turns = new Map<string, TurnViewState>()
+  private readonly processedEventIds = new Set<string>()
   lastSequence: number
   sessionId?: string
 
-  constructor(startSequence = 0) {
-    this.lastSequence = startSequence
+  constructor(start: number | SessionEventCheckpoint = 0) {
+    if (typeof start === 'number') {
+      validateSequence(start, 'start sequence')
+      this.lastSequence = start
+      return
+    }
+    validateSequence(start.last_sequence, 'checkpoint sequence')
+    if (start.session_id !== undefined && !start.session_id.trim())
+      throw new TypeError('checkpoint session_id must not be empty')
+    if (!Array.isArray(start.processed_event_ids))
+      throw new TypeError('checkpoint processed_event_ids must be an array')
+    for (const eventId of start.processed_event_ids) {
+      if (typeof eventId !== 'string' || eventId.length === 0)
+        throw new TypeError('checkpoint event IDs must be non-empty strings')
+      this.processedEventIds.add(eventId)
+    }
+    this.lastSequence = start.last_sequence
+    this.sessionId = start.session_id
   }
 
   apply(event: TurnEventEnvelope): boolean {
@@ -45,6 +68,9 @@ export class SessionTurnReducer {
     if (event.sequence !== expected)
       throw new SequenceGapError(expected, event.sequence)
     this.lastSequence = event.sequence
+    if (this.processedEventIds.has(event.event_id))
+      return false
+    this.processedEventIds.add(event.event_id)
     const state = this.turns.get(event.turn_id) ?? {
       turnId: event.turn_id,
       text: '',
@@ -70,6 +96,14 @@ export class SessionTurnReducer {
     return true
   }
 
+  checkpoint(): SessionEventCheckpoint {
+    return {
+      session_id: this.sessionId,
+      last_sequence: this.lastSequence,
+      processed_event_ids: [...this.processedEventIds],
+    }
+  }
+
   isTerminal(turnId: string): boolean {
     const status = this.turns.get(turnId)?.status
     return status === 'completed' || status === 'cancelled' || status === 'failed'
@@ -78,4 +112,9 @@ export class SessionTurnReducer {
   terminalEventSeen(event: TurnEventEnvelope): boolean {
     return isTerminalEvent(event.type)
   }
+}
+
+function validateSequence(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new TypeError(`${label} must be a non-negative safe integer`)
 }

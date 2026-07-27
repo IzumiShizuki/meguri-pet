@@ -5,6 +5,7 @@ import {
 import {
   SessionTurnReducer,
   type ClientCapabilities,
+  type SessionEventCheckpoint,
   type TurnEventEnvelope,
   type TurnRequest,
   type TurnViewState,
@@ -21,11 +22,21 @@ export interface KeyValueStorage {
   removeItem(key: string): void
 }
 
-export interface WebsiteSessionRecord {
+export interface WebsiteSessionRecordV1 {
   version: 1
   sessionId: string
   activeTurnId?: string
 }
+
+export interface WebsiteSessionRecordV2 {
+  version: 2
+  sessionId: string
+  activeTurnId?: string
+  checkpoint: SessionEventCheckpoint
+  activeTurnState?: TurnViewState
+}
+
+export type WebsiteSessionRecord = WebsiteSessionRecordV1 | WebsiteSessionRecordV2
 
 export interface WebsiteSessionOptions {
   capabilities?: Partial<ClientCapabilities>
@@ -106,7 +117,9 @@ export class WebsiteMeguriSession {
     const saved = this.store.load()
     this.sessionId = saved?.sessionId ?? (options.createSessionId ?? createSessionId)()
     this.activeTurnId = saved?.activeTurnId
-    this.reducer = new SessionTurnReducer()
+    this.reducer = new SessionTurnReducer(saved?.version === 2 ? saved.checkpoint : 0)
+    if (saved?.version === 2 && saved.activeTurnState)
+      this.reducer.turns.set(saved.activeTurnState.turnId, { ...saved.activeTurnState })
     this.persist()
   }
 
@@ -150,13 +163,18 @@ export class WebsiteMeguriSession {
     const turnId = this.activeTurnId
     if (!turnId)
       throw new Error('no active website turn')
-    await this.api.followSession(this.sessionId, this.reducer, {
-      ...options,
-      untilTurnId: turnId,
-      onEvent: async (event: TurnEventEnvelope) => {
-        await options.onEvent?.(event)
-      },
-    })
+    if (!this.reducer.isTerminal(turnId)) {
+      await this.api.followSession(this.sessionId, this.reducer, {
+        ...options,
+        untilTurnId: turnId,
+        onEvent: async (event: TurnEventEnvelope) => {
+          // The reducer has already applied the event. Persist its checkpoint
+          // before dispatching page-side effects so reloads cannot replay them.
+          this.persist()
+          await options.onEvent?.(event)
+        },
+      })
+    }
     const state = this.reducer.turns.get(turnId)
     if (!state)
       throw new Error('terminal website turn has no view state')
@@ -166,10 +184,15 @@ export class WebsiteMeguriSession {
   }
 
   private persist(): void {
+    const activeTurnState = this.activeTurnId
+      ? this.reducer.turns.get(this.activeTurnId)
+      : undefined
     this.store.save({
-      version: 1,
+      version: 2,
       sessionId: this.sessionId,
       activeTurnId: this.activeTurnId,
+      checkpoint: this.reducer.checkpoint(),
+      activeTurnState: activeTurnState ? { ...activeTurnState } : undefined,
     })
   }
 }
@@ -182,8 +205,40 @@ function isSessionRecord(value: unknown): value is WebsiteSessionRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     return false
   const record = value as Record<string, unknown>
-  return record.version === 1
-    && typeof record.sessionId === 'string'
-    && record.sessionId.length > 0
-    && (record.activeTurnId === undefined || typeof record.activeTurnId === 'string')
+  if (typeof record.sessionId !== 'string' || record.sessionId.length === 0)
+    return false
+  if (record.activeTurnId !== undefined && typeof record.activeTurnId !== 'string')
+    return false
+  if (record.version === 1)
+    return true
+  if (record.version !== 2 || !isCheckpoint(record.checkpoint))
+    return false
+  if (record.checkpoint.session_id !== undefined
+    && record.checkpoint.session_id !== record.sessionId)
+    return false
+  return record.activeTurnState === undefined
+    || isTurnViewState(record.activeTurnState, record.activeTurnId)
+}
+
+function isCheckpoint(value: unknown): value is SessionEventCheckpoint {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const checkpoint = value as Record<string, unknown>
+  return Number.isSafeInteger(checkpoint.last_sequence)
+    && Number(checkpoint.last_sequence) >= 0
+    && (checkpoint.session_id === undefined
+      || (typeof checkpoint.session_id === 'string' && checkpoint.session_id.length > 0))
+    && Array.isArray(checkpoint.processed_event_ids)
+    && checkpoint.processed_event_ids.every(eventId => typeof eventId === 'string' && eventId.length > 0)
+}
+
+function isTurnViewState(value: unknown, activeTurnId: unknown): value is TurnViewState {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const state = value as Record<string, unknown>
+  return typeof state.turnId === 'string'
+    && state.turnId.length > 0
+    && (activeTurnId === undefined || state.turnId === activeTurnId)
+    && typeof state.text === 'string'
+    && ['idle', 'running', 'completed', 'cancelled', 'failed'].includes(String(state.status))
 }

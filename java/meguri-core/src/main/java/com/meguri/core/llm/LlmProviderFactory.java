@@ -1,6 +1,7 @@
 package com.meguri.core.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meguri.core.metrics.PromptCacheMetricsRecorder;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -15,7 +16,7 @@ public final class LlmProviderFactory {
     private LlmProviderFactory() {}
 
     public static LlmProvider createFromEnvironment() {
-        return createFromEnvironment(new ObjectMapper());
+        return createFromEnvironment(new ObjectMapper(), PromptCacheMetricsRecorder.noop());
     }
 
     /** Short alias used by adapters ported from the Python factory. */
@@ -24,7 +25,12 @@ public final class LlmProviderFactory {
     }
 
     public static LlmProvider createFromEnvironment(ObjectMapper mapper) {
+        return createFromEnvironment(mapper, PromptCacheMetricsRecorder.noop());
+    }
+
+    public static LlmProvider createFromEnvironment(ObjectMapper mapper, PromptCacheMetricsRecorder metrics) {
         if (mapper == null) mapper = new ObjectMapper();
+        if (metrics == null) metrics = PromptCacheMetricsRecorder.noop();
         String provider = env("MEGURI_LLM_PROVIDER", "mock").trim().toLowerCase();
         if (provider.equals("mock")) return new MockLlmProvider();
         if (!provider.equals("openai-compatible")) {
@@ -47,17 +53,33 @@ public final class LlmProviderFactory {
         if (!loopback && apiKey.isBlank()) throw new LlmConfigurationException("remote LLM endpoints require MEGURI_LLM_API_KEY_FILE");
         double timeout = parseDouble("MEGURI_LLM_TIMEOUT_SECONDS", 30);
         int maxConcurrency = parseInt("MEGURI_LLM_MAX_CONCURRENCY", 4);
-        if (timeout <= 0 || maxConcurrency <= 0) throw new LlmConfigurationException("LLM timeout/concurrency must be positive");
+        int maxTokens = parseInt("MEGURI_LLM_MAX_TOKENS", 1200);
+        int promptTokenBudget = parseInt("MEGURI_LLM_PROMPT_TOKEN_BUDGET", 12000);
+        String thinking = env("MEGURI_LLM_THINKING", "auto").trim().toLowerCase();
+        if (timeout <= 0 || maxConcurrency <= 0 || maxTokens <= 0 || promptTokenBudget < 256) {
+            throw new LlmConfigurationException("LLM timeout/concurrency/max tokens must be positive");
+        }
+        if (!Set.of("auto", "enabled", "disabled").contains(thinking)) {
+            throw new LlmConfigurationException("MEGURI_LLM_THINKING must be auto, enabled or disabled");
+        }
         String format = env("MEGURI_LLM_RESPONSE_FORMAT", "json_schema");
         String effectiveKey = apiKey.isBlank() ? "meguri-loopback" : apiKey;
-        OpenAiChatModel modelClient = OpenAiChatModel.builder()
+        var modelBuilder = OpenAiChatModel.builder()
                 .baseUrl(baseUrl)
                 .apiKey(effectiveKey)
                 .modelName(model)
+                .maxTokens(maxTokens)
                 .timeout(Duration.ofMillis((long) (timeout * 1000)))
-                .strictJsonSchema(format.trim().equalsIgnoreCase("json_schema"))
-                .build();
-        return new LangChain4jLlmProvider(modelClient, mapper, readPrompt(), format, maxConcurrency, releaseHeaders());
+                .strictJsonSchema(format.trim().equalsIgnoreCase("json_schema"));
+        if (!thinking.equals("auto")) {
+            modelBuilder.customParameters(Map.of("thinking", Map.of("type", thinking)));
+        }
+        OpenAiChatModel modelClient = modelBuilder.build();
+        String prompt = readPrompt();
+        metrics.registerPrompt("openai-compatible/langchain4j", model, prompt);
+        String tokenizerModel = env("MEGURI_LLM_TOKENIZER_MODEL", "gpt-4o-mini").trim();
+        return new LangChain4jLlmProvider(modelClient, mapper, prompt, format, maxConcurrency,
+                releaseHeaders(), metrics, new OpenAiProviderTokenizer(tokenizerModel), promptTokenBudget);
     }
 
     private static String readPrompt() {
@@ -109,9 +131,11 @@ public final class LlmProviderFactory {
             if (hasAdapter && (adapterRevision == null || adapterSha == null)) {
                 throw new LlmConfigurationException("adapter-backed registered LLM releases require base and adapter identity metadata");
             }
-            headers.put("X-Meguri-Model-Id", modelId);
-            headers.put("X-Meguri-Base-Revision", baseRevision);
             if (hasAdapter) {
+                // Official hosted base models such as DeepSeek cannot emit Meguri's
+                // private release headers. Only our adapter gateway owns that contract.
+                headers.put("X-Meguri-Model-Id", modelId);
+                headers.put("X-Meguri-Base-Revision", baseRevision);
                 headers.put("X-Meguri-Adapter-Revision", adapterRevision);
                 headers.put("X-Meguri-Adapter-SHA256", adapterSha);
             }

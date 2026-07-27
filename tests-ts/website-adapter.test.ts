@@ -40,6 +40,9 @@ function streamResponse(chunks: string[]): FetchResponse {
 
 function envelope(sequence: number, type: TurnEventEnvelope['type'], data = {}): TurnEventEnvelope {
   return {
+    protocol_version: '1.0',
+    event_id: `event-web-${sequence}`,
+    required: true,
     type,
     turn_id: 'turn-web-1',
     session_id: 'session-web-1',
@@ -94,6 +97,7 @@ test('website session injects trusted identity and streams a complete turn', asy
 test('website session restores an interrupted active turn after reload', async () => {
   const storage = new MemoryStorage()
   let streamAttempt = 0
+  const requestedAfter: string[] = []
   const fetchImpl: FetchLike = async (input) => {
     if (String(input).endsWith('/v1/turns')) {
       return jsonResponse({
@@ -104,12 +108,15 @@ test('website session restores an interrupted active turn after reload', async (
       }, 202)
     }
     streamAttempt += 1
+    requestedAfter.push(new URL(String(input)).searchParams.get('after_sequence') ?? '')
     if (streamAttempt === 1)
-      return streamResponse([sse(envelope(1, 'turn.started'))])
+      return streamResponse([
+        sse(envelope(1, 'turn.started')),
+        sse(envelope(2, 'text.delta', { delta: 'partial' })),
+      ])
     return streamResponse([
-      sse(envelope(1, 'turn.started')),
-      sse(envelope(2, 'text.completed', { text: 'restored' })),
-      sse(envelope(3, 'turn.completed')),
+      sse(envelope(3, 'text.completed', { text: 'restored' })),
+      sse(envelope(4, 'turn.completed')),
     ])
   }
   const api = new MeguriApiClient('http://127.0.0.1:8000', fetchImpl)
@@ -125,6 +132,53 @@ test('website session restores an interrupted active turn after reload', async (
   assert.equal(restored.sessionId, 'session-web-1')
   assert.equal(state?.text, 'restored')
   assert.equal(restored.pendingTurnId, undefined)
+  assert.deepEqual(requestedAfter, ['0', '2'])
+})
+
+test('website persists an event checkpoint before dispatching page side effects', async () => {
+  const storage = new MemoryStorage()
+  const requestedAfter: string[] = []
+  let streamAttempt = 0
+  const fetchImpl: FetchLike = async (input) => {
+    if (String(input).endsWith('/v1/turns')) {
+      return jsonResponse({
+        turn_id: 'turn-web-1',
+        session_id: 'session-web-1',
+        build_id: 'meguri_v2_02c3db0c507d7c2d',
+        status: 'accepted',
+      }, 202)
+    }
+    streamAttempt += 1
+    requestedAfter.push(new URL(String(input)).searchParams.get('after_sequence') ?? '')
+    if (streamAttempt === 1) {
+      return streamResponse([
+        sse(envelope(1, 'turn.started')),
+        sse(envelope(2, 'text.delta', { delta: 'once' })),
+      ])
+    }
+    return streamResponse([
+      sse(envelope(3, 'text.completed', { text: 'complete' })),
+      sse(envelope(4, 'turn.completed')),
+    ])
+  }
+  const api = new MeguriApiClient('http://127.0.0.1:8000', fetchImpl)
+  const identity = { meguriUserId: 'bound-user-1', storageKey: 'login-1' }
+  const first = new WebsiteMeguriSession(api, identity, storage, {
+    createSessionId: () => 'session-web-1',
+  })
+
+  await assert.rejects(first.send('hello', {
+    maxReconnects: 0,
+    onEvent(event) {
+      if (event.sequence === 2)
+        throw new Error('page effect failed')
+    },
+  }))
+
+  const restored = new WebsiteMeguriSession(api, identity, storage)
+  const state = await restored.resume({ maxReconnects: 0 })
+  assert.equal(state?.text, 'complete')
+  assert.deepEqual(requestedAfter, ['0', '2'])
 })
 
 test('website storage is isolated by host-provided identity key', () => {
@@ -136,6 +190,25 @@ test('website storage is isolated by host-provided identity key', () => {
   assert.equal(first.load()?.sessionId, 'session-a')
   assert.equal(second.load()?.sessionId, 'session-b')
   assert.doesNotMatch(JSON.stringify([...storage.values]), /bound-user/)
+})
+
+test('website migrates a valid v1 session record to a v2 checkpoint', () => {
+  const storage = new MemoryStorage()
+  const store = new WebsiteSessionStore(storage, 'login-a')
+  store.save({ version: 1, sessionId: 'session-a', activeTurnId: 'turn-a' })
+
+  new WebsiteMeguriSession(
+    new MeguriApiClient('http://127.0.0.1:8000', async () => jsonResponse({})),
+    { meguriUserId: 'bound-user-1', storageKey: 'login-a' },
+    storage,
+  )
+
+  const migrated = store.load()
+  assert.equal(migrated?.version, 2)
+  if (migrated?.version === 2) {
+    assert.equal(migrated.checkpoint.last_sequence, 0)
+    assert.deepEqual(migrated.checkpoint.processed_event_ids, [])
+  }
 })
 
 test('website adapter exposes cancellation without clearing resumable state', async () => {

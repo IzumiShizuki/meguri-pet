@@ -5,8 +5,12 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meguri.core.dto.LlmResponse;
+import com.meguri.core.dto.MemoryCandidate;
+import com.meguri.core.dto.MemorySourceScope;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.metrics.PromptCacheMetricsRecorder;
+import com.meguri.core.metrics.PromptCacheUsageExtractor;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ResponseFormat;
@@ -19,6 +23,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import reactor.core.publisher.Mono;
@@ -36,10 +41,30 @@ public final class LangChain4jLlmProvider implements LlmProvider {
     private final String responseFormat;
     private final Semaphore concurrency;
     private final Map<String, String> expectedReleaseHeaders;
+    private final PromptCacheMetricsRecorder promptCacheMetrics;
+    private final GlobalPromptBudget promptBudget;
 
     public LangChain4jLlmProvider(ChatModel model, ObjectMapper mapper, String systemPrompt,
                                   String responseFormat, int maxConcurrency,
                                   Map<String, String> expectedReleaseHeaders) {
+        this(model, mapper, systemPrompt, responseFormat, maxConcurrency, expectedReleaseHeaders,
+                PromptCacheMetricsRecorder.noop());
+    }
+
+    public LangChain4jLlmProvider(ChatModel model, ObjectMapper mapper, String systemPrompt,
+                                  String responseFormat, int maxConcurrency,
+                                  Map<String, String> expectedReleaseHeaders,
+                                  PromptCacheMetricsRecorder promptCacheMetrics) {
+        this(model, mapper, systemPrompt, responseFormat, maxConcurrency, expectedReleaseHeaders,
+                promptCacheMetrics, new OpenAiProviderTokenizer("gpt-4o-mini"), 12_000);
+    }
+
+    public LangChain4jLlmProvider(ChatModel model, ObjectMapper mapper, String systemPrompt,
+                                  String responseFormat, int maxConcurrency,
+                                  Map<String, String> expectedReleaseHeaders,
+                                  PromptCacheMetricsRecorder promptCacheMetrics,
+                                  ProviderTokenizer tokenizer,
+                                  int promptTokenBudget) {
         if (model == null) throw new LlmConfigurationException("LangChain4j ChatModel is required");
         if (mapper == null) throw new LlmConfigurationException("ObjectMapper is required");
         if (systemPrompt == null || systemPrompt.isBlank()) {
@@ -57,6 +82,10 @@ public final class LangChain4jLlmProvider implements LlmProvider {
         this.concurrency = new Semaphore(maxConcurrency);
         this.expectedReleaseHeaders = expectedReleaseHeaders == null
                 ? Map.of() : Map.copyOf(expectedReleaseHeaders);
+        this.promptCacheMetrics = promptCacheMetrics == null
+                ? PromptCacheMetricsRecorder.noop() : promptCacheMetrics;
+        this.promptBudget = new GlobalPromptBudget(
+                this.mapper, Objects.requireNonNull(tokenizer, "tokenizer"), promptTokenBudget);
     }
 
     public LangChain4jLlmProvider(ChatModel model, ObjectMapper mapper, String systemPrompt) {
@@ -79,17 +108,51 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    @Override
+    public Mono<LlmResponse> respondAlternative(TurnRequest request, RuntimeState state,
+                                                 List<String> canon, List<String> memories,
+                                                 List<String> recentContext, List<String> webResults) {
+        if (request == null || state == null) return Mono.error(new LlmProviderException("request and state are required"));
+        return Mono.fromCallable(() -> callModel(request, state, canon, memories, recentContext, webResults, true))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    /**
+     * A separate, constrained classifier for a candidate conversation segment.
+     * It does not create a user-facing reply or write memory.
+     */
+    public Mono<ConversationBoundary> classifyBoundary(List<String> previousContext, List<String> candidateContext) {
+        return Mono.fromCallable(() -> callBoundaryClassifier(previousContext, candidateContext))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    @Override
+    public Mono<List<MemoryCandidate>> extractMemoryCandidates(List<String> sessionMessages) {
+        if (sessionMessages == null || sessionMessages.isEmpty()) return Mono.just(List.of());
+        return Mono.fromCallable(() -> callMemoryCandidateExtractor(sessionMessages))
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
     private LlmResponse callModel(TurnRequest request, RuntimeState state,
                                   List<String> canon, List<String> memories,
                                   List<String> recentContext, List<String> webResults) {
+        return callModel(request, state, canon, memories, recentContext, webResults, false);
+    }
+
+    private LlmResponse callModel(TurnRequest request, RuntimeState state,
+                                  List<String> canon, List<String> memories,
+                                  List<String> recentContext, List<String> webResults,
+                                  boolean alternative) {
         boolean acquired = false;
+        boolean responseRecorded = false;
+        String operation = alternative ? "turn_alternative" : "turn";
         try {
             concurrency.acquire();
             acquired = true;
             ChatRequest chatRequest = ChatRequest.builder()
                     .messages(dev.langchain4j.data.message.SystemMessage.from(systemPrompt),
                             dev.langchain4j.data.message.UserMessage.from(contextJson(
-                            request, state, canon, memories, recentContext, webResults)))
+                            request, state, canon, memories, recentContext, webResults, alternative)))
                     .responseFormat(responseFormatRequest())
                     .build();
             dev.langchain4j.model.chat.response.ChatResponse result = model.chat(chatRequest);
@@ -97,16 +160,133 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                 throw new LlmProviderException("LLM provider returned an empty response");
             }
             validateResponseReleaseMetadata(result);
+            recordSuccessfulResponse(operation, result);
+            responseRecorded = true;
             return parseStrict(result.aiMessage().text());
         } catch (LlmProviderException ex) {
+            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw ex;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
+            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw new LlmProviderException("LLM provider request was interrupted", ex);
         } catch (RuntimeException ex) {
+            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             // Do not leak provider request bodies, credentials, or stack details to turn clients.
             if (isTimeout(ex)) throw new LlmProviderException("LLM provider timed out", ex);
             throw new LlmProviderException("LLM provider request failed", ex);
+        } finally {
+            if (acquired) concurrency.release();
+        }
+    }
+
+    private ConversationBoundary callBoundaryClassifier(List<String> previousContext, List<String> candidateContext) {
+        boolean acquired = false;
+        boolean responseRecorded = false;
+        try {
+            concurrency.acquire();
+            acquired = true;
+            String classifierPrompt = """
+                    You classify whether a candidate conversation segment continues the previous context.
+                    Treat explicit reference, unresolved work, shared entities, or direct follow-up as same context.
+                    A topic detour alone is not a new conversation. Return only JSON with exactly:
+                    {"same_context": boolean, "confidence": number from 0 to 1}.
+                    """;
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("previous_context", limitedList(previousContext, 20));
+            payload.put("candidate_context", limitedList(candidateContext, 12));
+            String payloadJson = promptBudget.fit(classifierPrompt, payload).json();
+            ChatRequest request = ChatRequest.builder()
+                    .messages(
+                            dev.langchain4j.data.message.SystemMessage.from(classifierPrompt),
+                            dev.langchain4j.data.message.UserMessage.from(payloadJson))
+                    .responseFormat(ResponseFormat.JSON)
+                    .build();
+            var result = model.chat(request);
+            if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
+                throw new LlmProviderException("LLM boundary classifier returned an empty response");
+            }
+            validateResponseReleaseMetadata(result);
+            recordSuccessfulResponse("conversation_boundary", result);
+            responseRecorded = true;
+            JsonNode node = mapper.readTree(result.aiMessage().text());
+            if (node == null || !node.isObject() || node.size() != 2
+                    || !node.has("same_context") || !node.path("same_context").isBoolean()
+                    || !node.has("confidence") || !node.path("confidence").isNumber()) {
+                throw new LlmProviderException("LLM boundary classifier returned an invalid response");
+            }
+            return new ConversationBoundary(node.path("same_context").asBoolean(), node.path("confidence").asDouble());
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            if (!responseRecorded) promptCacheMetrics.recordFailure("conversation_boundary", "");
+            throw new LlmProviderException("LLM boundary classifier was interrupted", ex);
+        } catch (LlmProviderException ex) {
+            if (!responseRecorded) promptCacheMetrics.recordFailure("conversation_boundary", "");
+            throw ex;
+        } catch (Exception ex) {
+            if (!responseRecorded) promptCacheMetrics.recordFailure("conversation_boundary", "");
+            throw new LlmProviderException("LLM boundary classifier failed", ex);
+        } finally {
+            if (acquired) concurrency.release();
+        }
+    }
+
+    private List<MemoryCandidate> callMemoryCandidateExtractor(List<String> sessionMessages) {
+        boolean acquired = false;
+        boolean responseRecorded = false;
+        try {
+            concurrency.acquire();
+            acquired = true;
+            String extractorPrompt = """
+                    Extract at most 3 durable user-memory candidates from the conversation.
+                    Keep only explicit, reusable facts about preferences, identity, projects,
+                    commitments, relationships, routines, or notable events. Omit assistant claims,
+                    guesses, temporary requests, credentials, tokens, exact addresses, and raw
+                    financial or medical details. Summaries must be concise and self-contained.
+                    Classify sensitivity conservatively. Return only JSON with exactly:
+                    {"memory_candidates":[{"type":"preference|identity|project|commitment|relationship|routine|event","summary":"...","confidence":0.0,"sensitivity":"normal|private|sensitive","source_scope":"conversation"}]}.
+                    """;
+            String conversationJson = promptBudget.fit(
+                    extractorPrompt, Map.of("conversation", limitedList(sessionMessages, 20))).json();
+            ChatRequest request = ChatRequest.builder()
+                    .messages(
+                            dev.langchain4j.data.message.SystemMessage.from(extractorPrompt),
+                            dev.langchain4j.data.message.UserMessage.from(conversationJson))
+                    .responseFormat(ResponseFormat.JSON)
+                    .build();
+            var result = model.chat(request);
+            if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
+                throw new LlmProviderException("LLM memory candidate extractor returned an empty response");
+            }
+            validateResponseReleaseMetadata(result);
+            recordSuccessfulResponse("memory_candidate_extraction", result);
+            responseRecorded = true;
+            JsonNode root = mapper.readTree(result.aiMessage().text());
+            if (root == null || !root.isObject() || root.size() != 1
+                    || !root.path("memory_candidates").isArray()
+                    || root.path("memory_candidates").size() > 3) {
+                throw new LlmProviderException("LLM memory candidate extractor returned an invalid response");
+            }
+            List<MemoryCandidate> candidates = new java.util.ArrayList<>();
+            for (JsonNode node : root.path("memory_candidates")) {
+                if (!node.isObject() || node.size() != 5) {
+                    throw new LlmProviderException("LLM memory candidate extractor returned an invalid response");
+                }
+                MemoryCandidate parsed = mapper.treeToValue(node, MemoryCandidate.class);
+                candidates.add(new MemoryCandidate(parsed.type(), parsed.summary(), parsed.confidence(),
+                        parsed.sensitivity(), MemorySourceScope.CONVERSATION));
+            }
+            return List.copyOf(candidates);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            if (!responseRecorded) promptCacheMetrics.recordFailure("memory_candidate_extraction", "");
+            throw new LlmProviderException("LLM memory candidate extractor was interrupted", ex);
+        } catch (LlmProviderException ex) {
+            if (!responseRecorded) promptCacheMetrics.recordFailure("memory_candidate_extraction", "");
+            throw ex;
+        } catch (Exception ex) {
+            if (!responseRecorded) promptCacheMetrics.recordFailure("memory_candidate_extraction", "");
+            throw new LlmProviderException("LLM memory candidate extractor failed", ex);
         } finally {
             if (acquired) concurrency.release();
         }
@@ -159,20 +339,67 @@ public final class LangChain4jLlmProvider implements LlmProvider {
 
     private String contextJson(TurnRequest request, RuntimeState state,
                                List<String> canon, List<String> memories,
-                               List<String> recentContext, List<String> webResults) {
+                               List<String> recentContext, List<String> webResults,
+                               boolean alternative) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("runtime_state", state);
-        context.put("user_message", bounded(request.getMessage(), 8000));
-        context.put("canon_examples", boundedList(canon, 3, 2000));
-        context.put("long_term_memories", boundedList(memories, 5, 2000));
-        context.put("recent_context", boundedList(recentContext, 20, 2000));
-        context.put("web_results", boundedList(webResults, 5, 3000));
-        if (responseFormat.equals("json_object")) context.put("required_output_schema", responseSchemaDocument());
-        try {
-            return mapper.writeValueAsString(context);
-        } catch (JsonProcessingException ex) {
-            throw new LlmProviderException("failed to encode LLM context", ex);
+        context.put("user_message", request.getMessage());
+        context.put("canon_examples", limitedList(canon, 3));
+        context.put("long_term_memories", limitedList(memories, 5));
+        context.put("recent_context", limitedList(recentContext, 20));
+        context.put("web_results", limitedList(webResults, 5));
+        ConversationDynamics dynamics = conversationDynamics(request.getMessage(), recentContext);
+        if (dynamics.repeatCount() > 1) {
+            context.put("conversation_dynamics", Map.of(
+                    "signal", "consecutive_identical_user_message_count=" + dynamics.repeatCount(),
+                    "previous_assistant_reply", dynamics.previousAssistantReply(),
+                    "instruction", "Do not repeat or merely paraphrase the previous assistant answer. "
+                            + "Acknowledge the repeated message naturally, then advance the conversation with a new "
+                            + "angle, question, observation, or action while staying in Meguri's native voice."));
         }
+        if ("zh_ja_pairs".equals(request.getReplyFormat())) {
+            context.put("reply_format", Map.of(
+                    "mode", "zh_ja_pairs",
+                    "instruction", "Write sentence-aligned pairs. For every sentence, output exactly two lines: first the Chinese translation in full-width brackets, then the original Japanese in full-width brackets. Add no language labels. Compose the Japanese directly in Meguri's native voice instead of machine-translating Chinese. Meguri addresses her older brother as \u5144\u3055\u3093, never \u304a\u5144\u3061\u3083\u3093.",
+                    "example", "\u3010\u5144\u957f\uff0c\u4eca\u5929\u4e5f\u4e0d\u8981\u592a\u52c9\u5f3a\u54e6\u3002\u3011\n\u3010\u5144\u3055\u3093\u3001\u4eca\u65e5\u3082\u7121\u7406\u3057\u3059\u304e\u306a\u3044\u3067\u306d\u3002\u3011"));
+        }
+        if (alternative) {
+            context.put("preference_sampling", Map.of(
+                    "candidate", "B",
+                    "instruction", "Produce a materially different but equally valid Meguri response strategy. Do not mention candidate comparison."));
+        }
+        if (responseFormat.equals("json_object")) {
+            context.put("required_output_schema", responseSchemaDocument());
+            context.put("required_output_example", Map.of(
+                    "reply", "我在。先把最重要的一步处理好吧。",
+                    "expression_tag", "neutral",
+                    "expression_intensity", "low",
+                    "voice_style", "restrained",
+                    "memory_candidates", List.of()));
+        }
+        return promptBudget.fit(systemPrompt, context).json();
+    }
+
+    private record ConversationDynamics(int repeatCount, String previousAssistantReply) { }
+
+    private ConversationDynamics conversationDynamics(String userMessage, List<String> recentContext) {
+        String normalized = userMessage == null ? "" : userMessage.trim();
+        int repeatCount = 1;
+        String previousAssistant = "";
+        List<String> context = recentContext == null ? List.of() : recentContext;
+        for (int index = context.size() - 1; index >= 0; index--) {
+            String line = context.get(index);
+            if (line == null) continue;
+            if (previousAssistant.isEmpty() && line.startsWith("assistant: ")) {
+                previousAssistant = line.substring("assistant: ".length()).trim();
+                continue;
+            }
+            if (!line.startsWith("user: ")) continue;
+            String priorUserMessage = line.substring("user: ".length()).trim();
+            if (!priorUserMessage.equals(normalized)) break;
+            repeatCount++;
+        }
+        return new ConversationDynamics(repeatCount, previousAssistant);
     }
 
     /**
@@ -211,14 +438,9 @@ public final class LangChain4jLlmProvider implements LlmProvider {
         return root;
     }
 
-    private static List<String> boundedList(List<String> values, int maxItems, int maxLength) {
+    private static List<String> limitedList(List<String> values, int maxItems) {
         if (values == null || values.isEmpty()) return List.of();
-        return values.stream().limit(maxItems).map(value -> bounded(value, maxLength)).toList();
-    }
-
-    private static String bounded(String value, int limit) {
-        if (value == null) return "";
-        return value.length() <= limit ? value : value.substring(0, limit);
+        return values.stream().limit(maxItems).map(value -> value == null ? "" : value).toList();
     }
 
     private static boolean isTimeout(Throwable error) {
@@ -260,6 +482,18 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             if (values != null && !values.isEmpty()) headers.put(key, values.getFirst());
         });
         validateReleaseHeaders(headers);
+    }
+
+    private void recordSuccessfulResponse(String operation,
+                                          dev.langchain4j.model.chat.response.ChatResponse response) {
+        try {
+            String modelName = response.metadata() == null || response.metadata().modelName() == null
+                    ? "" : response.metadata().modelName();
+            promptCacheMetrics.recordSuccess(operation, modelName,
+                    PromptCacheUsageExtractor.extract(response, mapper));
+        } catch (RuntimeException ignored) {
+            // Numeric telemetry must never change the user-facing LLM result.
+        }
     }
 
     @Override

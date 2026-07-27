@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 from services.meguri_core.deployment import ReadinessEvaluator, sha256_file
 from services.meguri_core.memory import FakeMemoryProvider
 from services.meguri_core.providers import MockLLMProvider
@@ -129,6 +131,31 @@ class ReadinessEvaluatorTests(unittest.IsolatedAsyncioTestCase):
         result = await evaluator.evaluate()
         self.assertEqual(result["status"], "ready")
         self.assertEqual(result["checks"], {"local_unmanaged": "passed"})
+
+
+class GatewayIdentityDeploymentTests(unittest.TestCase):
+    def test_managed_native_memory_core_enables_loopback_identity_headers(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        compose = yaml.safe_load(
+            (root / "ops" / "compose" / "compose.base.yaml").read_text(encoding="utf-8")
+        )
+        core_environment = compose["services"]["core"]["environment"]
+        self.assertEqual(
+            core_environment["MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS"],
+            "${MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS:?MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS is required}",
+        )
+        expected = {"dev": "false", "staging": "true", "production": "true"}
+        for environment, expected_value in expected.items():
+            values = {}
+            for line in (root / "ops" / "env" / f"{environment}.env.example").read_text(
+                encoding="utf-8"
+            ).splitlines():
+                if "=" in line and not line.lstrip().startswith("#"):
+                    key, value = line.split("=", 1)
+                    values[key] = value
+            self.assertEqual(
+                values.get("MEGURI_ALLOW_TRUSTED_IDENTITY_HEADERS"), expected_value
+            )
 
 
 if __name__ == "__main__":

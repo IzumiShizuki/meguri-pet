@@ -3,24 +3,55 @@
 spring:
   application:
     name: meguri-core-java
+  codec:
+    max-in-memory-size: 512KB
   profiles:
     default: local-mock
   main:
     web-application-type: reactive
 
 server:
+  address: ${MEGURI_CORE_BIND_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:18080}
   shutdown: graceful
 
 meguri:
   build-id: ${MEGURI_BUILD_ID:}
+  public-origin: ${MEGURI_CORE_PUBLIC_ORIGIN:http://127.0.0.1:18080}
   data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
+  turn-journal:
+    mode: ${MEGURI_TURN_JOURNAL_MODE:in-memory}
+  daily-reports:
+    directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
+  rag:
+    bridge-enabled: ${MEGURI_RAG_BRIDGE_ENABLED:false}
+    bridge-url: ${MEGURI_RAG_BRIDGE_URL:${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_RAG_TIMEOUT_MS:2500}
   memory:
     bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
     bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_MEMORY_TIMEOUT_MS:1500}
+  security:
+    auth-required: ${MEGURI_CORE_AUTH_REQUIRED:false}
+    tenant-id: ${MEGURI_TENANT_ID:meguri-local}
+    shared-token: ${MEGURI_CORE_SHARED_TOKEN:}
+    shared-token-file: ${MEGURI_CORE_SHARED_TOKEN_FILE:}
+    formal-memory-allowed-users: ${MEGURI_FORMAL_MEMORY_ALLOWED_USERS:}
+    formal-memory-allowed-clients: ${MEGURI_FORMAL_MEMORY_ALLOWED_CLIENTS:}
   llm:
     provider: ${MEGURI_LLM_PROVIDER:mock}
+    base-url: ${MEGURI_LLM_BASE_URL:}
+    model: ${MEGURI_LLM_MODEL:}
+    api-key-file: ${MEGURI_LLM_API_KEY_FILE:}
     response-format: ${MEGURI_LLM_RESPONSE_FORMAT:json_schema}
+    max-concurrency: ${MEGURI_LLM_MAX_CONCURRENCY:4}
+    max-tokens: ${MEGURI_LLM_MAX_TOKENS:1200}
+    prompt-token-budget: ${MEGURI_LLM_PROMPT_TOKEN_BUDGET:12000}
+    tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
+    thinking: ${MEGURI_LLM_THINKING:auto}
 
 management:
   endpoints:

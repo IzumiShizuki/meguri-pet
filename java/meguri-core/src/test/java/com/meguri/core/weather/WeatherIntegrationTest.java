@@ -14,7 +14,12 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
+import java.time.Duration;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,17 +46,25 @@ class WeatherIntegrationTest {
                   },
                   "hourly": {
                     "time": ["2026-07-21T08:00", "2026-07-21T09:00", "2026-07-21T10:00"],
-                    "precipitation_probability": [20, 70, 40]
+                    "precipitation_probability": [20, 70, 40],
+                    "weather_code": [2, 61, 3],
+                    "temperature_2m": [28.2, 29.1, 30.0],
+                    "relative_humidity_2m": [78, 75, 70],
+                    "wind_speed_10m": [12.4, 15.0, 18.0]
                   }
                 }
                 """);
 
         WeatherBriefing result = gateway.parse(SHANGHAI, json);
 
-        assertThat(result.summary()).isEqualTo("有雷雨");
+        assertThat(result.summary()).isEqualTo("多云");
+        assertThat(result.currentTemperatureC()).isEqualTo(28.2);
+        assertThat(result.relativeHumidityPercent()).isEqualTo(78);
+        assertThat(result.windSpeedKmh()).isEqualTo(12.4);
         assertThat(result.rainSoon()).isTrue();
         assertThat(result.nextRainProbability()).isEqualTo(70);
-        assertThat(result.briefing()).contains("上海今天有雷雨").contains("9点前后可能下雨");
+        assertThat(result.briefing()).contains("上海目前多云").contains("今天整体有雷雨")
+                .contains("湿度78%").contains("风速12.4公里/小时").contains("9点前后可能下雨");
     }
 
     @Test
@@ -94,6 +107,145 @@ class WeatherIntegrationTest {
         assertThat(gateway.calls).hasValue(0);
     }
 
+    @Test
+    void concurrentRefreshRequestsShareOneProviderCall() {
+        StubGateway gateway = new StubGateway();
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("location.json"), SHANGHAI, Clock.systemUTC());
+
+        Mono<WeatherBriefing> first = service.current(true);
+        Mono<WeatherBriefing> second = service.current(true);
+
+        assertThat(first.block()).isEqualTo(second.block());
+        assertThat(gateway.calls).hasValue(1);
+    }
+
+    @Test
+    void workHourCheckPublishesOnlyAChangedOrProblematicForecastOncePerHour() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-07-21T00:15:00Z"), ZoneOffset.UTC);
+        SequenceGateway gateway = new SequenceGateway(
+                briefing("晴朗", false, 10, 27.0, 8.0),
+                briefing("有阵雨", true, 80, 25.0, 18.0));
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("hourly-location.json"), SHANGHAI, clock, 8, 18);
+
+        service.refreshDuringWorkingHours();
+        assertThat(service.latestNotice()).isNull();
+
+        clock.advance(Duration.ofHours(1));
+        service.refreshDuringWorkingHours();
+        service.refreshDuringWorkingHours();
+
+        assertThat(gateway.calls).hasValue(2);
+        assertThat(service.latestNotice()).isNotNull();
+        assertThat(service.latestNotice().id()).isEqualTo("2026-07-21T09");
+        assertThat(service.latestNotice().message()).contains("天气有变化").contains("有阵雨");
+    }
+
+    @Test
+    void failedWorkHourRefreshCanRetryWithinTheSameHour() {
+        AtomicInteger calls = new AtomicInteger();
+        WeatherGateway gateway = location -> calls.getAndIncrement() == 0
+                ? Mono.error(new IllegalStateException("temporary outage"))
+                : Mono.just(briefing("晴朗", false, 10, 27.0, 8.0));
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("retry-location.json"), SHANGHAI,
+                Clock.fixed(Instant.parse("2026-07-21T00:15:00Z"), ZoneOffset.UTC), 8, 18);
+
+        service.refreshDuringWorkingHours();
+        service.refreshDuringWorkingHours();
+
+        assertThat(calls).hasValue(2);
+        assertThat(service.latest()).isNotNull();
+    }
+
+    @Test
+    void stableHazardDoesNotPublishANewNoticeEveryHour() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-07-21T00:15:00Z"), ZoneOffset.UTC);
+        WeatherBriefing rain = briefing("有阵雨", true, 80, 25.0, 18.0);
+        SequenceGateway gateway = new SequenceGateway(rain, rain);
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("stable-hazard.json"), SHANGHAI, clock, 8, 18);
+
+        service.refreshDuringWorkingHours();
+        String firstNoticeId = service.latestNotice().id();
+        clock.advance(Duration.ofHours(1));
+        service.refreshDuringWorkingHours();
+
+        assertThat(gateway.calls).hasValue(2);
+        assertThat(service.latestNotice().id()).isEqualTo(firstNoticeId);
+    }
+
+    @Test
+    void defaultWorkWindowIncludesNinePmAndStopsAtTenPm() {
+        MutableClock clock = new MutableClock(Instant.parse("2026-07-21T13:15:00Z"), ZoneOffset.UTC);
+        StubGateway gateway = new StubGateway();
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("evening-window.json"), SHANGHAI, clock);
+
+        service.refreshDuringWorkingHours();
+        clock.advance(Duration.ofHours(1));
+        service.refreshDuringWorkingHours();
+
+        assertThat(gateway.calls).hasValue(1);
+    }
+
+    @Test
+    void weekendIsOutsideConfiguredWorkHours() {
+        StubGateway gateway = new StubGateway();
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("weekend.json"), SHANGHAI,
+                Clock.fixed(Instant.parse("2026-07-25T01:15:00Z"), ZoneOffset.UTC), 8, 18);
+
+        service.refreshDuringWorkingHours();
+
+        assertThat(gateway.calls).hasValue(0);
+    }
+
+    private static WeatherBriefing briefing(String summary, boolean rainSoon, int rainProbability,
+                                             double currentTemperature, double windSpeed) {
+        return new WeatherBriefing(SHANGHAI, OffsetDateTime.parse("2026-07-21T08:15:00+08:00"),
+                "2026-07-21", summary, currentTemperature, 65, windSpeed,
+                24, 31, rainProbability, rainSoon,
+                rainSoon ? "2026-07-21T10:00:00+08:00" : null,
+                rainSoon ? rainProbability : null,
+                "上海目前" + summary + "。" + (rainSoon ? "临近可能下雨。" : ""));
+    }
+
+    private static final class SequenceGateway implements WeatherGateway {
+        private final AtomicInteger calls = new AtomicInteger();
+        private final Deque<WeatherBriefing> values = new ArrayDeque<>();
+
+        private SequenceGateway(WeatherBriefing... values) {
+            this.values.addAll(java.util.List.of(values));
+        }
+
+        @Override
+        public Mono<WeatherBriefing> fetch(WeatherLocation location) {
+            calls.incrementAndGet();
+            return Mono.just(values.removeFirst());
+        }
+    }
+
+    private static final class MutableClock extends Clock {
+        private final AtomicReference<Instant> instant;
+        private final ZoneId zone;
+
+        private MutableClock(Instant instant, ZoneId zone) {
+            this(new AtomicReference<>(instant), zone);
+        }
+
+        private MutableClock(AtomicReference<Instant> instant, ZoneId zone) {
+            this.instant = instant;
+            this.zone = zone;
+        }
+
+        void advance(Duration duration) { instant.updateAndGet(value -> value.plus(duration)); }
+        @Override public ZoneId getZone() { return zone; }
+        @Override public Clock withZone(ZoneId zone) { return new MutableClock(instant, zone); }
+        @Override public Instant instant() { return instant.get(); }
+    }
+
     private static final class StubGateway implements WeatherGateway {
         private final AtomicInteger calls = new AtomicInteger();
 
@@ -101,7 +253,7 @@ class WeatherIntegrationTest {
         public Mono<WeatherBriefing> fetch(WeatherLocation location) {
             calls.incrementAndGet();
             return Mono.just(new WeatherBriefing(location, OffsetDateTime.parse("2026-07-21T02:00:00+08:00"),
-                    "2026-07-21", "晴朗", 24, 31, 10, false, null, null,
+                    "2026-07-21", "晴朗", 27.0, 60, 8.0, 24, 31, 10, false, null, null,
                     location.name() + "今天晴朗。"));
         }
     }

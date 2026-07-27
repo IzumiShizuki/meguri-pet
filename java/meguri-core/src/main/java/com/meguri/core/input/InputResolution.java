@@ -26,6 +26,11 @@ public record InputResolution(
         return new InputResolution("preprocess", raw, expanded, null, null, preview, null);
     }
 
+    public static InputResolution resource(String raw, String message, String query) {
+        return new InputResolution("resource", raw, message, "resource", query,
+                "请选择要引用的本地资源；当前阶段只发送文件元数据，不读取正文。", null);
+    }
+
     public static InputResolution error(String raw, String command, String error) {
         return new InputResolution("error", raw, null, command, null, null, error);
     }

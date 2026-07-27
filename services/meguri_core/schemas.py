@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -38,6 +39,13 @@ class TurnRequest(BaseModel):
     optional_screen_context_id: str | None = None
     relationship_profile: Relationship | None = None
     formal_memory_allowed: bool = True
+    reply_format: Literal["default", "zh_ja_pairs"] = "default"
+    retrieval_mode: Literal["NONE", "FAST", "SLOW"] = "SLOW"
+
+    @field_validator("retrieval_mode", mode="before")
+    @classmethod
+    def normalize_retrieval_mode(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
 
 
 class RuntimeState(BaseModel):
@@ -88,6 +96,9 @@ class EventMetadata(BaseModel):
 
 
 class EventEnvelope(BaseModel):
+    protocol_version: Literal["1.0"] = "1.0"
+    event_id: str = Field(default_factory=lambda: f"event_{uuid4().hex[:16]}")
+    required: bool = True
     type: str
     turn_id: str
     session_id: str

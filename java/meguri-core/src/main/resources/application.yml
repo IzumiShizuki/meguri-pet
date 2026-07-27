@@ -1,36 +1,60 @@
 spring:
   application:
     name: meguri-core-java
+  codec:
+    max-in-memory-size: 512KB
   profiles:
     default: local-mock
   main:
     web-application-type: reactive
 
 server:
+  address: ${MEGURI_CORE_BIND_ADDRESS:127.0.0.1}
   port: ${SERVER_PORT:18080}
   shutdown: graceful
 
 meguri:
   build-id: ${MEGURI_BUILD_ID:}
+  public-origin: ${MEGURI_CORE_PUBLIC_ORIGIN:http://127.0.0.1:18080}
   data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
+  turn-journal:
+    mode: ${MEGURI_TURN_JOURNAL_MODE:in-memory}
+  daily-reports:
+    directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
   rag-path: ${MEGURI_RAG_PATH:../../datasets/meguri/exports/rag/chunks_train.jsonl}
+  rag:
+    bridge-enabled: ${MEGURI_RAG_BRIDGE_ENABLED:false}
+    bridge-url: ${MEGURI_RAG_BRIDGE_URL:${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_RAG_TIMEOUT_MS:2500}
   memory:
     bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
     bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
     timeout-ms: ${MEGURI_MEMORY_TIMEOUT_MS:1500}
+  security:
+    auth-required: ${MEGURI_CORE_AUTH_REQUIRED:false}
+    tenant-id: ${MEGURI_TENANT_ID:meguri-local}
+    shared-token: ${MEGURI_CORE_SHARED_TOKEN:}
+    shared-token-file: ${MEGURI_CORE_SHARED_TOKEN_FILE:}
+    formal-memory-allowed-users: ${MEGURI_FORMAL_MEMORY_ALLOWED_USERS:}
+    formal-memory-allowed-clients: ${MEGURI_FORMAL_MEMORY_ALLOWED_CLIENTS:}
   web-search:
     enabled: ${MEGURI_WEB_SEARCH_ENABLED:false}
     base-url: ${MEGURI_WEB_SEARCH_BASE_URL:https://www.bing.com/search}
     timeout-ms: ${MEGURI_WEB_SEARCH_TIMEOUT_MS:8000}
     max-results: ${MEGURI_WEB_SEARCH_MAX_RESULTS:5}
   weather:
-    enabled: ${MEGURI_WEATHER_ENABLED:false}
+    enabled: ${MEGURI_WEATHER_ENABLED:true}
     base-url: ${MEGURI_WEATHER_BASE_URL:https://api.open-meteo.com/v1/forecast}
     location-file: ${MEGURI_WEATHER_LOCATION_FILE:${user.home}/.meguri/weather-location.json}
-    location-name: ${MEGURI_WEATHER_LOCATION_NAME:上海}
-    latitude: ${MEGURI_WEATHER_LATITUDE:31.2304}
-    longitude: ${MEGURI_WEATHER_LONGITUDE:121.4737}
+    location-name: ${MEGURI_WEATHER_LOCATION_NAME:浙江省杭州市钱塘区}
+    latitude: ${MEGURI_WEATHER_LATITUDE:30.323040}
+    longitude: ${MEGURI_WEATHER_LONGITUDE:120.493941}
     timezone: ${MEGURI_WEATHER_TIMEZONE:Asia/Shanghai}
+    work-start-hour: ${MEGURI_WEATHER_WORK_START_HOUR:8}
+    work-end-hour: ${MEGURI_WEATHER_WORK_END_HOUR:22}
     poll-delay-ms: ${MEGURI_WEATHER_POLL_DELAY_MS:900000}
     rain-probability-threshold: ${MEGURI_WEATHER_RAIN_THRESHOLD:50}
     rain-lookahead-hours: ${MEGURI_WEATHER_RAIN_LOOKAHEAD_HOURS:2}
@@ -40,6 +64,31 @@ meguri:
     hour: ${MEGURI_SLEEP_MEMORY_HOUR:2}
     min-messages: ${MEGURI_SLEEP_MEMORY_MIN_MESSAGES:4}
     check-delay-ms: ${MEGURI_SLEEP_MEMORY_CHECK_DELAY_MS:60000}
+    write-candidates: ${MEGURI_SLEEP_MEMORY_WRITE_CANDIDATES:false}
+  training-feedback:
+    file: ${MEGURI_TRAINING_FEEDBACK_FILE:${user.home}/.meguri/training/behavior-feedback.jsonl}
+    training-mode-probability: ${MEGURI_TRAINING_MODE_COMPARISON_PROBABILITY:0.03}
+    normal-mode-probability: ${MEGURI_NORMAL_MODE_COMPARISON_PROBABILITY:0.001}
+  resources:
+    everything:
+      enabled: ${MEGURI_EVERYTHING_ENABLED:true}
+      es-path: ${MEGURI_EVERYTHING_ES_PATH:D:/Program Files/Everything/es.exe}
+      timeout-ms: ${MEGURI_EVERYTHING_TIMEOUT_MS:1800}
+      query-result-cap: ${MEGURI_EVERYTHING_QUERY_RESULT_CAP:200}
+      allowed-roots: ${MEGURI_EVERYTHING_ALLOWED_ROOTS:}
+  bilibili-report:
+    enabled: ${MEGURI_BILIBILI_REPORT_ENABLED:true}
+    python: ${MEGURI_BILIBILI_REPORT_PYTHON:D:/environment/anaconda3/envs/py314/python.exe}
+    script: ${MEGURI_BILIBILI_REPORT_SCRIPT:D:/program/meguri-pet/tools/generate_bilibili_browser_report.py}
+    project-root: ${MEGURI_BILIBILI_REPORT_PROJECT_ROOT:D:/program/meguri-pet}
+    timezone: ${MEGURI_BILIBILI_REPORT_TIMEZONE:Asia/Shanghai}
+    timeout-seconds: ${MEGURI_BILIBILI_REPORT_TIMEOUT_SECONDS:20}
+    mcp-url: ${MEGURI_BHF_MCP_URL:http://127.0.0.1:8899/mcp/}
+    mcp-token-file: ${MEGURI_BHF_MCP_TOKEN_FILE:${user.home}/.meguri/bilibili/mcp-token.txt}
+    mcp-timeout-seconds: ${MEGURI_BHF_MCP_TIMEOUT_SECONDS:5}
+    sync-status-file: ${MEGURI_BHF_SYNC_STATUS_FILE:${user.home}/.meguri/bilibili/state/daily-sync-latest.json}
+    chrome-history: ${MEGURI_CHROME_HISTORY:}
+    edge-history: ${MEGURI_EDGE_HISTORY:}
   billing-digest:
     file: ${MEGURI_BILLING_DIGEST_FILE:D:/program/shizuki-site/data/qianji-sync/daily-billing-digest.json}
     project-root: ${MEGURI_BILLING_REPORT_PROJECT_ROOT:D:/program/meguri-pet}
@@ -50,6 +99,17 @@ meguri:
     api-key-file: ${MEGURI_LLM_API_KEY_FILE:}
     response-format: ${MEGURI_LLM_RESPONSE_FORMAT:json_schema}
     max-concurrency: ${MEGURI_LLM_MAX_CONCURRENCY:4}
+    max-tokens: ${MEGURI_LLM_MAX_TOKENS:1200}
+    prompt-token-budget: ${MEGURI_LLM_PROMPT_TOKEN_BUDGET:12000}
+    tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
+    thinking: ${MEGURI_LLM_THINKING:auto}
+  prompt-cache-metrics:
+    source-id: ${MEGURI_PROMPT_CACHE_SOURCE_ID:meguri-desktop}
+    file: ${MEGURI_PROMPT_CACHE_METRICS_FILE:${user.home}/.meguri/metrics/prompt-cache.json}
+    export-url: ${MEGURI_PROMPT_CACHE_EXPORT_URL:}
+    export-token-file: ${MEGURI_PROMPT_CACHE_EXPORT_TOKEN_FILE:}
+    export-interval-ms: ${MEGURI_PROMPT_CACHE_EXPORT_INTERVAL_MS:60000}
+    export-timeout-ms: ${MEGURI_PROMPT_CACHE_EXPORT_TIMEOUT_MS:5000}
 
 management:
   endpoints:

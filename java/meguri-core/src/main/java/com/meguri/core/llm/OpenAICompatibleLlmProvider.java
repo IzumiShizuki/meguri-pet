@@ -2,6 +2,7 @@ package com.meguri.core.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meguri.core.dto.LlmResponse;
+import com.meguri.core.dto.MemoryCandidate;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import dev.langchain4j.model.chat.ChatModel;
@@ -45,6 +46,18 @@ public final class OpenAICompatibleLlmProvider implements LlmProvider {
     public Flux<String> stream(TurnRequest request, RuntimeState state, List<String> canon,
                                List<String> memories, List<String> recentContext) {
         return delegate.stream(request, state, canon, memories, recentContext);
+    }
+
+    @Override
+    public Mono<List<MemoryCandidate>> extractMemoryCandidates(List<String> sessionMessages) {
+        return delegate.extractMemoryCandidates(sessionMessages);
+    }
+
+    @Override
+    public Mono<LlmResponse> respondAlternative(TurnRequest request, RuntimeState state, List<String> canon,
+                                                 List<String> memories, List<String> recentContext,
+                                                 List<String> webResults) {
+        return delegate.respondAlternative(request, state, canon, memories, recentContext, webResults);
     }
 
     public void validateReleaseHeaders(Map<String, String> responseHeaders) {

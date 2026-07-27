@@ -2,6 +2,8 @@ package com.meguri.core.memory;
 
 import com.meguri.core.runtime.SessionContextStore;
 import com.meguri.core.runtime.TurnOrchestrator;
+import com.meguri.core.dto.MemoryCandidate;
+import com.meguri.core.llm.LlmProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -32,7 +34,9 @@ public final class SleepMemoryConsolidationService {
 
     private final Supplier<List<SessionContextStore.Snapshot>> snapshots;
     private final MemoryGateway memory;
+    private final LlmProvider llm;
     private final boolean enabled;
+    private final boolean writeCandidates;
     private final ZoneId zone;
     private final int hour;
     private final int minMessages;
@@ -44,23 +48,29 @@ public final class SleepMemoryConsolidationService {
     public SleepMemoryConsolidationService(
             TurnOrchestrator orchestrator,
             MemoryGateway memory,
+            LlmProvider llm,
             @Value("${meguri.sleep-memory.enabled:false}") boolean enabled,
             @Value("${meguri.sleep-memory.timezone:Asia/Shanghai}") String timezone,
             @Value("${meguri.sleep-memory.hour:2}") int hour,
-            @Value("${meguri.sleep-memory.min-messages:4}") int minMessages) {
-        this(orchestrator::sessionSnapshots, memory, enabled, ZoneId.of(timezone), hour, minMessages, Clock.systemUTC());
+            @Value("${meguri.sleep-memory.min-messages:4}") int minMessages,
+            @Value("${meguri.sleep-memory.write-candidates:false}") boolean writeCandidates) {
+        this(orchestrator::sessionSnapshots, memory, llm, enabled, ZoneId.of(timezone), hour, minMessages, Clock.systemUTC(), writeCandidates);
     }
 
     SleepMemoryConsolidationService(
             Supplier<List<SessionContextStore.Snapshot>> snapshots,
             MemoryGateway memory,
+            LlmProvider llm,
             boolean enabled,
             ZoneId zone,
             int hour,
             int minMessages,
-            Clock clock) {
+            Clock clock,
+            boolean writeCandidates) {
         this.snapshots = snapshots;
         this.memory = memory;
+        this.llm = llm;
+        this.writeCandidates = writeCandidates;
         this.enabled = enabled;
         this.zone = zone;
         this.hour = Math.max(0, Math.min(23, hour));
@@ -84,19 +94,29 @@ public final class SleepMemoryConsolidationService {
         return Flux.fromIterable(eligible)
                 .concatMap(snapshot -> {
                     RedactedSnapshot safe = redact(snapshot);
-                    return memory.summarize(new SessionSummaryRequest(
+                    List<String> extractionInput = safe.snapshot().messages().stream()
+                            .map(message -> message.role() + ": " + message.content())
+                            .toList();
+                    return llm.extractMemoryCandidates(extractionInput)
+                            .onErrorReturn(List.of())
+                            .map(candidates -> candidates == null ? List.<MemoryCandidate>of() : candidates.stream()
+                                    .limit(3)
+                                    .toList())
+                            .flatMap(candidates -> memory.summarize(new SessionSummaryRequest(
                                     safe.snapshot().userId(), safe.snapshot().clientId(), safe.snapshot().sessionId(),
-                                    safe.snapshot().messages()))
+                                    safe.snapshot().messages(), candidates, writeCandidates))
                             .onErrorReturn(SessionSummaryResult.unavailable(
                                     safe.snapshot().userId(), safe.snapshot().clientId(), safe.snapshot().sessionId()))
-                            .map(result -> new ConsolidationResult(result, safe.redactedMessages()));
+                            .map(result -> new ConsolidationResult(result, safe.redactedMessages(), candidates.size())));
                 })
                 .collectList()
                 .map(results -> {
                     int persisted = (int) results.stream().filter(result -> "persisted".equals(result.result().status())).count();
                     int redacted = results.stream().mapToInt(ConsolidationResult::redactedMessages).sum();
+                    int candidates = results.stream().mapToInt(ConsolidationResult::candidateCount).sum();
+                    int queued = results.stream().mapToInt(result -> result.result().candidateIds().size()).sum();
                     SleepMemoryReport report = new SleepMemoryReport(ranAt, eligible.size(), persisted,
-                            eligible.size() - persisted, redacted);
+                            eligible.size() - persisted, redacted, candidates, queued);
                     lastReport.set(report);
                     return report;
                 });
@@ -129,5 +149,5 @@ public final class SleepMemoryConsolidationService {
     }
 
     private record RedactedSnapshot(SessionContextStore.Snapshot snapshot, int redactedMessages) { }
-    private record ConsolidationResult(SessionSummaryResult result, int redactedMessages) { }
+    private record ConsolidationResult(SessionSummaryResult result, int redactedMessages, int candidateCount) { }
 }

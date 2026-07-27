@@ -88,11 +88,12 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(body["response_format"]["json_schema"]["schema"]["additionalProperties"])
         context = json.loads(body["messages"][1]["content"])
         self.assertEqual(context["user_message"], "hello")
+        self.assertNotIn("reply_format", context)
         self.assertEqual(context["canon_examples"], ["canon line"])
         self.assertEqual(context["long_term_memories"], ["memory line"])
         self.assertEqual(captured["headers"]["authorization"], "Bearer secret-test-key")
 
-    async def test_context_is_bounded_and_user_text_cannot_create_a_message_role(self):
+    async def test_context_keeps_whole_records_and_user_text_cannot_create_a_message_role(self):
         captured = {}
 
         async def handler(http_request: httpx.Request) -> httpx.Response:
@@ -108,9 +109,9 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
         await provider.respond(injected, state(), ["c" * 3000] * 5, ["m" * 3000] * 8)
         self.assertEqual(len(captured["messages"]), 2)
         context = json.loads(captured["messages"][1]["content"])
-        self.assertEqual(len(context["user_message"]), 8000)
+        self.assertEqual(context["user_message"], injected.message)
         self.assertEqual(len(context["canon_examples"]), 3)
-        self.assertEqual(len(context["canon_examples"][0]), 2000)
+        self.assertEqual(len(context["canon_examples"][0]), 3000)
         self.assertEqual(len(context["long_term_memories"]), 5)
 
     async def test_json_object_mode_supplies_the_committed_schema_in_context(self):
@@ -122,17 +123,86 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
 
         provider = OpenAICompatibleLlmProvider(
             base_url="https://api.deepseek.com/v1",
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             api_key="secret-test-key",
+            max_tokens=1200,
+            thinking="disabled",
             response_format="json_object",
             transport=httpx.MockTransport(handler),
         )
         await provider.respond(request(), state(), [], [])
         self.assertEqual(captured["response_format"], {"type": "json_object"})
+        self.assertEqual(captured["max_tokens"], 1200)
+        self.assertEqual(captured["thinking"], {"type": "disabled"})
+        system_prompt = captured["messages"][0]["content"]
+        self.assertIn("稳定人格锚点", system_prompt)
+        for profile in ("sibling", "pursuit", "lover", "work", "private", "sleep"):
+            self.assertIn(profile, system_prompt)
         context = json.loads(captured["messages"][1]["content"])
         schema = context["required_output_schema"]
         self.assertEqual(set(schema["required"]), set(LlmResponse.model_fields))
         self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(
+            set(context["required_output_example"]),
+            set(LlmResponse.model_fields),
+        )
+
+    async def test_zh_ja_pair_format_is_bounded_context_not_a_new_message_role(self):
+        captured = {}
+
+        async def handler(http_request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(http_request.content))
+            bilingual = {
+                **VALID_CONTENT,
+                "reply": "【我在这里。】\n【ここにいるよ。】",
+            }
+            return completion(json.dumps(bilingual, ensure_ascii=False))
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-chat",
+            api_key="secret-test-key",
+            response_format="json_object",
+            transport=httpx.MockTransport(handler),
+        )
+        bilingual_request = request().model_copy(
+            update={"client_id": "astrbot", "reply_format": "zh_ja_pairs"}
+        )
+        result = await provider.respond(bilingual_request, state(), [], [])
+        self.assertEqual(result.reply, "【我在这里。】\n【ここにいるよ。】")
+        self.assertEqual(len(captured["messages"]), 2)
+        self.assertIn("本次 AstrBot 日语学习输出格式", captured["messages"][0]["content"])
+        self.assertIn("【<中文译文>】", captured["messages"][0]["content"])
+        context = json.loads(captured["messages"][1]["content"])
+        self.assertEqual(context["reply_format"]["mode"], "zh_ja_pairs")
+        self.assertIn("【", context["reply_format"]["example"])
+        self.assertNotIn("日本語", context["reply_format"]["example"])
+
+        normal_system = provider._system_prompt_for(request())
+        self.assertNotIn("本次 AstrBot 日语学习输出格式", normal_system)
+
+    async def test_zh_ja_pair_format_normalizes_legacy_model_labels_before_returning(self):
+        async def handler(_http_request: httpx.Request) -> httpx.Response:
+            bilingual = {
+                **VALID_CONTENT,
+                "reply": "中文：我在这里。\n日本語：ここにいるよ。",
+            }
+            return completion(json.dumps(bilingual, ensure_ascii=False))
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="https://api.deepseek.com/v1",
+            model="deepseek-chat",
+            api_key="secret-test-key",
+            response_format="json_object",
+            transport=httpx.MockTransport(handler),
+        )
+        bilingual_request = request().model_copy(
+            update={"client_id": "astrbot", "reply_format": "zh_ja_pairs"}
+        )
+
+        result = await provider.respond(bilingual_request, state(), [], [])
+
+        self.assertEqual(result.reply, "【我在这里。】\n【ここにいるよ。】")
 
     async def test_invalid_json_and_extra_fields_are_rejected(self):
         values = ["not-json", json.dumps({**VALID_CONTENT, "unexpected": True})]
@@ -148,6 +218,26 @@ class OpenAICompatibleLlmProviderTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(value=value):
                 with self.assertRaises(LlmProviderError):
                     await provider.respond(request(), state(), [], [])
+
+    async def test_retries_transient_invalid_structured_output(self):
+        calls = 0
+
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            content = "not-json" if calls == 1 else json.dumps(VALID_CONTENT)
+            return completion(content)
+
+        provider = OpenAICompatibleLlmProvider(
+            base_url="http://localhost:9999/v1",
+            model="local-model",
+            transport=httpx.MockTransport(handler),
+        )
+
+        result = await provider.respond(request(), state(), [], [])
+
+        self.assertEqual(result.reply, VALID_CONTENT["reply"])
+        self.assertEqual(calls, 2)
 
     async def test_timeout_and_http_errors_are_sanitized(self):
         async def timeout_handler(http_request: httpx.Request) -> httpx.Response:
@@ -303,19 +393,23 @@ class LlmProviderConfigurationTests(unittest.TestCase):
             provider = create_llm_provider_from_env(
                 {
                     "MEGURI_LLM_PROVIDER": "openai-compatible",
-                    "MEGURI_LLM_MODEL": "deepseek-chat",
+                    "MEGURI_LLM_MODEL": "deepseek-v4-flash",
                     "MEGURI_LLM_BASE_URL": "https://api.deepseek.com/v1",
                     "MEGURI_LLM_API_KEY_FILE": str(secret),
-                    "MEGURI_MODEL_REGISTRY_ID": "external-deepseek-chat-staging",
-                    "MEGURI_LLM_BASE_MODEL_REVISION": "deepseek-chat",
+                    "MEGURI_MODEL_REGISTRY_ID": "external-deepseek-v4-flash",
+                    "MEGURI_LLM_BASE_MODEL_REVISION": "deepseek-v4-flash",
                     "MEGURI_LLM_ADAPTER_REVISION": "none",
                     "MEGURI_LLM_ADAPTER_SHA256": "none",
                     "MEGURI_LLM_RESPONSE_FORMAT": "json_object",
+                    "MEGURI_LLM_MAX_TOKENS": "1200",
+                    "MEGURI_LLM_THINKING": "disabled",
                 }
             )
             self.assertEqual(provider.provider_name, "openai-compatible")
             self.assertEqual(provider.expected_release_headers, {})
             self.assertEqual(provider.response_format, "json_object")
+            self.assertEqual(provider.max_tokens, 1200)
+            self.assertEqual(provider.thinking, "disabled")
 
     def test_adapter_backed_registered_model_requires_complete_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -364,6 +458,22 @@ class LlmProviderConfigurationTests(unittest.TestCase):
             }
             with self.assertRaisesRegex(LlmConfigurationError, "RESPONSE_FORMAT"):
                 create_llm_provider_from_env(values)
+
+    def test_deepseek_generation_controls_are_validated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            secret = Path(directory) / "llm-api-key.txt"
+            secret.write_text("test-key\n", encoding="utf-8")
+            values = {
+                "MEGURI_LLM_PROVIDER": "openai-compatible",
+                "MEGURI_LLM_MODEL": "deepseek-v4-flash",
+                "MEGURI_LLM_BASE_URL": "https://api.deepseek.com/v1",
+                "MEGURI_LLM_API_KEY_FILE": str(secret),
+                "MEGURI_LLM_RESPONSE_FORMAT": "json_object",
+            }
+            with self.assertRaisesRegex(LlmConfigurationError, "MAX_TOKENS"):
+                create_llm_provider_from_env({**values, "MEGURI_LLM_MAX_TOKENS": "0"})
+            with self.assertRaisesRegex(LlmConfigurationError, "THINKING"):
+                create_llm_provider_from_env({**values, "MEGURI_LLM_THINKING": "sometimes"})
 
     def test_response_models_reject_additional_properties(self):
         with self.assertRaises(ValidationError):

@@ -1,6 +1,7 @@
 package com.meguri.core.llm;
 
 import com.meguri.core.dto.LlmResponse;
+import com.meguri.core.dto.MemoryCandidate;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import java.util.List;
@@ -24,20 +25,36 @@ public interface LlmProvider {
         return respond(request, state, canon, memories, recentContext);
     }
 
+    /** Generate a second valid answer for explicit human preference collection. */
+    default Mono<LlmResponse> respondAlternative(TurnRequest request, RuntimeState state,
+                                                  List<String> canon, List<String> memories,
+                                                  List<String> recentContext, List<String> webResults) {
+        return respond(request, state, canon, memories, recentContext, webResults);
+    }
+
     default Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
                                       List<String> canon, List<String> memories) {
         return respond(request, state, canon, memories, List.of());
     }
 
-    /** Stream deterministic text deltas after structured output has validated. */
+    /**
+     * Structured providers expose one truthful complete delta. Implementations
+     * with native provider streaming must override this method explicitly.
+     */
     default Flux<String> stream(TurnRequest request, RuntimeState state,
                                 List<String> canon, List<String> memories,
                                 List<String> recentContext) {
         return respond(request, state, canon, memories, recentContext)
-                .flatMapMany(response -> Flux.fromIterable(TextChunks.of(response.getReply(), 18)));
+                .map(LlmResponse::getReply)
+                .flux();
     }
 
     default String providerName() {
         return getClass().getSimpleName();
+    }
+
+    /** Optional offline-safe hook for bounded session-level candidate extraction. */
+    default Mono<List<MemoryCandidate>> extractMemoryCandidates(List<String> sessionMessages) {
+        return Mono.just(List.of());
     }
 }

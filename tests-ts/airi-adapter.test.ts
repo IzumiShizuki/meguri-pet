@@ -33,6 +33,9 @@ function streamResponse(chunks: string[]): FetchResponse {
 
 function envelope(sequence: number, type: TurnEventEnvelope['type'], data = {}): TurnEventEnvelope {
   return {
+    protocol_version: '1.0',
+    event_id: `event-airi-${sequence}`,
+    required: true,
     type,
     turn_id: 'turn-1',
     session_id: 'session-1',

@@ -2,6 +2,7 @@ package com.meguri.core.weather;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -54,5 +55,14 @@ public final class WeatherController {
     @PostMapping(path = "/refresh", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<WeatherBriefing> refresh() {
         return briefing(true);
+    }
+
+    /** Desktop polling boundary for work-hour changes; unchanged notices return 204. */
+    @GetMapping(path = "/notice", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<WeatherNotice> notice(
+            @RequestParam(name = "after_id", defaultValue = "") String afterId) {
+        WeatherNotice notice = service.latestNotice();
+        if (notice == null || notice.id().equals(afterId)) return ResponseEntity.noContent().build();
+        return ResponseEntity.ok(notice);
     }
 }

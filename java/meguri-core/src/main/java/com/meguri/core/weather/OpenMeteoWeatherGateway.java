@@ -36,7 +36,7 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
         java.net.URI uri = UriComponentsBuilder.fromUriString(baseUrl)
                         .queryParam("latitude", location.latitude())
                         .queryParam("longitude", location.longitude())
-                        .queryParam("hourly", "temperature_2m,precipitation_probability,weather_code")
+                        .queryParam("hourly", "temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation_probability,weather_code")
                         .queryParam("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max")
                         .queryParam("timezone", location.timezone())
                         .queryParam("forecast_days", 2)
@@ -58,7 +58,7 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
         ZoneId zone = ZoneId.of(location.timezone());
         ZonedDateTime now = ZonedDateTime.now(clock.withZone(zone));
         String date = daily.path("time").path(0).asText();
-        int code = daily.path("weather_code").path(0).asInt();
+        int dailyCode = daily.path("weather_code").path(0).asInt();
         double min = daily.path("temperature_2m_min").path(0).asDouble();
         double max = daily.path("temperature_2m_max").path(0).asDouble();
         int maxRain = daily.path("precipitation_probability_max").path(0).asInt();
@@ -66,13 +66,36 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
         JsonNode hourly = json.path("hourly");
         JsonNode times = requireArray(hourly, "time");
         JsonNode probabilities = requireArray(hourly, "precipitation_probability");
+        JsonNode hourlyCodes = hourly.path("weather_code");
+        JsonNode hourlyTemperatures = hourly.path("temperature_2m");
+        JsonNode hourlyHumidity = hourly.path("relative_humidity_2m");
+        JsonNode hourlyWind = hourly.path("wind_speed_10m");
+        int currentCode = dailyCode;
+        Double currentTemperature = null;
+        Integer currentHumidity = null;
+        Double currentWindSpeed = null;
         String nextRainAt = null;
         Integer nextRainProbability = null;
         ZonedDateTime lookahead = now.plusHours(rainLookaheadHours);
+        ZonedDateTime currentHour = now.withMinute(0).withSecond(0).withNano(0);
         for (int index = 0; index < Math.min(times.size(), probabilities.size()); index++) {
             ZonedDateTime hour = LocalDateTime.parse(times.path(index).asText(), HOUR).atZone(zone);
+            if (hour.equals(currentHour) && hourlyCodes.isArray() && index < hourlyCodes.size()) {
+                currentCode = hourlyCodes.path(index).asInt(dailyCode);
+            }
+            if (hour.equals(currentHour)) {
+                if (hourlyTemperatures.isArray() && index < hourlyTemperatures.size()) {
+                    currentTemperature = hourlyTemperatures.path(index).asDouble();
+                }
+                if (hourlyHumidity.isArray() && index < hourlyHumidity.size()) {
+                    currentHumidity = hourlyHumidity.path(index).asInt();
+                }
+                if (hourlyWind.isArray() && index < hourlyWind.size()) {
+                    currentWindSpeed = hourlyWind.path(index).asDouble();
+                }
+            }
             int probability = probabilities.path(index).asInt();
-            if (!hour.isBefore(now.withMinute(0).withSecond(0).withNano(0))
+            if (!hour.isBefore(currentHour)
                     && !hour.isAfter(lookahead) && probability >= rainThreshold) {
                 nextRainAt = hour.toOffsetDateTime().toString();
                 nextRainProbability = probability;
@@ -80,14 +103,19 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
             }
         }
 
-        String summary = weatherCodeLabel(code);
-        String briefing = "%s今天%s，%.0f～%.0f℃，最高降雨概率%d%%。".formatted(
-                location.name(), summary, min, max, maxRain);
+        String summary = weatherCodeLabel(currentCode);
+        String dailySummary = weatherCodeLabel(dailyCode);
+        String briefing = "%s目前%s；今天整体%s，%.0f～%.0f℃，最高降雨概率%d%%。".formatted(
+                location.name(), summary, dailySummary, min, max, maxRain);
+        if (currentTemperature != null) briefing += "当前%.1f℃。".formatted(currentTemperature);
+        if (currentHumidity != null) briefing += "湿度%d%%。".formatted(currentHumidity);
+        if (currentWindSpeed != null) briefing += "风速%.1f公里/小时。".formatted(currentWindSpeed);
         if (nextRainAt != null) {
             ZonedDateTime rainTime = OffsetDateTime.parse(nextRainAt).atZoneSameInstant(zone);
             briefing += "预计%s点前后可能下雨，出门记得带伞。".formatted(rainTime.getHour());
         }
         return new WeatherBriefing(location, OffsetDateTime.now(clock.withZone(zone)), date, summary,
+                currentTemperature, currentHumidity, currentWindSpeed,
                 min, max, maxRain, nextRainAt != null, nextRainAt, nextRainProbability, briefing);
     }
 

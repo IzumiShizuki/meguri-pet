@@ -2,6 +2,10 @@ package com.meguri.core.memory;
 
 import com.meguri.core.dto.LlmResponse;
 import com.meguri.core.dto.MemoryCandidate;
+import com.meguri.core.dto.MemorySensitivity;
+import com.meguri.core.dto.MemorySourceScope;
+import com.meguri.core.dto.MemoryType;
+import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.runtime.SessionContextStore;
 import org.junit.jupiter.api.Test;
@@ -27,8 +31,8 @@ class SleepMemoryConsolidationServiceTest {
                 new SessionContextStore.Message("assistant", "我不会保存凭据")));
         StubMemoryGateway memory = new StubMemoryGateway();
         SleepMemoryConsolidationService service = new SleepMemoryConsolidationService(
-                () -> List.of(snapshot), memory, true, ZoneId.of("Asia/Shanghai"), 2, 4,
-                Clock.fixed(Instant.parse("2026-07-21T18:10:00Z"), ZoneOffset.UTC));
+                () -> List.of(snapshot), memory, new StubLlmProvider(), true, ZoneId.of("Asia/Shanghai"), 2, 4,
+                Clock.fixed(Instant.parse("2026-07-21T18:10:00Z"), ZoneOffset.UTC), false);
 
         SleepMemoryReport report = service.consolidateNow().block();
 
@@ -38,6 +42,21 @@ class SleepMemoryConsolidationServiceTest {
         assertThat(memory.last.get().messages()).extracting(SessionContextStore.Message::content)
                 .contains("[已省略可能包含敏感凭据的消息]")
                 .doesNotContain("api_key=do-not-store");
+        assertThat(memory.last.get().structuredCandidates()).hasSize(1);
+        assertThat(report.structuredCandidates()).isEqualTo(1);
+    }
+
+    private static final class StubLlmProvider implements com.meguri.core.llm.LlmProvider {
+        @Override public Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
+                                                     List<String> canon, List<String> memories,
+                                                     List<String> recentContext) {
+            return Mono.error(new UnsupportedOperationException("not used by sleep consolidation"));
+        }
+
+        @Override public Mono<List<MemoryCandidate>> extractMemoryCandidates(List<String> messages) {
+            return Mono.just(List.of(new MemoryCandidate(MemoryType.PROJECT, "用户正在维护 Meguri 项目",
+                    0.95, MemorySensitivity.NORMAL, MemorySourceScope.CONVERSATION)));
+        }
     }
 
     private static final class StubMemoryGateway implements MemoryGateway {

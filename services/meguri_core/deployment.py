@@ -179,6 +179,15 @@ class ReadinessEvaluator:
             read_secret(self.env, "MEGURI_ASTRBOT_SHARED_TOKEN")
             llm_required = self.env.get("MEGURI_LLM_PROVIDER", "mock").strip().lower() != "mock"
             read_secret(self.env, "MEGURI_LLM_API_KEY", required=llm_required)
+            uses_dashscope = any(
+                self.env.get(name, "").strip().lower() == "dashscope"
+                for name in (
+                    "MEGURI_EMBEDDING_BACKEND",
+                    "MEGURI_RERANK_BACKEND",
+                    "MEGURI_RAG_BACKEND",
+                )
+            )
+            read_secret(self.env, "MEGURI_DASHSCOPE_API_KEY", required=uses_dashscope)
 
         check("secret_files", secrets)
 

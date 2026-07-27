@@ -7,6 +7,7 @@ import com.meguri.core.dto.RuntimeOverride;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.runtime.TurnOrchestrator;
 import com.meguri.core.runtime.TurnRecord;
+import com.meguri.core.security.CoreIdentityVerifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -60,6 +61,13 @@ class RuntimeWebControllerTest {
         orchestrator.turn(id).getDone().join();
         assertThat(orchestrator.eventsFor("s-test")).isNotEmpty();
         assertThat(orchestrator.eventsFor("s-test").get(0).getSequence()).isEqualTo(1L);
+        assertThat(orchestrator.eventsFor("s-test"))
+                .allSatisfy(event -> {
+                    assertThat(event.getProtocolVersion()).isEqualTo("1.0");
+                    assertThat(event.getEventId()).startsWith("event_");
+                });
+        assertThat(orchestrator.eventsFor("s-test").stream().map(event -> event.getEventId()).distinct().toList())
+                .hasSize(orchestrator.eventsFor("s-test").size());
         assertThat(orchestrator.eventsFor("s-test").get(orchestrator.eventsFor("s-test").size() - 1).getType())
                 .isEqualTo("turn.completed");
 
@@ -70,6 +78,27 @@ class RuntimeWebControllerTest {
                 .expectHeader().contentTypeCompatibleWith("text/event-stream")
                 .expectBody(String.class)
                 .value(body -> assertThat(body).contains("text.delta").contains("turn.completed"));
+    }
+
+    @Test
+    void rejectsIdempotencyKeyReuseWithDifferentPayload() {
+        client.post().uri("/v1/turns")
+                .header("Idempotency-Key", "conflict")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"user_id":"u-test","client_id":"website","session_id":"s-conflict",
+                         "message":"first","client_capabilities":{"text":true,"sprite":true}}
+                        """)
+                .exchange().expectStatus().isAccepted();
+
+        client.post().uri("/v1/turns")
+                .header("Idempotency-Key", "conflict")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {"user_id":"u-test","client_id":"website","session_id":"s-conflict",
+                         "message":"different","client_capabilities":{"text":true,"sprite":true}}
+                        """)
+                .exchange().expectStatus().isEqualTo(409);
     }
 
     @Test
@@ -111,5 +140,36 @@ class RuntimeWebControllerTest {
         record.getDone().join();
         var types = orchestrator.eventsFor("voice-session").stream().map(event -> event.getType()).toList();
         assertThat(types).containsSubsequence("text.completed", "tts.requested", "turn.completed");
+    }
+
+    @Test
+    void hostedTurnStatusAndCancellationRequireResourceOwnership() {
+        CoreIdentityVerifier verifier = new CoreIdentityVerifier(
+                true, "tenant-a", "", "shared-secret");
+        WebTestClient hosted = WebTestClient.bindToController(
+                new RuntimeWebController(orchestrator, orchestrator,
+                        new ObjectMapper().registerModule(new JavaTimeModule()), verifier)).build();
+        TurnRecord record = orchestrator.start(new TurnRequest(
+                "owner", "website", "owned-session", "hello"));
+
+        hosted.get().uri("/v1/turns/{id}", record.getTurnId())
+                .headers(headers -> identityHeaders(headers, "attacker", "owned-session"))
+                .exchange().expectStatus().isForbidden();
+        hosted.post().uri("/v1/turns/{id}/cancel", record.getTurnId())
+                .headers(headers -> identityHeaders(headers, "attacker", "owned-session"))
+                .exchange().expectStatus().isForbidden();
+
+        hosted.get().uri("/v1/turns/{id}", record.getTurnId())
+                .headers(headers -> identityHeaders(headers, "owner", "owned-session"))
+                .exchange().expectStatus().isOk();
+    }
+
+    private static void identityHeaders(org.springframework.http.HttpHeaders headers,
+                                        String userId, String sessionId) {
+        headers.setBearerAuth("shared-secret");
+        headers.set("X-Meguri-Tenant-ID", "tenant-a");
+        headers.set("X-Meguri-User-ID", userId);
+        headers.set("X-Meguri-Client-ID", "website");
+        headers.set("X-Meguri-Session-ID", sessionId);
     }
 }

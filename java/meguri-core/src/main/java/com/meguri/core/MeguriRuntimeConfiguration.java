@@ -3,8 +3,16 @@ package com.meguri.core;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
+import com.meguri.core.metrics.PromptCacheMetricsService;
 import com.meguri.core.rag.MockRagProvider;
+import com.meguri.core.rag.PythonRagGateway;
 import com.meguri.core.rag.RagProvider;
+import com.meguri.core.runtime.InMemoryTurnJournal;
+import com.meguri.core.runtime.PostgresTurnJournal;
+import com.meguri.core.runtime.NoopSessionContextPersistence;
+import com.meguri.core.runtime.PostgresSessionContextPersistence;
+import com.meguri.core.runtime.SessionContextPersistence;
+import com.meguri.core.runtime.TurnJournal;
 import com.meguri.core.websearch.DuckDuckGoWebSearchGateway;
 import com.meguri.core.websearch.BingRssWebSearchGateway;
 import com.meguri.core.websearch.NoopWebSearchGateway;
@@ -14,8 +22,11 @@ import com.meguri.core.weather.WeatherGateway;
 import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import reactor.netty.http.client.HttpClient;
@@ -28,17 +39,56 @@ import java.util.Map;
 @Configuration
 public class MeguriRuntimeConfiguration {
     @Bean
-    public LlmProvider meguriLlmProvider(ObjectMapper mapper) {
-        return LlmProviderFactory.createFromEnvironment(mapper);
+    public LlmProvider meguriLlmProvider(ObjectMapper mapper, PromptCacheMetricsService metrics) {
+        return LlmProviderFactory.createFromEnvironment(mapper, metrics);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "in-memory", matchIfMissing = true)
+    public TurnJournal meguriTurnJournal(ObjectMapper mapper) {
+        return new InMemoryTurnJournal(mapper);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "postgres")
+    public TurnJournal meguriPostgresTurnJournal(
+            JdbcTemplate jdbcTemplate,
+            TransactionTemplate transactions,
+            ObjectMapper mapper,
+            @Value("${meguri.build-id:meguri_local_mock}") String buildId) {
+        String recoveryBuildId = buildId == null || buildId.isBlank() ? "meguri_local_mock" : buildId.trim();
+        return new PostgresTurnJournal(jdbcTemplate, mapper, transactions, recoveryBuildId);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "in-memory", matchIfMissing = true)
+    public SessionContextPersistence meguriSessionContextPersistence() {
+        return new NoopSessionContextPersistence();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "postgres")
+    public SessionContextPersistence meguriPostgresSessionContextPersistence(
+            JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
+        return new PostgresSessionContextPersistence(jdbcTemplate, mapper);
     }
 
     @Bean
     public RagProvider meguriRagProvider(
             @Value("${meguri.data-root:../../datasets/meguri}") String dataRoot,
             @Value("${meguri.build-id:meguri_local_mock}") String buildId,
+            @Value("${meguri.rag.bridge-enabled:false}") boolean bridgeEnabled,
+            @Value("${meguri.rag.bridge-url:http://127.0.0.1:8000}") String bridgeUrl,
+            @Value("${meguri.rag.bridge-token:}") String bridgeToken,
+            @Value("${meguri.rag.bridge-token-file:}") String bridgeTokenFile,
+            @Value("${meguri.rag.timeout-ms:2500}") long timeoutMs,
+            WebClient.Builder webClientBuilder,
             ObjectMapper mapper) {
         Path root = Path.of(dataRoot);
-        return new MockRagProvider(root, mapper, resolveBuildId(root, buildId, mapper));
+        RagProvider fallback = new MockRagProvider(root, mapper, resolveBuildId(root, buildId, mapper));
+        if (!bridgeEnabled) return fallback;
+        return new PythonRagGateway(webClientBuilder, bridgeUrl, bridgeToken,
+                bridgeTokenFile, timeoutMs, fallback);
     }
 
     @Bean

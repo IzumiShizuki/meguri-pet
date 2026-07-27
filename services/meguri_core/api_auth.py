@@ -22,7 +22,7 @@ class ApiPrincipal(StrictModel):
     session_id: str | None = None
     actor_type: ActorType = ActorType.USER
     actor_id: str
-    formal_memory_allowed: bool = True
+    formal_memory_allowed: bool = False
 
     def memory_actor(self) -> MemoryActor:
         return MemoryActor(actor_type=self.actor_type, actor_id=self.actor_id)
@@ -63,10 +63,9 @@ async def get_api_principal(request: Request) -> ApiPrincipal:
     return ApiPrincipal(
         **required_headers,
         actor_type=request.headers.get("X-Meguri-Actor-Type", "user"),
-        formal_memory_allowed=request.headers.get(
-            "X-Meguri-Formal-Memory-Allowed", "true"
-        ).lower()
-        == "true",
+        # Trusted proxy headers may establish request scope, but only a
+        # server-resolved principal may grant access to authoritative memory.
+        formal_memory_allowed=False,
         session_id=request.headers.get("X-Meguri-Session-ID"),
     )
 

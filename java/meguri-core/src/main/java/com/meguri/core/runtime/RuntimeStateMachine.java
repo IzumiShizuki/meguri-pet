@@ -9,6 +9,7 @@ import com.meguri.core.dto.TurnRequest;
 
 import java.time.Clock;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -26,8 +27,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>The state rules intentionally mirror {@code services/meguri_core/runtime.py}:
  * night hours use outfit 04/sleep, daytime weekends use outfit 02/private, normal
- * work hours use outfit 01/work, and evening uses outfit 03/private. Overrides are
- * scoped by user (or user:client) and expire atomically when observed.</p>
+ * work hours use outfit 01/work, and evening uses outfit 03/private. Temporal mode
+ * never changes the user-level relationship. Presentation overrides may be scoped
+ * by user or user:client, while relationship overrides are accepted only at the
+ * shared user scope and expire atomically when observed.</p>
  */
 public final class RuntimeStateMachine {
     public static final ZoneId DEFAULT_ZONE = ZoneId.of("Asia/Shanghai");
@@ -39,8 +42,11 @@ public final class RuntimeStateMachine {
     private static final Set<String> ALLOWED_OUTFITS = Set.of("01", "02", "03", "04", "05", "06");
 
     private final Map<String, OverrideEntry> overrides = new ConcurrentHashMap<>();
+    private final Map<String, StabilizedTemporalState> temporalStates = new ConcurrentHashMap<>();
     private final Clock clock;
     private final ZoneId zone;
+    private final Duration debounce;
+    private final Duration cooldown;
 
     public RuntimeStateMachine() {
         this(Clock.systemUTC(), DEFAULT_ZONE);
@@ -51,8 +57,14 @@ public final class RuntimeStateMachine {
     }
 
     public RuntimeStateMachine(Clock clock, ZoneId zone) {
+        this(clock, zone, Duration.ofSeconds(30), Duration.ofMinutes(2));
+    }
+
+    public RuntimeStateMachine(Clock clock, ZoneId zone, Duration debounce, Duration cooldown) {
         this.clock = Objects.requireNonNull(clock, "clock");
         this.zone = Objects.requireNonNull(zone, "zone");
+        this.debounce = positive(debounce, "debounce");
+        this.cooldown = positive(cooldown, "cooldown");
     }
 
     public Map<String, OverrideEntry> overrides() {
@@ -82,6 +94,7 @@ public final class RuntimeStateMachine {
 
     public void clear() {
         overrides.clear();
+        temporalStates.clear();
     }
 
     public RuntimeState stateFor(TurnRequest request) {
@@ -91,51 +104,49 @@ public final class RuntimeStateMachine {
                 || now.getDayOfWeek() == DayOfWeek.SUNDAY;
         double hour = now.getHour() + now.getMinute() / 60.0d;
 
-        String outfit;
-        String mode;
+        String candidateOutfit;
+        String candidateMode;
         if (hour >= 22.0d || hour < 8.0d) {
-            outfit = "04";
-            mode = "sleep";
+            candidateOutfit = "04";
+            candidateMode = "sleep";
         } else if (hour < 18.0d) {
-            outfit = holiday ? "02" : "01";
-            mode = holiday ? "private" : "work";
+            candidateOutfit = holiday ? "02" : "01";
+            candidateMode = holiday ? "private" : "work";
         } else {
-            outfit = "03";
-            mode = "private";
+            candidateOutfit = "03";
+            candidateMode = "private";
         }
-        String relationship = (mode.equals("private") || mode.equals("sleep")) ? "lover" : "sibling";
-
         String userId = stringValue(request, "getUserId", "userId");
         String clientId = stringValue(request, "getClientId", "clientId");
-        OverrideEntry entry = overrides.get(userId);
-        if (entry == null) {
-            entry = overrides.get(userId + ":" + clientId);
-        }
-        if (entry != null) {
-            Instant expiry = entry.expiresAt();
-            if (expiry != null && expiry.isBefore(now.toInstant())) {
-                // Remove only the entry observed by this thread; a newer override wins.
-                overrides.remove(entry.scope(), entry);
-            } else {
-                RuntimeOverride override = entry.override();
-                String overrideOutfit = stringValue(override, "getOutfitCode", "outfitCode");
-                String overrideMode = stringValue(override, "getMode", "mode");
-                String overrideRelationship = stringValue(override, "getRelationshipProfile", "relationshipProfile");
-                if (overrideOutfit != null && !overrideOutfit.isBlank()) {
-                    outfit = overrideOutfit;
-                }
-                if (overrideMode != null && !overrideMode.isBlank()) {
-                    mode = overrideMode;
-                }
-                if (overrideRelationship != null && !overrideRelationship.isBlank()) {
-                    relationship = overrideRelationship;
-                }
-            }
-        }
+        TemporalState temporal = stabilize(
+                userId + ":" + clientId,
+                new TemporalState(candidateOutfit, candidateMode),
+                now.toInstant());
+        String outfit = temporal.outfit();
+        String mode = temporal.mode();
+        String relationship = Relationship.SIBLING.value();
 
-        String requestedRelationship = stringValue(request, "getRelationshipProfile", "relationshipProfile");
-        if (requestedRelationship != null && !requestedRelationship.isBlank()) {
-            relationship = requestedRelationship;
+        OverrideEntry userEntry = activeOverride(userId, now.toInstant());
+        OverrideEntry clientEntry = activeOverride(userId + ":" + clientId, now.toInstant());
+        RuntimeOverride userOverride = userEntry == null ? null : userEntry.override();
+        RuntimeOverride clientOverride = clientEntry == null ? null : clientEntry.override();
+
+        String overrideOutfit = firstNonBlank(
+                stringValue(userOverride, "getOutfitCode", "outfitCode"),
+                stringValue(clientOverride, "getOutfitCode", "outfitCode"));
+        String overrideMode = firstNonBlank(
+                stringValue(userOverride, "getMode", "mode"),
+                stringValue(clientOverride, "getMode", "mode"));
+        String overrideRelationship = stringValue(
+                userOverride, "getRelationshipProfile", "relationshipProfile");
+        if (overrideOutfit != null) {
+            outfit = overrideOutfit;
+        }
+        if (overrideMode != null) {
+            mode = overrideMode;
+        }
+        if (overrideRelationship != null && !overrideRelationship.isBlank()) {
+            relationship = overrideRelationship;
         }
 
         boolean desktopClient = "desktop_pet".equals(clientId) || "airi".equals(clientId);
@@ -156,6 +167,18 @@ public final class RuntimeStateMachine {
                 tags);
     }
 
+    private OverrideEntry activeOverride(String scope, Instant now) {
+        OverrideEntry entry = overrides.get(scope);
+        if (entry == null) return null;
+        Instant expiry = entry.expiresAt();
+        if (expiry != null && !expiry.isAfter(now)) {
+            // Remove only the entry observed by this thread; a newer override wins.
+            overrides.remove(entry.scope(), entry);
+            return null;
+        }
+        return entry;
+    }
+
     public RuntimeState getStateFor(TurnRequest request) {
         return stateFor(request);
     }
@@ -165,6 +188,43 @@ public final class RuntimeStateMachine {
             throw new IllegalArgumentException("override scope must not be blank");
         }
         return scope.trim();
+    }
+
+    private static String firstNonBlank(String first, String second) {
+        if (first != null && !first.isBlank()) return first;
+        if (second != null && !second.isBlank()) return second;
+        return null;
+    }
+
+    private TemporalState stabilize(String scope, TemporalState candidate, Instant now) {
+        StabilizedTemporalState state = temporalStates.computeIfAbsent(
+                scope, ignored -> new StabilizedTemporalState(candidate, now));
+        synchronized (state) {
+            if (state.applied.equals(candidate)) {
+                state.pending = candidate;
+                state.pendingSince = now;
+                return state.applied;
+            }
+            if (!state.pending.equals(candidate)) {
+                state.pending = candidate;
+                state.pendingSince = now;
+                return state.applied;
+            }
+            if (Duration.between(state.changedAt, now).compareTo(cooldown) < 0
+                    || Duration.between(state.pendingSince, now).compareTo(debounce) < 0) {
+                return state.applied;
+            }
+            state.applied = candidate;
+            state.changedAt = now;
+            return state.applied;
+        }
+    }
+
+    private static Duration positive(Duration value, String field) {
+        if (value == null || value.isNegative() || value.isZero()) {
+            throw new IllegalArgumentException(field + " must be positive");
+        }
+        return value;
     }
 
     private static void validateOverride(RuntimeOverride override) {
@@ -251,6 +311,22 @@ public final class RuntimeStateMachine {
     public record OverrideEntry(RuntimeOverride override, Instant expiresAt, String scope) {
         public OverrideEntry(RuntimeOverride override, Instant expiresAt) {
             this(override, expiresAt, "");
+        }
+    }
+
+    private record TemporalState(String outfit, String mode) { }
+
+    private static final class StabilizedTemporalState {
+        private TemporalState applied;
+        private TemporalState pending;
+        private Instant pendingSince;
+        private Instant changedAt;
+
+        private StabilizedTemporalState(TemporalState initial, Instant now) {
+            this.applied = initial;
+            this.pending = initial;
+            this.pendingSince = now;
+            this.changedAt = now;
         }
     }
 }

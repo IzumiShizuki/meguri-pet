@@ -29,6 +29,7 @@ DATA_ROOT = resolve_data_root(env_value=os.getenv("MEGURI_DATA_ROOT"))
 BUILD_REPORT = DATA_ROOT / "build_report.json"
 SYSTEM_PROMPT_PATH = CONFIG_ROOT / "meguri_system_prompt.txt"
 RESPONSE_SCHEMA_PATH = CONFIG_ROOT / "meguri_response.schema.json"
+RAG_QUERY_ALIASES_PATH = CONFIG_ROOT / "meguri_rag_query_aliases.json"
 
 
 def load_build_id() -> str:

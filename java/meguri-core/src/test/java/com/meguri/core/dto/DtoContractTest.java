@@ -2,6 +2,7 @@ package com.meguri.core.dto;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.meguri.core.harness.retrieval.RetrievalMode;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -19,8 +20,33 @@ class DtoContractTest {
                 """, TurnRequest.class);
         assertEquals("u1", request.getUserId());
         assertEquals(true, request.getClientCapabilities().isVoice());
-        assertEquals(true, request.isFormalMemoryAllowed());
+        assertEquals(false, request.isFormalMemoryAllowed());
+        assertEquals(RetrievalMode.SLOW, request.retrievalMode());
         assertEquals("airi", mapper.readTree(mapper.writeValueAsString(request)).get("client_id").asText());
+        assertEquals("SLOW", mapper.readTree(mapper.writeValueAsString(request)).get("retrieval_mode").asText());
+    }
+
+    @Test
+    void retrievalModeIsTypedCaseInsensitiveAndRejectsUnknownValues() throws Exception {
+        TurnRequest request = mapper.readValue("""
+                {"user_id":"u1","client_id":"website","session_id":"s1","message":"hello",
+                 "retrieval_mode":"fast"}
+                """, TurnRequest.class);
+
+        assertEquals(RetrievalMode.FAST, request.retrievalMode());
+        assertThrows(Exception.class, () -> mapper.readValue("""
+                {"user_id":"u1","client_id":"website","session_id":"s1","message":"hello",
+                 "retrieval_mode":"turbo"}
+                """, TurnRequest.class));
+    }
+
+    @Test
+    void memoryPermissionCanOnlyBeReboundByAnAuthenticatedBoundary() throws Exception {
+        TurnRequest request = mapper.readValue(
+                "{\"user_id\":\"u1\",\"client_id\":\"airi\",\"session_id\":\"s1\",\"message\":\"hello\",\"formal_memory_allowed\":true}",
+                TurnRequest.class);
+        assertEquals(true, request.isFormalMemoryAllowed());
+        assertEquals(false, request.withFormalMemoryAllowed(false).isFormalMemoryAllowed());
     }
 
     @Test

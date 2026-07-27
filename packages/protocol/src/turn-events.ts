@@ -1,5 +1,7 @@
 export const turnEventTypes = [
   'turn.started',
+  'turn.stage.changed',
+  'retrieval.completed',
   'text.delta',
   'text.completed',
   'semantic.completed',
@@ -9,6 +11,7 @@ export const turnEventTypes = [
   'memory.write.completed',
   'tool.started',
   'tool.completed',
+  'training.candidates.ready',
   'tts.requested',
   'tts.audio.delta',
   'tts.completed',
@@ -18,7 +21,8 @@ export const turnEventTypes = [
   'turn.failed',
 ] as const
 
-export type TurnEventType = typeof turnEventTypes[number]
+export type KnownTurnEventType = typeof turnEventTypes[number]
+export type TurnEventType = KnownTurnEventType | (string & {})
 export type ExpressionIntensity = 'low' | 'medium' | 'high'
 
 export interface ClientCapabilities {
@@ -32,11 +36,16 @@ export interface TurnRequest {
   user_id: string
   client_id: 'airi' | 'astrbot' | 'desktop_pet' | 'website'
   session_id: string
+  parent_session_id?: string
   message: string
   attachments?: Array<Record<string, unknown>>
   client_capabilities: ClientCapabilities
   optional_screen_context_id?: string
   relationship_profile?: 'sibling' | 'pursuit' | 'lover'
+  formal_memory_allowed?: boolean
+  training_mode?: boolean
+  reply_format?: 'default' | 'zh_ja_pairs'
+  retrieval_mode?: 'NONE' | 'FAST' | 'SLOW'
 }
 
 export interface TurnCreateResponse {
@@ -54,6 +63,9 @@ export interface EventMetadata {
 }
 
 export interface TurnEventEnvelope<T extends Record<string, unknown> = Record<string, unknown>> {
+  protocol_version: '1.0'
+  event_id: string
+  required: boolean
   type: TurnEventType
   turn_id: string
   session_id: string
@@ -67,8 +79,17 @@ const eventTypeSet = new Set<string>(turnEventTypes)
 export function parseTurnEventEnvelope(value: unknown): TurnEventEnvelope {
   if (!isRecord(value))
     throw new TypeError('event envelope must be an object')
-  if (!eventTypeSet.has(stringField(value, 'type')))
-    throw new TypeError(`unsupported event type: ${String(value.type)}`)
+  const protocolVersion = stringField(value, 'protocol_version')
+  if (protocolVersion !== '1.0')
+    throw new TypeError(`unsupported protocol version: ${protocolVersion}`)
+  stringField(value, 'event_id')
+  const type = stringField(value, 'type')
+  if (typeof value.required !== 'boolean')
+    throw new TypeError('required must be a boolean')
+  if (!eventTypeSet.has(type) && value.required)
+    throw new TypeError(`unsupported required event type: ${type}`)
+  stringField(value, 'turn_id')
+  stringField(value, 'session_id')
   const sequence = value.sequence
   if (!Number.isSafeInteger(sequence) || Number(sequence) < 1)
     throw new TypeError('event sequence must be a positive integer')
@@ -82,7 +103,7 @@ export function parseTurnEventEnvelope(value: unknown): TurnEventEnvelope {
   return value as unknown as TurnEventEnvelope
 }
 
-export function isTerminalEvent(type: TurnEventType): boolean {
+export function isTerminalEvent(type: string): boolean {
   return type === 'turn.completed' || type === 'turn.cancelled' || type === 'turn.failed'
 }
 

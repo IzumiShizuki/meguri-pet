@@ -12,6 +12,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.time.Duration;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -29,10 +31,11 @@ public final class PythonMemoryGateway implements MemoryGateway {
             ObjectMapper mapper,
             @Value("${meguri.memory.bridge-url:http://127.0.0.1:8000}") String baseUrl,
             @Value("${meguri.memory.bridge-token:}") String token,
+            @Value("${meguri.memory.bridge-token-file:}") String tokenFile,
             @Value("${meguri.memory.timeout-ms:1500}") long timeoutMs) {
         this.client = builder.baseUrl(baseUrl).build();
         this.mapper = mapper;
-        this.token = token == null ? "" : token.trim();
+        this.token = readToken(tokenFile, token);
         this.timeout = Duration.ofMillis(Math.max(timeoutMs, 50));
     }
 
@@ -113,7 +116,9 @@ public final class PythonMemoryGateway implements MemoryGateway {
                 "user_id", request.userId(),
                 "client_id", request.clientId(),
                 "session_id", request.sessionId(),
-                "messages", request.messages());
+                "messages", request.messages(),
+                "structured_candidates", request.structuredCandidates(),
+                "write_candidates", request.writeCandidates());
         return post("/internal/memory/session-summary", payload)
                 .map(node -> new SessionSummaryResult(
                         "persisted",
@@ -121,7 +126,10 @@ public final class PythonMemoryGateway implements MemoryGateway {
                         node.path("client_id").asText(request.clientId()),
                         node.path("session_id").asText(request.sessionId()),
                         node.path("summary").asText(""),
-                        node.path("message_count").asInt(0)))
+                        node.path("message_count").asInt(0),
+                        mapper.convertValue(node.path("structured_candidates"), List.class),
+                        strings(node.path("candidate_ids")),
+                        node.path("candidate_status").asText("audit_only")))
                 .onErrorReturn(SessionSummaryResult.unavailable(
                         request.userId(), request.clientId(), request.sessionId()));
     }
@@ -139,6 +147,22 @@ public final class PythonMemoryGateway implements MemoryGateway {
 
     private boolean enabled() {
         return !token.isBlank();
+    }
+
+    private static String readToken(String tokenFile, String inlineToken) {
+        String configured = tokenFile == null ? "" : tokenFile.trim();
+        if (!configured.isBlank()) {
+            try {
+                Path path = Path.of(configured);
+                if (path.isAbsolute() && Files.isRegularFile(path)) {
+                    String value = Files.readString(path).trim();
+                    if (!value.isBlank()) return value;
+                }
+            } catch (Exception ignored) {
+                // Memory is optional; the main reply must remain available.
+            }
+        }
+        return inlineToken == null ? "" : inlineToken.trim();
     }
 
     private static List<String> strings(JsonNode node) {

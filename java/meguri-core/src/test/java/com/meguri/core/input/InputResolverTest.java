@@ -30,6 +30,16 @@ class InputResolverTest {
     }
 
     @Test
+    void resolvesBilibiliBrowserDigestOnlyAsAnExplicitShortcut() {
+        InputResolution result = InputResolver.resolve("#视频日报");
+
+        assertThat(result.kind()).isEqualTo("command");
+        assertThat(result.command()).isEqualTo("bilibili");
+        assertThat(InputResolver.resolve("#B站日报").command()).isEqualTo("bilibili");
+        assertThat(InputResolver.resolve("#视频日报 昨天").error()).contains("不接受额外参数");
+    }
+
+    @Test
     void requiresSearchKeywordsAndRejectsUnknownCommands() {
         assertThat(InputResolver.resolve("#搜索").error()).contains("关键词");
         assertThat(InputResolver.resolve("#代码 修复登录").error()).contains("未知快捷指令");
@@ -48,5 +58,35 @@ class InputResolverTest {
     void allowsEscapingBothPrefixesIntoOrdinaryDialogue() {
         assertThat(InputResolver.resolve("##天气").message()).isEqualTo("#天气");
         assertThat(InputResolver.resolve("~~不是工程任务").message()).isEqualTo("~不是工程任务");
+        assertThat(InputResolver.resolve("@@不是资源引用").message()).isEqualTo("@不是资源引用");
+    }
+
+    @Test
+    void treatsLeadingAtSignAsAResourceQueryWithoutReadingIt() {
+        InputResolution result = InputResolver.resolve("@季度总结 2026");
+
+        assertThat(result.kind()).isEqualTo("resource");
+        assertThat(result.arguments()).isEqualTo("季度总结 2026");
+        assertThat(result.message()).isBlank();
+        assertThat(result.preview()).contains("只发送文件元数据");
+    }
+
+    @Test
+    void extractsStandaloneEmbeddedResourceReferencesButNotEmailAddresses() {
+        InputResolution result = InputResolver.resolve("帮我总结 @{季度 报告} 的重点");
+
+        assertThat(result.kind()).isEqualTo("resource");
+        assertThat(result.arguments()).isEqualTo("季度 报告");
+        assertThat(result.message()).isEqualTo("帮我总结 的重点");
+        assertThat(InputResolver.resolve("请发到 me@example.com").kind()).isEqualTo("normal");
+    }
+
+    @Test
+    void acceptsAnEmptyAtSignAsAnExplicitResourceSelectionMode() {
+        InputResolution result = InputResolver.resolve("@");
+
+        assertThat(result.kind()).isEqualTo("resource");
+        assertThat(result.arguments()).isBlank();
+        assertThat(InputResolver.resolve("帮我看一下 @  ").message()).isEqualTo("帮我看一下");
     }
 }

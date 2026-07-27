@@ -34,11 +34,15 @@ class LlmProviderTest {
     }
 
     @Test
-    void streamSplitsValidatedReplyIntoNonEmptyDeltas() {
-        StepVerifier.create(new MockLlmProvider().stream(request, state, List.of(), List.of(), List.of()))
-                .recordWith(java.util.ArrayList::new)
-                .expectNextCount(2)
-                .consumeRecordedWith(values -> assertTrue(values.stream().allMatch(value -> !value.isBlank())))
+    void structuredProviderDoesNotFakeTokenStreaming() {
+        MockLlmProvider provider = new MockLlmProvider();
+        String expected = provider.respond(request, state, List.of(), List.of(), List.of())
+                .blockOptional().orElseThrow().getReply();
+        StepVerifier.create(provider.stream(request, state, List.of(), List.of(), List.of()))
+                .assertNext(value -> {
+                    assertTrue(!value.isBlank());
+                    assertEquals(expected, value);
+                })
                 .verifyComplete();
     }
 }

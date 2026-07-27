@@ -2,7 +2,11 @@ package com.meguri.core.runtime;
 
 import com.meguri.core.dto.ChatResponse;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.harness.HarnessManifest;
+import com.meguri.core.harness.persona.PersonaRuntime;
+import com.meguri.core.harness.capability.CapabilityRegistry;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -14,18 +18,34 @@ public final class TurnRecord {
     private final String traceId;
     private final TurnRequest request;
     private final Instant acceptedAt;
+    private final Instant deadlineAt;
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
     private final CompletableFuture<Void> done = new CompletableFuture<>();
 
     private volatile TurnStatus status = TurnStatus.ACCEPTED;
+    private volatile TurnStage stage = TurnStage.CREATED;
+    private volatile HarnessManifest manifest;
+    private volatile PersonaRuntime.PersonaSnapshot personaSnapshot;
+    private volatile CapabilityRegistry.Snapshot capabilitySnapshot;
     private volatile ChatResponse result;
     private volatile String error;
 
     public TurnRecord(String turnId, String traceId, TurnRequest request) {
+        this(turnId, traceId, request, Instant.now().plusSeconds(90));
+    }
+
+    public TurnRecord(String turnId, String traceId, TurnRequest request, Instant deadlineAt) {
+        this(turnId, traceId, request, Instant.now(), deadlineAt);
+    }
+
+    public TurnRecord(String turnId, String traceId, TurnRequest request,
+                      Instant acceptedAt, Instant deadlineAt) {
         this.turnId = Objects.requireNonNull(turnId, "turnId");
         this.traceId = Objects.requireNonNull(traceId, "traceId");
         this.request = Objects.requireNonNull(request, "request");
-        this.acceptedAt = Instant.now();
+        this.acceptedAt = Objects.requireNonNull(acceptedAt, "acceptedAt");
+        this.deadlineAt = Objects.requireNonNull(deadlineAt, "deadlineAt");
+        if (!deadlineAt.isAfter(acceptedAt)) throw new IllegalArgumentException("deadlineAt must be after acceptance");
     }
 
     public String getTurnId() {
@@ -56,6 +76,15 @@ public final class TurnRecord {
         return acceptedAt;
     }
 
+    public Instant getDeadlineAt() {
+        return deadlineAt;
+    }
+
+    public Duration remaining() {
+        Duration remaining = Duration.between(Instant.now(), deadlineAt);
+        return remaining.isNegative() || remaining.isZero() ? Duration.ofMillis(1) : remaining;
+    }
+
     public TurnStatus getStatus() {
         return status;
     }
@@ -68,6 +97,56 @@ public final class TurnRecord {
         this.status = Objects.requireNonNull(status, "status");
     }
 
+    public TurnStage getStage() {
+        return stage;
+    }
+
+    public synchronized boolean transitionTo(TurnStage next) {
+        Objects.requireNonNull(next, "next");
+        if (stage.terminal()) return stage == next;
+        if (!next.terminal() && next.ordinal() < stage.ordinal()) {
+            throw new IllegalStateException("turn stage cannot move backwards from " + stage + " to " + next);
+        }
+        stage = next;
+        return true;
+    }
+
+    public HarnessManifest getManifest() {
+        return manifest;
+    }
+
+    public synchronized void freezeManifest(HarnessManifest manifest) {
+        Objects.requireNonNull(manifest, "manifest");
+        if (this.manifest != null && !this.manifest.equals(manifest)) {
+            throw new IllegalStateException("turn manifest is already frozen");
+        }
+        this.manifest = manifest;
+    }
+
+    public PersonaRuntime.PersonaSnapshot getPersonaSnapshot() {
+        return personaSnapshot;
+    }
+
+    public synchronized void freezePersonaSnapshot(PersonaRuntime.PersonaSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (personaSnapshot != null && !personaSnapshot.equals(snapshot)) {
+            throw new IllegalStateException("persona snapshot is already frozen");
+        }
+        personaSnapshot = snapshot;
+    }
+
+    public CapabilityRegistry.Snapshot getCapabilitySnapshot() {
+        return capabilitySnapshot;
+    }
+
+    public synchronized void freezeCapabilitySnapshot(CapabilityRegistry.Snapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (capabilitySnapshot != null && !capabilitySnapshot.equals(snapshot)) {
+            throw new IllegalStateException("capability snapshot is already frozen");
+        }
+        capabilitySnapshot = snapshot;
+    }
+
     public ChatResponse getResult() {
         return result;
     }
@@ -78,6 +157,32 @@ public final class TurnRecord {
 
     public void setResult(ChatResponse result) {
         this.result = result;
+    }
+
+    /** Atomically wins the terminal race only when no cancellation is pending. */
+    public synchronized boolean tryComplete(ChatResponse completedResult) {
+        Objects.requireNonNull(completedResult, "completedResult");
+        if (stage.terminal() || cancelRequested.get()) return false;
+        result = completedResult;
+        status = TurnStatus.COMPLETED;
+        stage = TurnStage.COMPLETED;
+        return true;
+    }
+
+    public synchronized boolean tryCancel() {
+        cancelRequested.set(true);
+        if (stage.terminal()) return false;
+        status = TurnStatus.CANCELLED;
+        stage = TurnStage.CANCELLED;
+        return true;
+    }
+
+    public synchronized boolean tryFail(String failure) {
+        if (stage.terminal() || cancelRequested.get()) return false;
+        status = TurnStatus.FAILED;
+        stage = TurnStage.FAILED;
+        error = failure;
+        return true;
     }
 
     public String getError() {
@@ -116,9 +221,24 @@ public final class TurnRecord {
         done.complete(null);
     }
 
+    /** Rehydrates durable lifecycle fields without replaying business effects. */
+    public synchronized void restore(TurnStatus status, TurnStage stage,
+                                     ChatResponse result, String error) {
+        restore(status, stage, null, result, error);
+    }
+
+    /** Rehydrates durable lifecycle fields, including the frozen manifest. */
+    public synchronized void restore(TurnStatus status, TurnStage stage,
+                                     HarnessManifest manifest, ChatResponse result, String error) {
+        this.status = Objects.requireNonNull(status, "status");
+        this.stage = Objects.requireNonNull(stage, "stage");
+        this.manifest = manifest;
+        this.result = result;
+        this.error = error;
+        if (stage.terminal()) completeDone();
+    }
+
     public boolean isTerminal() {
-        return status == TurnStatus.COMPLETED
-                || status == TurnStatus.FAILED
-                || status == TurnStatus.CANCELLED;
+        return stage.terminal();
     }
 }
