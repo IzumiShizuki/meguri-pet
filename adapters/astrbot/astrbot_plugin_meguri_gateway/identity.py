@@ -44,6 +44,13 @@ class IdentityBindingStore:
         )
         return IdentityContext(
             meguri_user_id=user_id,
+            platform=message.platform,
+            platform_actor_id=self._opaque_id(
+                "actor", message.platform, message.account_id, message.sender_id
+            ),
+            client_instance_id=self._opaque_id(
+                "client", message.platform, message.account_id
+            ),
             session_id=session_id,
             formal_memory_allowed=bound_user_id is not None,
         )

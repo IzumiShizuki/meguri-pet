@@ -22,6 +22,37 @@ function jsonResponse(value: unknown, status = 200): FetchResponse {
   }
 }
 
+function helloResponse() {
+  return {
+    selected_protocol_version: '1.1',
+    server_capabilities_revision: 'website-caps-1',
+    server_capabilities: {
+      text: true,
+      voice: false,
+      sprite: true,
+      screen_context: false,
+      formal_memory: false,
+      sse: true,
+    },
+    effective_capabilities: {
+      text: true,
+      voice: false,
+      sprite: true,
+      screen_context: false,
+      formal_memory: false,
+      sse: true,
+    },
+    granted_permissions: {
+      screen_read: false,
+      microphone: false,
+      audio_playback: false,
+      notifications: false,
+      formal_memory_write: false,
+    },
+    supported_extensions: [],
+  }
+}
+
 function streamResponse(chunks: string[]): FetchResponse {
   const encoder = new TextEncoder()
   return {
@@ -63,7 +94,12 @@ function sse(event: TurnEventEnvelope): string {
 
 test('website session injects trusted identity and streams a complete turn', async () => {
   let body: Record<string, unknown> = {}
+  let helloBody: Record<string, unknown> = {}
   const fetchImpl: FetchLike = async (input, init) => {
+    if (String(input).endsWith('/v1/hello')) {
+      helloBody = JSON.parse(String(init?.body))
+      return jsonResponse(helloResponse())
+    }
     if (String(input).endsWith('/v1/turns')) {
       body = JSON.parse(String(init?.body))
       return jsonResponse({
@@ -87,11 +123,22 @@ test('website session injects trusted identity and streams a complete turn', asy
     { createSessionId: () => 'session-web-1' },
   )
   const state = await session.send('hello', { idempotencyKey: 'web-request-1' })
-  assert.equal(body.user_id, 'bound-user-1')
-  assert.equal(body.client_id, 'website')
+  assert.deepEqual(helloBody.protocol_versions, ['1.1', '1.0'])
+  assert.equal(
+    (helloBody.identity as Record<string, Record<string, unknown>>).client_instance.profile,
+    'website',
+  )
+  const identity = body.identity as Record<string, Record<string, unknown>>
+  assert.equal(body.protocol_version, '1.1')
+  assert.equal(identity.meguri_user.id, 'bound-user-1')
+  assert.equal(identity.platform_actor.platform, 'meguri.website')
+  assert.equal(identity.client_instance.profile, 'website')
+  assert.equal(identity.session.id, 'session-web-1')
   assert.equal(state.text, 'hello website')
   assert.equal(state.status, 'completed')
   assert.equal(session.pendingTurnId, undefined)
+  assert.equal(session.negotiatedProtocolVersion, '1.1')
+  assert.equal(session.capabilitiesRevision, 'website-caps-1')
 })
 
 test('website session restores an interrupted active turn after reload', async () => {
@@ -99,6 +146,8 @@ test('website session restores an interrupted active turn after reload', async (
   let streamAttempt = 0
   const requestedAfter: string[] = []
   const fetchImpl: FetchLike = async (input) => {
+    if (String(input).endsWith('/v1/hello'))
+      return jsonResponse(helloResponse())
     if (String(input).endsWith('/v1/turns')) {
       return jsonResponse({
         turn_id: 'turn-web-1',
@@ -135,11 +184,66 @@ test('website session restores an interrupted active turn after reload', async (
   assert.deepEqual(requestedAfter, ['0', '2'])
 })
 
+test('website restores a 410 cursor from snapshot and persists it', async () => {
+  const storage = new MemoryStorage()
+  const fetchImpl: FetchLike = async (input) => {
+    const url = String(input)
+    if (url.endsWith('/v1/hello'))
+      return jsonResponse(helloResponse())
+    if (url.endsWith('/v1/turns')) {
+      return jsonResponse({
+        protocol_version: '1.1',
+        turn_id: 'turn-web-1',
+        session_id: 'session-web-1',
+        build_id: 'build-1',
+        status: 'accepted',
+      }, 202)
+    }
+    if (url.includes('/events')) {
+      return jsonResponse({
+        protocol_version: '1.1',
+        error: {
+          code: 'CURSOR_EXPIRED',
+          message: 'cursor expired',
+          retryable: true,
+        },
+      }, 410)
+    }
+    return jsonResponse({
+      protocol_version: '1.1',
+      session_id: 'session-web-1',
+      sequence: 40,
+      turns: [{
+        turn_id: 'turn-web-1',
+        status: 'completed',
+        text: 'snapshot complete',
+      }],
+      processed_event_ids: ['state-39'],
+      processed_once_event_ids: ['tts-once-4'],
+      created_at: '2026-07-28T00:00:00Z',
+      future_optional: { ignored: true },
+    })
+  }
+  const session = new WebsiteMeguriSession(
+    new MeguriApiClient('http://127.0.0.1:8000', fetchImpl),
+    { meguriUserId: 'bound-user-1', storageKey: 'login-snapshot' },
+    storage,
+    { createSessionId: () => 'session-web-1' },
+  )
+  const state = await session.send('hello')
+  assert.equal(state.text, 'snapshot complete')
+  const persisted = JSON.parse([...storage.values.values()][0])
+  assert.equal(persisted.checkpoint.last_sequence, 40)
+  assert.ok(persisted.checkpoint.processed_once_event_ids.includes('tts-once-4'))
+})
+
 test('website persists an event checkpoint before dispatching page side effects', async () => {
   const storage = new MemoryStorage()
   const requestedAfter: string[] = []
   let streamAttempt = 0
   const fetchImpl: FetchLike = async (input) => {
+    if (String(input).endsWith('/v1/hello'))
+      return jsonResponse(helloResponse())
     if (String(input).endsWith('/v1/turns')) {
       return jsonResponse({
         turn_id: 'turn-web-1',
@@ -215,6 +319,8 @@ test('website adapter exposes cancellation without clearing resumable state', as
   let cancelledUrl = ''
   const fetchImpl: FetchLike = async (input, init) => {
     const url = String(input)
+    if (url.endsWith('/v1/hello'))
+      return jsonResponse(helloResponse())
     if (url.endsWith('/v1/turns')) {
       return jsonResponse({
         turn_id: 'turn-web-1',

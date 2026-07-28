@@ -1,6 +1,18 @@
 package com.meguri.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meguri.core.adapter.application.ClientBindingRepository;
+import com.meguri.core.adapter.application.ClientHandshakeService;
+import com.meguri.core.adapter.infrastructure.InMemoryClientBindingRepository;
+import com.meguri.core.adapter.infrastructure.JdbcClientBindingRepository;
+import com.meguri.core.capability.CapabilityRuntimeFacade;
+import com.meguri.core.capability.DefaultCapabilityPolicy;
+import com.meguri.core.capability.DefaultResultNormalizer;
+import com.meguri.core.capability.InMemoryMcpSourceStore;
+import com.meguri.core.capability.JdbcCapabilityRuntimeStore;
+import com.meguri.core.capability.JdbcMcpSourceStore;
+import com.meguri.core.capability.McpSourceStore;
+import com.meguri.core.capability.PersistingCapabilityCatalog;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
 import com.meguri.core.metrics.PromptCacheMetricsService;
@@ -22,6 +34,7 @@ import com.meguri.core.weather.WeatherGateway;
 import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -71,6 +84,76 @@ public class MeguriRuntimeConfiguration {
     public SessionContextPersistence meguriPostgresSessionContextPersistence(
             JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
         return new PostgresSessionContextPersistence(jdbcTemplate, mapper);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "in-memory", matchIfMissing = true)
+    public ClientBindingRepository meguriClientBindingRepository() {
+        return new InMemoryClientBindingRepository();
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "postgres")
+    public ClientBindingRepository meguriPostgresClientBindingRepository(
+            JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
+        return new JdbcClientBindingRepository(jdbcTemplate, mapper);
+    }
+
+    @Bean
+    public ClientHandshakeService meguriClientHandshakeService(
+            ClientBindingRepository repository) {
+        return new ClientHandshakeService(repository);
+    }
+
+    @Bean(destroyMethod = "close")
+    public CapabilityRuntimeFacade meguriCapabilityRuntimeFacade(
+            @Value("${meguri.capability.store-mode:${meguri.turn-journal.mode:in-memory}}")
+                    String storeMode,
+            ObjectProvider<JdbcTemplate> jdbcProvider,
+            ObjectMapper mapper) {
+        String mode = storeMode == null
+                ? "in-memory" : storeMode.trim().toLowerCase(java.util.Locale.ROOT);
+        if ("in-memory".equals(mode)) {
+            return new CapabilityRuntimeFacade(32);
+        }
+        if (!"postgres".equals(mode)) {
+            throw new IllegalArgumentException(
+                    "unsupported capability store mode: " + mode);
+        }
+        JdbcTemplate jdbc = jdbcProvider.getIfAvailable();
+        if (jdbc == null) {
+            throw new IllegalStateException(
+                    "PostgreSQL capability runtime requires JdbcTemplate");
+        }
+        JdbcCapabilityRuntimeStore store =
+                new JdbcCapabilityRuntimeStore(jdbc, mapper);
+        return new CapabilityRuntimeFacade(
+                new PersistingCapabilityCatalog(store::saveDefinition),
+                new DefaultCapabilityPolicy(),
+                store,
+                store,
+                new DefaultResultNormalizer(),
+                store,
+                store,
+                32);
+    }
+
+    @Bean
+    public McpSourceStore meguriMcpSourceStore(
+            @Value("${meguri.capability.store-mode:${meguri.turn-journal.mode:in-memory}}")
+                    String storeMode,
+            ObjectProvider<JdbcTemplate> jdbcProvider,
+            ObjectMapper mapper) {
+        String mode = normalizedCapabilityStoreMode(storeMode);
+        if ("in-memory".equals(mode)) {
+            return new InMemoryMcpSourceStore();
+        }
+        JdbcTemplate jdbc = jdbcProvider.getIfAvailable();
+        if (jdbc == null) {
+            throw new IllegalStateException(
+                    "PostgreSQL MCP source store requires JdbcTemplate");
+        }
+        return new JdbcMcpSourceStore(jdbc, mapper);
     }
 
     @Bean
@@ -136,5 +219,15 @@ public class MeguriRuntimeConfiguration {
             // Local mock remains the fail-safe when the canonical build is absent.
         }
         return "meguri_local_mock";
+    }
+
+    private static String normalizedCapabilityStoreMode(String storeMode) {
+        String mode = storeMode == null
+                ? "in-memory" : storeMode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"in-memory".equals(mode) && !"postgres".equals(mode)) {
+            throw new IllegalArgumentException(
+                    "unsupported capability store mode: " + mode);
+        }
+        return mode;
     }
 }

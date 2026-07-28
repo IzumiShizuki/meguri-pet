@@ -12,35 +12,53 @@ import {
 import { MeguriApiAdapter, type FollowOptions } from './meguri-api-adapter.ts'
 
 export class MeguriDesktopRuntime {
-  readonly reducer: SessionTurnReducer
   private readonly api: MeguriApiAdapter
   private readonly renderer: CharacterRenderer
   private readonly tts?: LocalTtsAdapter
   private readonly voiceCues = new Map<string, { voiceStyle: VoiceStyle, intensity: VoiceIntensity }>()
+  private readonly reducers = new Map<string, SessionTurnReducer>()
+  private availableInitialReducer?: SessionTurnReducer
+  private activeReducer: SessionTurnReducer
 
   constructor(
     api: MeguriApiAdapter,
     renderer: CharacterRenderer,
-    reducer = new SessionTurnReducer(),
+    reducer?: SessionTurnReducer,
     tts?: LocalTtsAdapter,
   ) {
     this.api = api
     this.renderer = renderer
-    this.reducer = reducer
+    this.activeReducer = reducer ?? new SessionTurnReducer()
+    if (reducer?.sessionId)
+      this.reducers.set(reducer.sessionId, reducer)
+    else
+      this.availableInitialReducer = reducer
     this.tts = tts
+  }
+
+  get reducer(): SessionTurnReducer {
+    return this.activeReducer
   }
 
   async send(
     request: TurnRequest,
     options: FollowOptions & { idempotencyKey?: string } = {},
   ): Promise<string> {
-    const created = await this.api.createTurn(request, options.idempotencyKey)
-    await this.api.followSession(created.session_id, this.reducer, {
+    const created = await this.api.createCanonicalTurn(request, options.idempotencyKey)
+    const reducer = this.reducerFor(created.session_id)
+    await this.api.followSession(created.session_id, reducer, {
       ...options,
       untilTurnId: created.turn_id,
       onEvent: async (event) => {
+        // The shared reducer has accepted the event. Persist before renderer,
+        // TTS, animation, notification, or any other ONCE side effect.
+        this.api.persistCheckpoint(created.session_id, reducer)
         await this.applyRendererCue(event)
         await options.onEvent?.(event)
+      },
+      onSnapshot: async (snapshot) => {
+        this.api.persistCheckpoint(created.session_id, reducer)
+        await options.onSnapshot?.(snapshot)
       },
     })
     return created.turn_id
@@ -48,6 +66,19 @@ export class MeguriDesktopRuntime {
 
   async cancel(turnId: string): Promise<void> {
     await this.api.cancelTurn(turnId)
+  }
+
+  private reducerFor(sessionId: string): SessionTurnReducer {
+    const existing = this.reducers.get(sessionId)
+    if (existing) {
+      this.activeReducer = existing
+      return existing
+    }
+    const reducer = this.availableInitialReducer ?? this.api.createReducer(sessionId)
+    this.availableInitialReducer = undefined
+    this.reducers.set(sessionId, reducer)
+    this.activeReducer = reducer
+    return reducer
   }
 
   private async applyRendererCue(event: TurnEventEnvelope): Promise<void> {

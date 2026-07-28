@@ -5,6 +5,8 @@ import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.harness.HarnessManifest;
 import com.meguri.core.harness.persona.PersonaRuntime;
 import com.meguri.core.harness.capability.CapabilityRegistry;
+import com.meguri.core.capability.CapabilityRuntimeFacade;
+import com.meguri.core.agent.CancellationToken;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -20,6 +22,7 @@ public final class TurnRecord {
     private final Instant acceptedAt;
     private final Instant deadlineAt;
     private final AtomicBoolean cancelRequested = new AtomicBoolean();
+    private final CancellationToken agentCancellation = new CancellationToken();
     private final CompletableFuture<Void> done = new CompletableFuture<>();
 
     private volatile TurnStatus status = TurnStatus.ACCEPTED;
@@ -27,6 +30,7 @@ public final class TurnRecord {
     private volatile HarnessManifest manifest;
     private volatile PersonaRuntime.PersonaSnapshot personaSnapshot;
     private volatile CapabilityRegistry.Snapshot capabilitySnapshot;
+    private volatile CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities;
     private volatile ChatResponse result;
     private volatile String error;
 
@@ -147,6 +151,19 @@ public final class TurnRecord {
         capabilitySnapshot = snapshot;
     }
 
+    public CapabilityRuntimeFacade.TurnCapabilities getRuntimeCapabilities() {
+        return runtimeCapabilities;
+    }
+
+    public synchronized void freezeRuntimeCapabilities(
+            CapabilityRuntimeFacade.TurnCapabilities capabilities) {
+        Objects.requireNonNull(capabilities, "capabilities");
+        if (runtimeCapabilities != null && !runtimeCapabilities.equals(capabilities)) {
+            throw new IllegalStateException("runtime capabilities are already frozen");
+        }
+        runtimeCapabilities = capabilities;
+    }
+
     public ChatResponse getResult() {
         return result;
     }
@@ -171,6 +188,7 @@ public final class TurnRecord {
 
     public synchronized boolean tryCancel() {
         cancelRequested.set(true);
+        agentCancellation.cancel();
         if (stage.terminal()) return false;
         status = TurnStatus.CANCELLED;
         stage = TurnStage.CANCELLED;
@@ -206,7 +224,13 @@ public final class TurnRecord {
     }
 
     public boolean requestCancel() {
-        return cancelRequested.compareAndSet(false, true);
+        boolean changed = cancelRequested.compareAndSet(false, true);
+        agentCancellation.cancel();
+        return changed;
+    }
+
+    public CancellationToken agentCancellation() {
+        return agentCancellation;
     }
 
     public CompletableFuture<Void> getDone() {

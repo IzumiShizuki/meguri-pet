@@ -1,0 +1,19 @@
+meguri:
+  knowledge:
+    notion:
+      enabled: ${MEGURI_NOTION_KNOWLEDGE_ENABLED:false}
+      base-url: ${MEGURI_NOTION_BASE_URL:https://api.notion.com}
+      token: ${MEGURI_NOTION_TOKEN:}
+      token-file: ${MEGURI_NOTION_TOKEN_FILE:}
+      source-id: ${MEGURI_NOTION_SOURCE_ID:notion}
+      tenant-id: ${MEGURI_NOTION_TENANT_ID:meguri-local}
+      principals: ${MEGURI_NOTION_PRINCIPALS:user:local}
+      allowlist: ${MEGURI_NOTION_PAGE_ALLOWLIST:}
+      timeout: ${MEGURI_NOTION_TIMEOUT:30s}
+      max-depth: ${MEGURI_NOTION_MAX_DEPTH:16}
+      max-blocks: ${MEGURI_NOTION_MAX_BLOCKS:10000}
+      manual-sync-enabled: ${MEGURI_NOTION_MANUAL_SYNC_ENABLED:false}
+      management-token: ${MEGURI_MANAGEMENT_TOKEN:}
+      management-token-file: ${MEGURI_MANAGEMENT_TOKEN_FILE:}
+      initial-delay-ms: ${MEGURI_NOTION_INITIAL_DELAY_MS:60000}
+      sync-delay-ms: ${MEGURI_NOTION_SYNC_DELAY_MS:900000}

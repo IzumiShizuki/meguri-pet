@@ -15,6 +15,7 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import org.springframework.http.MediaType;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,7 +29,9 @@ class RuntimeWebControllerTest {
     void setUp() {
         orchestrator = new TurnOrchestrator();
         ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        client = WebTestClient.bindToController(new RuntimeWebController(orchestrator, mapper)).build();
+        client = WebTestClient.bindToController(new RuntimeWebController(orchestrator, mapper))
+                .controllerAdvice(new AdapterProtocolExceptionHandler())
+                .build();
     }
 
     @AfterEach
@@ -78,6 +81,135 @@ class RuntimeWebControllerTest {
                 .expectHeader().contentTypeCompatibleWith("text/event-stream")
                 .expectBody(String.class)
                 .value(body -> assertThat(body).contains("text.delta").contains("turn.completed"));
+    }
+
+    @Test
+    void canonicalHelloBindsIdentityAndDrivesTurnSnapshot() {
+        client.post().uri("/v1/hello")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "protocol_versions":["1.9","1.0"],
+                          "identity":{
+                            "meguri_user":{"id":"u-canonical"},
+                            "platform_actor":{"platform":"meguri.website","actor_id":"account-42"},
+                            "client_instance":{"id":"browser-tab-01","profile":"website"},
+                            "session":{"id":"s-canonical"}
+                          },
+                          "capabilities":{
+                            "text":true,"voice":true,"sprite":true,
+                            "screen_context":false,"formal_memory":true,"sse":true
+                          },
+                          "permissions":{
+                            "screen_read":false,"microphone":true,"audio_playback":true,
+                            "notifications":false,"formal_memory_write":true
+                          },
+                          "future_optional":{"accepted":true}
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.selected_protocol_version").isEqualTo("1.0")
+                .jsonPath("$.effective_capabilities.voice").isEqualTo(true)
+                .jsonPath("$.granted_permissions.formal_memory_write").isEqualTo(true)
+                .jsonPath("$.server_capabilities_revision").exists();
+
+        Map<?, ?> created = client.post().uri("/v1/turns")
+                .header("Idempotency-Key", "canonical-turn")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "protocol_version":"1.7",
+                          "identity":{
+                            "meguri_user":{"id":"u-canonical"},
+                            "platform_actor":{"platform":"meguri.website","actor_id":"account-42"},
+                            "client_instance":{"id":"browser-tab-01","profile":"website"},
+                            "session":{"id":"s-canonical"}
+                          },
+                          "message":"hello canonical",
+                          "retrieval_mode":"NONE"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isAccepted()
+                .expectBody(Map.class)
+                .returnResult()
+                .getResponseBody();
+        assertThat(created).isNotNull();
+        assertThat(created.get("protocol_version")).isEqualTo("1.0");
+        assertThat(created.get("events_url"))
+                .isEqualTo("/v1/sessions/s-canonical/events");
+
+        String turnId = String.valueOf(created.get("turn_id"));
+        TurnRecord turn = orchestrator.turn(turnId);
+        turn.getDone().join();
+        assertThat(turn.getRequest().getPlatformId()).isEqualTo("meguri.website");
+        assertThat(turn.getRequest().getPlatformActorId()).isEqualTo("account-42");
+        assertThat(turn.getRequest().getClientInstanceId()).isEqualTo("browser-tab-01");
+
+        List<String> onceIds = orchestrator.eventsFor("s-canonical").stream()
+                .filter(event -> "tts.requested".equals(event.getType()))
+                .map(event -> event.getEventId())
+                .toList();
+        assertThat(onceIds).hasSize(1);
+        client.get().uri("/v1/sessions/s-canonical/snapshot")
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody()
+                .jsonPath("$.protocol_version").isEqualTo("1.0")
+                .jsonPath("$.session_id").isEqualTo("s-canonical")
+                .jsonPath("$.turns[0].turn_id").isEqualTo(turnId)
+                .jsonPath("$.processed_once_event_ids[0]").isEqualTo(onceIds.getFirst());
+    }
+
+    @Test
+    void canonicalProtocolErrorsAreStableAndFailClosed() {
+        client.post().uri("/v1/hello")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "protocol_versions":["2.0"],
+                          "identity":{
+                            "meguri_user":{"id":"u-major"},
+                            "platform_actor":{"platform":"meguri.website","actor_id":"account-1"},
+                            "client_instance":{"id":"browser-major","profile":"website"},
+                            "session":{"id":"s-major"}
+                          },
+                          "capabilities":{
+                            "text":true,"voice":false,"sprite":false,
+                            "screen_context":false,"formal_memory":false,"sse":true
+                          },
+                          "permissions":{
+                            "screen_read":false,"microphone":false,"audio_playback":false,
+                            "notifications":false,"formal_memory_write":false
+                          }
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isEqualTo(426)
+                .expectBody()
+                .jsonPath("$.error.code").isEqualTo("UNSUPPORTED_PROTOCOL_MAJOR")
+                .jsonPath("$.error.retryable").isEqualTo(false);
+
+        client.post().uri("/v1/turns")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue("""
+                        {
+                          "protocol_version":"1.0",
+                          "identity":{
+                            "meguri_user":{"id":"u-unbound"},
+                            "platform_actor":{"platform":"meguri.website","actor_id":"account-2"},
+                            "client_instance":{"id":"never-hello","profile":"website"},
+                            "session":{"id":"s-unbound"}
+                          },
+                          "message":"must fail closed"
+                        }
+                        """)
+                .exchange()
+                .expectStatus().isEqualTo(409)
+                .expectBody()
+                .jsonPath("$.error.code").isEqualTo("CAPABILITY_UNAVAILABLE");
     }
 
     @Test
@@ -140,6 +272,23 @@ class RuntimeWebControllerTest {
         record.getDone().join();
         var types = orchestrator.eventsFor("voice-session").stream().map(event -> event.getType()).toList();
         assertThat(types).containsSubsequence("text.completed", "tts.requested", "turn.completed");
+    }
+
+    @Test
+    void firstSubscriptionReplaysOnceEventsProducedBeforeConnection() {
+        TurnRequest request = new TurnRequest("u-test", "desktop_pet", "late-subscriber", "hello",
+                java.util.List.of(), new ClientCapabilities(true, true, true, false), null, null, true);
+        TurnRecord record = orchestrator.start(request, null);
+        record.getDone().join();
+
+        client.get().uri(uriBuilder -> uriBuilder.path("/v1/sessions/late-subscriber/events")
+                        .queryParam("after_sequence", 0).build())
+                .exchange()
+                .expectStatus().isOk()
+                .expectBody(String.class)
+                .value(body -> assertThat(body)
+                        .contains("event:tts.requested")
+                        .contains("\"replay_policy\":\"ONCE\""));
     }
 
     @Test

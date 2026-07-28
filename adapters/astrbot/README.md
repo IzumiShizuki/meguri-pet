@@ -21,6 +21,14 @@ connects directly to a home computer or starts Codex itself.
   `runtime_state`/resolved `expression` are attached as
   `meguri_render_payload` for the Gal renderer. Voice and screen context remain
   unavailable.
+- Every asynchronous Turn starts with canonical `/v1/hello`. The gateway sends
+  separate HMAC-derived platform actor, client instance, session, and Meguri
+  user identities, then persists the selected protocol minor and server
+  capability revision in the Turn checkpoint file.
+- HTTP 410 event cursors restore the authoritative session snapshot and resume
+  from its sequence. The Python gateway has no direct TTS/animation side-effect
+  dispatcher; accepted event checkpoints are persisted before the completed
+  Turn is handed to AstrBot's renderer.
 
 The plugin is not installed into an existing AstrBot instance by repository
 tests. Production installation into `/opt/astrbot/data/plugins` remains

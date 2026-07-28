@@ -1,7 +1,20 @@
 package com.meguri.core.web;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meguri.core.adapter.application.AdapterProtocolException;
+import com.meguri.core.adapter.application.ClientHandshakeService;
+import com.meguri.core.adapter.application.UnsupportedRequiredExtensionException;
+import com.meguri.core.adapter.application.UnsupportedProtocolVersionException;
+import com.meguri.core.adapter.domain.AdapterProtocolHello;
+import com.meguri.core.adapter.domain.AdapterProtocolHelloResponse;
+import com.meguri.core.adapter.domain.AdapterSessionSnapshotResponse;
+import com.meguri.core.adapter.domain.AdapterTurnCreateRequest;
+import com.meguri.core.adapter.domain.ClientBinding;
+import com.meguri.core.adapter.domain.ClientHello;
+import com.meguri.core.adapter.domain.ClientHelloResponse;
+import com.meguri.core.adapter.infrastructure.InMemoryClientBindingRepository;
 import com.meguri.core.dto.EventEnvelope;
 import com.meguri.core.dto.RuntimeOverride;
 import com.meguri.core.dto.RuntimeState;
@@ -37,6 +50,9 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.LinkedHashMap;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /** Reactive HTTP/SSE boundary corresponding to services/meguri_core/app.py. */
@@ -52,29 +68,134 @@ import java.util.Map;
                 org.springframework.web.bind.annotation.RequestMethod.OPTIONS},
         allowedHeaders = {
                 "Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID", "X-Request-ID",
-                "X-Meguri-Tenant-ID", "X-Meguri-User-ID", "X-Meguri-Client-ID", "X-Meguri-Session-ID"
+                "X-Meguri-Tenant-ID", "X-Meguri-User-ID", "X-Meguri-Client-ID", "X-Meguri-Session-ID",
+                "X-Meguri-Formal-Memory-Allowed"
         })
 public final class RuntimeWebController {
     private final TurnRuntime turnRuntime;
     private final HarnessControlPlane controlPlane;
     private final ObjectMapper objectMapper;
     private final CoreIdentityVerifier identityVerifier;
+    private final ClientHandshakeService clientHandshakeService;
 
     public RuntimeWebController(TurnOrchestrator orchestrator, ObjectMapper objectMapper) {
         this(orchestrator, orchestrator, objectMapper,
-                new CoreIdentityVerifier(false, "meguri-local", "", ""));
+                new CoreIdentityVerifier(false, "meguri-local", "", ""),
+                new ClientHandshakeService(new InMemoryClientBindingRepository()));
+    }
+
+    public RuntimeWebController(TurnRuntime turnRuntime, HarnessControlPlane controlPlane,
+                                ObjectMapper objectMapper,
+                                CoreIdentityVerifier identityVerifier) {
+        this(turnRuntime, controlPlane, objectMapper, identityVerifier,
+                new ClientHandshakeService(new InMemoryClientBindingRepository()));
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public RuntimeWebController(TurnRuntime turnRuntime, HarnessControlPlane controlPlane,
                                 ObjectMapper objectMapper,
-                                CoreIdentityVerifier identityVerifier) {
+                                CoreIdentityVerifier identityVerifier,
+                                ClientHandshakeService clientHandshakeService) {
         this.turnRuntime = turnRuntime;
         this.controlPlane = controlPlane;
         this.identityVerifier = identityVerifier;
+        this.clientHandshakeService = clientHandshakeService;
         this.objectMapper = objectMapper == null
                 ? new ObjectMapper().findAndRegisterModules()
                 : objectMapper.findAndRegisterModules();
+    }
+
+    @PostMapping(path = "/v1/clients:hello", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ClientHelloResponse> clientHello(
+            @RequestBody ClientHello hello,
+            org.springframework.web.server.ServerWebExchange exchange) {
+        CoreIdentityVerifier.Identity identity = identityVerifier.required()
+                ? identityVerifier.verifyScope(
+                        exchange, null, hello.client().clientId(), hello.sessionId())
+                : new CoreIdentityVerifier.Identity(
+                        hello.meguriUserId(), hello.client().clientId(), hello.sessionId());
+        if (identity.userId() == null || identity.userId().isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST, "meguri_user_id is required for local Client Hello");
+        }
+        try {
+            ClientHandshakeService.ServerPermissionEnvelope permissions =
+                    new ClientHandshakeService.ServerPermissionEnvelope(
+                            identityVerifier.formalMemoryAllowed(
+                                    identity.userId(), hello.client().clientId(),
+                                    hello.permissions().formalMemoryAllowed()),
+                            identityVerifier.screenContextAllowed(
+                                    identity.userId(), hello.client().clientId(),
+                                    hello.permissions().screenContextAllowed()),
+                            identityVerifier.localResourceMetadataAllowed(
+                                    identity.userId(), hello.client().clientId(),
+                                    hello.permissions().localResourceMetadataAllowed()));
+            return ResponseEntity.ok(clientHandshakeService.negotiate(
+                    identityVerifier.tenantId(), identity.userId(), hello, permissions));
+        } catch (UnsupportedProtocolVersionException error) {
+            throw new ResponseStatusException(
+                    HttpStatus.UPGRADE_REQUIRED, "UNSUPPORTED_PROTOCOL_VERSION", error);
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, error.getMessage(), error);
+        }
+    }
+
+    @PostMapping(path = "/v1/hello", consumes = MediaType.APPLICATION_JSON_VALUE,
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<AdapterProtocolHelloResponse> adapterHello(
+            @RequestBody AdapterProtocolHello hello,
+            org.springframework.web.server.ServerWebExchange exchange) {
+        String bodyUserId = hello.identity().meguriUser().id();
+        String bodyClientId = hello.identity().clientInstance().profile();
+        String bodySessionId = hello.identity().session().id();
+        CoreIdentityVerifier.Identity identity = identityVerifier.verifyScope(
+                exchange, bodyUserId, bodyClientId, bodySessionId);
+        String userId = identity.userId() == null ? bodyUserId : identity.userId();
+        try {
+            ClientHandshakeService.ServerPermissionEnvelope permissions =
+                    new ClientHandshakeService.ServerPermissionEnvelope(
+                            identityVerifier.formalMemoryAllowed(
+                                    userId, bodyClientId,
+                                    hello.permissions().formalMemoryWrite()),
+                            identityVerifier.screenContextAllowed(
+                                    userId, bodyClientId,
+                                    hello.permissions().screenRead()),
+                            false);
+            return ResponseEntity.ok(clientHandshakeService.negotiate(
+                    identityVerifier.tenantId(), userId, hello, permissions));
+        } catch (UnsupportedProtocolVersionException error) {
+            throw protocolError(
+                    HttpStatus.UPGRADE_REQUIRED,
+                    "UNSUPPORTED_PROTOCOL_MAJOR",
+                    error.getMessage(),
+                    false,
+                    Map.of("server_protocol_version",
+                            clientHandshakeService.describeCanonical().protocolVersion()),
+                    error);
+        } catch (UnsupportedRequiredExtensionException error) {
+            throw protocolError(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "UNSUPPORTED_REQUIRED_EXTENSION",
+                    error.getMessage(),
+                    false,
+                    Map.of(),
+                    error);
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            throw protocolError(
+                    HttpStatus.BAD_REQUEST, "INVALID_REQUEST",
+                    error.getMessage(), false, Map.of(), error);
+        }
+    }
+
+    @GetMapping(path = "/v1/clients/capabilities", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ClientHandshakeService.ServerDescription clientCapabilities() {
+        return clientHandshakeService.describe();
+    }
+
+    @GetMapping(path = "/v1/capabilities", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ClientHandshakeService.CanonicalServerDescription adapterCapabilities() {
+        return clientHandshakeService.describeCanonical();
     }
 
     @GetMapping(path = "/health", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -130,16 +251,25 @@ public final class RuntimeWebController {
     @PostMapping(path = "/v1/turns", consumes = MediaType.APPLICATION_JSON_VALUE,
             produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<TurnCreateResponse>> createTurn(
-            @RequestBody TurnRequest request,
+            @RequestBody JsonNode payload,
             @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             org.springframework.web.server.ServerWebExchange exchange) {
-        TurnRequest verified = identityVerifier.verifyBody(exchange, request);
+        TurnRequest verified = parseTurnRequest(payload, exchange);
         return turnRuntime.submit(new TurnCommand.Start(verified, idempotencyKey))
                 .map(snapshot -> ResponseEntity.status(HttpStatus.ACCEPTED).body(new TurnCreateResponse(
+                        EventEnvelope.CURRENT_PROTOCOL_VERSION,
                         snapshot.turnId(), snapshot.sessionId(), controlPlane.describe().buildId(),
-                        TurnStatus.fromValue(snapshot.status()))))
+                        TurnStatus.fromValue(snapshot.status()),
+                        snapshot.lastSequence(),
+                        "/v1/sessions/" + snapshot.sessionId() + "/events")))
                 .onErrorMap(IdempotencyConflictException.class,
-                        error -> new ResponseStatusException(HttpStatus.CONFLICT, error.getMessage(), error));
+                        error -> protocolError(
+                                HttpStatus.CONFLICT,
+                                "CONFLICT",
+                                error.getMessage(),
+                                false,
+                                Map.of(),
+                                error));
     }
 
     @GetMapping(path = "/v1/turns/{turnId}", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -154,22 +284,32 @@ public final class RuntimeWebController {
                             snapshot.turnId(), snapshot.sessionId(), TurnStatus.fromValue(snapshot.status()),
                             controlPlane.describe().buildId(), snapshot.error()));
                 })
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "turn not found")));
+                .switchIfEmpty(Mono.error(protocolError(
+                        HttpStatus.NOT_FOUND, "NOT_FOUND",
+                        "turn not found", false,
+                        Map.of("turn_id", turnId), null)));
     }
 
-    @PostMapping(path = "/v1/turns/{turnId}/cancel", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(path = {"/v1/turns/{turnId}/cancel", "/v1/turns/{turnId}:cancel"},
+            produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Map<String, String>>> cancelTurn(
             @PathVariable String turnId,
             org.springframework.web.server.ServerWebExchange exchange) {
         return turnRuntime.snapshot(turnId)
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "turn not found")))
+                .switchIfEmpty(Mono.error(protocolError(
+                        HttpStatus.NOT_FOUND, "NOT_FOUND",
+                        "turn not found", false,
+                        Map.of("turn_id", turnId), null)))
                 .doOnNext(snapshot -> identityVerifier.verifyScope(
                         exchange, snapshot.userId(), snapshot.clientId(), snapshot.sessionId()))
                 .then(turnRuntime.submit(new TurnCommand.Cancel(turnId, "client_request")))
                 .map(snapshot -> ResponseEntity.ok(Map.of(
                         "turn_id", turnId,
                         "status", snapshot.terminal() ? snapshot.status() : "cancel_requested")))
-                .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND, "turn not found")));
+                .switchIfEmpty(Mono.error(protocolError(
+                        HttpStatus.NOT_FOUND, "NOT_FOUND",
+                        "turn not found", false,
+                        Map.of("turn_id", turnId), null)));
     }
 
     @GetMapping(path = "/v1/sessions/{sessionId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -195,7 +335,46 @@ public final class RuntimeWebController {
             }
         }
         CoreIdentityVerifier.Identity identity = identityVerifier.verifyScope(exchange, null, null, sessionId);
-        return eventStream(sessionId, cursor, identity.userId(), identity.clientId());
+        httpResponse.getHeaders().set(
+                "X-Meguri-Snapshot-URL",
+                "/v1/sessions/" + sessionId + "/snapshot");
+        long resolvedCursor = cursor;
+        return turnRuntime.replayWindow(sessionId, identity.userId(), identity.clientId())
+                .flatMapMany(window -> {
+                    if (window.cursorExpired(resolvedCursor)) {
+                        return Flux.error(protocolError(
+                                HttpStatus.GONE,
+                                "CURSOR_EXPIRED",
+                                "event cursor is outside retention",
+                                true,
+                                Map.of(
+                                        "oldest_available_sequence", window.oldestAvailableSequence(),
+                                        "latest_sequence", window.latestSequence(),
+                                        "snapshot_url", "/v1/sessions/" + sessionId + "/snapshot"),
+                                null));
+                    }
+                    return eventStream(
+                            sessionId,
+                            resolvedCursor,
+                            identity.userId(),
+                            identity.clientId());
+                });
+    }
+
+    @GetMapping(path = "/v1/sessions/{sessionId}/snapshot",
+            produces = MediaType.APPLICATION_JSON_VALUE)
+    public Mono<ResponseEntity<AdapterSessionSnapshotResponse>> sessionSnapshot(
+            @PathVariable String sessionId,
+            org.springframework.web.server.ServerWebExchange exchange) {
+        CoreIdentityVerifier.Identity identity =
+                identityVerifier.verifyScope(exchange, null, null, sessionId);
+        return turnRuntime.sessionSnapshot(sessionId, identity.userId(), identity.clientId())
+                .map(AdapterSessionSnapshotResponse::from)
+                .map(ResponseEntity::ok)
+                .switchIfEmpty(Mono.error(protocolError(
+                        HttpStatus.NOT_FOUND, "NOT_FOUND",
+                        "session snapshot not found", false,
+                        Map.of("session_id", sessionId), null)));
     }
 
     @GetMapping(path = "/v1/runtime/state", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -231,10 +410,18 @@ public final class RuntimeWebController {
     }
 
     private Flux<ServerSentEvent<String>> eventStream(
-            String sessionId, long initialCursor, String userId, String clientId) {
-        return turnRuntime.events(new EventCursor(
+            String sessionId,
+            long initialCursor,
+            String userId,
+            String clientId) {
+        Flux<ServerSentEvent<String>> events = turnRuntime.events(new EventCursor(
                         sessionId, Math.max(0L, initialCursor), null, userId, clientId))
                 .map(this::toSse);
+        Flux<ServerSentEvent<String>> heartbeats = Flux.interval(Duration.ofSeconds(15))
+                .map(ignored -> heartbeat());
+        return events.publish(shared -> Flux.merge(
+                shared,
+                heartbeats.takeUntilOther(shared.ignoreElements())));
     }
 
     private ServerSentEvent<String> toSse(EventEnvelope event) {
@@ -247,6 +434,86 @@ public final class RuntimeWebController {
         } catch (JsonProcessingException error) {
             throw new IllegalStateException("failed to encode turn event", error);
         }
+    }
+
+    private ServerSentEvent<String> heartbeat() {
+        try {
+            return ServerSentEvent.<String>builder()
+                    .event("heartbeat")
+                    .data(objectMapper.writeValueAsString(Map.of(
+                            "protocol_version", EventEnvelope.CURRENT_PROTOCOL_VERSION,
+                            "type", "heartbeat",
+                            "created_at", Instant.now())))
+                    .build();
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("failed to encode heartbeat", error);
+        }
+    }
+
+    private TurnRequest parseTurnRequest(
+            JsonNode payload,
+            org.springframework.web.server.ServerWebExchange exchange) {
+        try {
+            if (payload != null && payload.has("identity")) {
+                AdapterTurnCreateRequest adapterRequest =
+                        objectMapper.treeToValue(payload, AdapterTurnCreateRequest.class);
+                String userId = adapterRequest.identity().meguriUser().id();
+                String clientId = adapterRequest.identity().clientInstance().profile();
+                String sessionId = adapterRequest.identity().session().id();
+                identityVerifier.verifyScope(exchange, userId, clientId, sessionId);
+                ClientBinding binding = clientHandshakeService.binding(
+                                adapterRequest.identity().clientInstance().id())
+                        .orElseThrow(() -> protocolError(
+                                HttpStatus.CONFLICT,
+                                "CAPABILITY_UNAVAILABLE",
+                                "Client Hello must complete before creating a Turn",
+                                true,
+                                Map.of("client_instance_id",
+                                        adapterRequest.identity().clientInstance().id()),
+                                null));
+                return adapterRequest.toCoreRequest(binding);
+            }
+            TurnRequest legacy = objectMapper.treeToValue(payload, TurnRequest.class);
+            return identityVerifier.verifyBody(exchange, legacy);
+        } catch (AdapterProtocolException error) {
+            throw error;
+        } catch (UnsupportedProtocolVersionException error) {
+            throw protocolError(
+                    HttpStatus.UPGRADE_REQUIRED,
+                    "UNSUPPORTED_PROTOCOL_MAJOR",
+                    error.getMessage(),
+                    false,
+                    Map.of(),
+                    error);
+        } catch (UnsupportedRequiredExtensionException error) {
+            throw protocolError(
+                    HttpStatus.UNPROCESSABLE_ENTITY,
+                    "UNSUPPORTED_REQUIRED_EXTENSION",
+                    error.getMessage(),
+                    false,
+                    Map.of(),
+                    error);
+        } catch (JsonProcessingException | IllegalArgumentException error) {
+            throw protocolError(
+                    HttpStatus.BAD_REQUEST,
+                    "INVALID_REQUEST",
+                    error.getMessage() == null ? "invalid Turn request" : error.getMessage(),
+                    false,
+                    Map.of(),
+                    error);
+        }
+    }
+
+    private static AdapterProtocolException protocolError(
+            HttpStatus status,
+            String code,
+            String message,
+            boolean retryable,
+            Map<String, Object> details,
+            Throwable cause) {
+        String safeMessage = message == null || message.isBlank() ? code : message;
+        return new AdapterProtocolException(
+                status, code, safeMessage, retryable, details, cause);
     }
 
     private Map<String, Object> asMap(Object value) {

@@ -20,6 +20,13 @@ public interface TurnJournal {
 
     List<EventEnvelope> events(String sessionId);
 
+    default long firstSequence(String sessionId) {
+        return events(sessionId).stream()
+                .mapToLong(EventEnvelope::getSequence)
+                .min()
+                .orElse(0L);
+    }
+
     long lastSequence(String sessionId);
 
     /**

@@ -83,19 +83,23 @@ class MeguriGateway:
         text: str,
     ) -> GatewayReply:
         payload = {
-            "user_id": identity.meguri_user_id,
-            "client_id": "astrbot",
-            "session_id": identity.session_id,
+            "protocol_version": "1.0",
+            "identity": {
+                "meguri_user": {"id": identity.meguri_user_id},
+                "platform_actor": {
+                    "platform": identity.platform,
+                    "actor_id": identity.platform_actor_id,
+                },
+                "client_instance": {
+                    "id": identity.client_instance_id,
+                    "profile": "astrbot",
+                },
+                "session": {"id": identity.session_id},
+            },
             "message": text,
             "reply_format": self.reply_format,
             "formal_memory_allowed": identity.formal_memory_allowed,
             "attachments": [],
-            "client_capabilities": {
-                "text": True,
-                "sprite": True,
-                "voice": False,
-                "screen_context": False,
-            },
         }
         response = await self.core.respond(
             payload,

@@ -23,6 +23,9 @@ class PlatformMessage(BaseModel):
 
 class IdentityContext(BaseModel):
     meguri_user_id: str
+    platform: str
+    platform_actor_id: str
+    client_instance_id: str
     client_id: Literal["astrbot"] = "astrbot"
     session_id: str
     formal_memory_allowed: bool = False

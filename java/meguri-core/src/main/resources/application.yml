@@ -1,6 +1,8 @@
 spring:
   application:
     name: meguri-core-java
+  config:
+    import: optional:classpath:application-notion.yml
   codec:
     max-in-memory-size: 512KB
   profiles:
@@ -103,6 +105,8 @@ meguri:
     prompt-token-budget: ${MEGURI_LLM_PROMPT_TOKEN_BUDGET:12000}
     tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
     thinking: ${MEGURI_LLM_THINKING:auto}
+  agent:
+    gateway-mode: ${MEGURI_AGENT_GATEWAY_MODE:unavailable}
   prompt-cache-metrics:
     source-id: ${MEGURI_PROMPT_CACHE_SOURCE_ID:meguri-desktop}
     file: ${MEGURI_PROMPT_CACHE_METRICS_FILE:${user.home}/.meguri/metrics/prompt-cache.json}

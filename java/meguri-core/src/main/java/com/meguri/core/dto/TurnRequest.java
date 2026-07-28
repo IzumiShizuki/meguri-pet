@@ -27,6 +27,10 @@ public final class TurnRequest {
     private final boolean trainingMode;
     private final String replyFormat;
     private final RetrievalMode retrievalMode;
+    private final String platformId;
+    private final String platformActorId;
+    private final String clientInstanceId;
+    private final String tenantId;
 
     public TurnRequest(String userId, String clientId, String sessionId, String message) {
         this(userId, clientId, sessionId, null, message, List.of(), new ClientCapabilities(), null, null, false, false);
@@ -90,6 +94,25 @@ public final class TurnRequest {
                        boolean trainingMode,
                        String replyFormat,
                        RetrievalMode retrievalMode) {
+        this(userId, clientId, sessionId, parentSessionId, message, attachments,
+                clientCapabilities, optionalScreenContextId, relationshipProfile,
+                formalMemoryAllowed, trainingMode, replyFormat, retrievalMode,
+                null, null, null, "meguri-local");
+    }
+
+    private TurnRequest(String userId, String clientId, String sessionId, String parentSessionId, String message,
+                        List<Map<String, Object>> attachments,
+                        ClientCapabilities clientCapabilities,
+                        String optionalScreenContextId,
+                        Relationship relationshipProfile,
+                        boolean formalMemoryAllowed,
+                        boolean trainingMode,
+                        String replyFormat,
+                        RetrievalMode retrievalMode,
+                        String platformId,
+                        String platformActorId,
+                        String clientInstanceId,
+                        String tenantId) {
         this.userId = required(userId, "user_id");
         this.clientId = required(clientId, "client_id");
         if (!SetValues.CLIENT_IDS.contains(this.clientId)) {
@@ -107,6 +130,16 @@ public final class TurnRequest {
         this.replyFormat = replyFormat(replyFormat);
         this.retrievalMode = retrievalMode == null
                 ? RetrievalMode.compatibleDefault() : retrievalMode;
+        boolean hasAdapterIdentity = platformId != null
+                || platformActorId != null || clientInstanceId != null;
+        if (hasAdapterIdentity
+                && (platformId == null || platformActorId == null || clientInstanceId == null)) {
+            throw new IllegalArgumentException("adapter identity fields must be provided together");
+        }
+        this.platformId = optional(platformId);
+        this.platformActorId = optional(platformActorId);
+        this.clientInstanceId = optional(clientInstanceId);
+        this.tenantId = required(tenantId, "tenant_id");
     }
 
     @JsonCreator
@@ -185,6 +218,14 @@ public final class TurnRequest {
     public String replyFormat() { return replyFormat; }
     @JsonProperty("retrieval_mode") public RetrievalMode getRetrievalMode() { return retrievalMode; }
     public RetrievalMode retrievalMode() { return retrievalMode; }
+    @JsonProperty("platform_id") public String getPlatformId() { return platformId; }
+    public String platformId() { return platformId; }
+    @JsonProperty("platform_actor_id") public String getPlatformActorId() { return platformActorId; }
+    public String platformActorId() { return platformActorId; }
+    @JsonProperty("client_instance_id") public String getClientInstanceId() { return clientInstanceId; }
+    public String clientInstanceId() { return clientInstanceId; }
+    @JsonProperty("tenant_id") public String getTenantId() { return tenantId; }
+    public String tenantId() { return tenantId; }
 
     /**
      * Rebinds the memory permission after the adapter identity has been
@@ -194,7 +235,28 @@ public final class TurnRequest {
     public TurnRequest withFormalMemoryAllowed(boolean allowed) {
         return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
                 attachments, clientCapabilities, optionalScreenContextId,
-                relationshipProfile, allowed, trainingMode, replyFormat, retrievalMode);
+                relationshipProfile, allowed, trainingMode, replyFormat, retrievalMode,
+                platformId, platformActorId, clientInstanceId, tenantId);
+    }
+
+    public TurnRequest withAdapterIdentity(
+            String platformId, String platformActorId, String clientInstanceId) {
+        return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
+                attachments, clientCapabilities, optionalScreenContextId,
+                relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat,
+                retrievalMode,
+                required(platformId, "platform_id"),
+                required(platformActorId, "platform_actor_id"),
+                required(clientInstanceId, "client_instance_id"),
+                tenantId);
+    }
+
+    public TurnRequest withTenantId(String tenantId) {
+        return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
+                attachments, clientCapabilities, optionalScreenContextId,
+                relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat,
+                retrievalMode, platformId, platformActorId, clientInstanceId,
+                required(tenantId, "tenant_id"));
     }
 
     @Override public boolean equals(Object other) {
@@ -205,8 +267,12 @@ public final class TurnRequest {
                 && attachments.equals(that.attachments) && clientCapabilities.equals(that.clientCapabilities)
                 && Objects.equals(optionalScreenContextId, that.optionalScreenContextId)
                 && relationshipProfile == that.relationshipProfile && replyFormat.equals(that.replyFormat)
-                && retrievalMode == that.retrievalMode;
+                && retrievalMode == that.retrievalMode
+                && Objects.equals(platformId, that.platformId)
+                && Objects.equals(platformActorId, that.platformActorId)
+                && Objects.equals(clientInstanceId, that.clientInstanceId)
+                && tenantId.equals(that.tenantId);
     }
-    @Override public int hashCode() { return Objects.hash(userId, clientId, sessionId, parentSessionId, message, attachments, clientCapabilities, optionalScreenContextId, relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat, retrievalMode); }
-    @Override public String toString() { return "TurnRequest[userId=" + userId + ", clientId=" + clientId + ", sessionId=" + sessionId + ", parentSessionId=" + parentSessionId + ", message=" + message + ", attachments=" + attachments + ", clientCapabilities=" + clientCapabilities + ", optionalScreenContextId=" + optionalScreenContextId + ", relationshipProfile=" + relationshipProfile + ", formalMemoryAllowed=" + formalMemoryAllowed + ", trainingMode=" + trainingMode + ", replyFormat=" + replyFormat + ", retrievalMode=" + retrievalMode + "]"; }
+    @Override public int hashCode() { return Objects.hash(userId, clientId, sessionId, parentSessionId, message, attachments, clientCapabilities, optionalScreenContextId, relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat, retrievalMode, platformId, platformActorId, clientInstanceId, tenantId); }
+    @Override public String toString() { return "TurnRequest[userId=" + userId + ", clientId=" + clientId + ", sessionId=" + sessionId + ", parentSessionId=" + parentSessionId + ", message=" + message + ", attachments=" + attachments + ", clientCapabilities=" + clientCapabilities + ", optionalScreenContextId=" + optionalScreenContextId + ", relationshipProfile=" + relationshipProfile + ", formalMemoryAllowed=" + formalMemoryAllowed + ", trainingMode=" + trainingMode + ", replyFormat=" + replyFormat + ", retrievalMode=" + retrievalMode + ", platformId=" + platformId + ", platformActorId=" + platformActorId + ", clientInstanceId=" + clientInstanceId + ", tenantId=" + tenantId + "]"; }
 }

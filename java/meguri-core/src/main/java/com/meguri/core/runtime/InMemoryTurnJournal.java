@@ -72,6 +72,12 @@ public final class InMemoryTurnJournal implements TurnJournal {
     }
 
     @Override
+    public long firstSequence(String sessionId) {
+        List<EventEnvelope> value = events.get(sessionId);
+        return value == null || value.isEmpty() ? 0L : value.getFirst().getSequence();
+    }
+
+    @Override
     public long lastSequence(String sessionId) {
         AtomicLong value = sequences.get(sessionId);
         return value == null ? 0L : value.get();
@@ -88,10 +94,13 @@ public final class InMemoryTurnJournal implements TurnJournal {
                     EventEnvelope.CURRENT_PROTOCOL_VERSION,
                     newId("event"),
                     TurnEventTypes.isRequired(type),
+                    null,
                     type,
                     record.getTurnId(),
                     sessionId,
                     next,
+                    TurnEventTypes.replayPolicy(type, data),
+                    metadata == null ? null : metadata.getCreatedAt(),
                     data,
                     metadata);
             sessionEvents.add(event);

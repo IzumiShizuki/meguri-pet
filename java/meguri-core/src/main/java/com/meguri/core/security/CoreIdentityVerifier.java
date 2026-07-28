@@ -26,7 +26,8 @@ import java.util.stream.Collectors;
  */
 @Component
 public final class CoreIdentityVerifier implements WebFilter {
-    private static final Set<String> CLIENTS = Set.of("airi", "astrbot", "desktop_pet", "website");
+    private static final Set<String> CLIENTS =
+            Set.of("airi", "astrbot", "desktop_pet", "website", "custom");
 
     private final boolean required;
     private final String tenantId;
@@ -81,15 +82,29 @@ public final class CoreIdentityVerifier implements WebFilter {
 
     /** Ensures body identity cannot override the authenticated adapter identity. */
     public TurnRequest verifyBody(ServerWebExchange exchange, TurnRequest request) {
-        if (!required) return request;
+        if (!required) return request.withTenantId(tenantId);
         Identity identity = verifyScope(
                 exchange, request.getUserId(), request.getClientId(), request.getSessionId());
         boolean requested = "true".equalsIgnoreCase(
                 header(exchange, "X-Meguri-Formal-Memory-Allowed"));
-        boolean allowed = requested
-                && formalMemoryUsers.contains(identity.userId())
-                && formalMemoryClients.contains(identity.clientId());
-        return request.withFormalMemoryAllowed(allowed);
+        boolean allowed = formalMemoryAllowed(identity.userId(), identity.clientId(), requested);
+        return request.withFormalMemoryAllowed(allowed).withTenantId(tenantId);
+    }
+
+    public boolean formalMemoryAllowed(String userId, String clientId, boolean requested) {
+        if (!requested) return false;
+        if (!required) return true;
+        return formalMemoryUsers.contains(userId) && formalMemoryClients.contains(clientId);
+    }
+
+    public boolean screenContextAllowed(String userId, String clientId, boolean requested) {
+        // Hosted screen context needs a dedicated account policy before it can be enabled.
+        return requested && !required;
+    }
+
+    public boolean localResourceMetadataAllowed(String userId, String clientId, boolean requested) {
+        // Local metadata is safe for loopback use but is fail-closed in hosted mode.
+        return requested && !required;
     }
 
     /** Verifies that an authenticated adapter owns the requested resource scope. */

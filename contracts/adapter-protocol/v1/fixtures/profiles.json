@@ -1,0 +1,75 @@
+{
+  "airi": {
+    "protocol_versions": ["1.1", "1.0"],
+    "identity": {
+      "meguri_user": { "id": "user-airi" },
+      "platform_actor": { "platform": "airi", "actor_id": "local-owner" },
+      "client_instance": { "id": "airi-install-01", "profile": "airi" },
+      "session": { "id": "session-airi" }
+    },
+    "capabilities": {
+      "text": true,
+      "voice": true,
+      "sprite": true,
+      "screen_context": true,
+      "formal_memory": true,
+      "sse": true
+    },
+    "permissions": {
+      "screen_read": true,
+      "microphone": true,
+      "audio_playback": true,
+      "notifications": true,
+      "formal_memory_write": true
+    },
+    "required_extensions": []
+  },
+  "astrbot": {
+    "protocol_versions": ["1.0"],
+    "identity": {
+      "meguri_user": { "id": "user-astrbot" },
+      "platform_actor": { "platform": "qq", "actor_id": "qq-10001" },
+      "client_instance": { "id": "astrbot-plugin-01", "profile": "astrbot" },
+      "session": { "id": "session-astrbot" }
+    },
+    "capabilities": {
+      "text": true,
+      "voice": true,
+      "sprite": false,
+      "screen_context": false,
+      "formal_memory": true,
+      "sse": false
+    },
+    "permissions": {
+      "screen_read": false,
+      "microphone": false,
+      "audio_playback": true,
+      "notifications": false,
+      "formal_memory_write": false
+    }
+  },
+  "website": {
+    "protocol_versions": ["1.1", "1.0"],
+    "identity": {
+      "meguri_user": { "id": "user-web" },
+      "platform_actor": { "platform": "meguri.website", "actor_id": "account-42" },
+      "client_instance": { "id": "browser-tab-01", "profile": "website" },
+      "session": { "id": "session-web" }
+    },
+    "capabilities": {
+      "text": true,
+      "voice": false,
+      "sprite": true,
+      "screen_context": false,
+      "formal_memory": false,
+      "sse": true
+    },
+    "permissions": {
+      "screen_read": false,
+      "microphone": false,
+      "audio_playback": false,
+      "notifications": false,
+      "formal_memory_write": false
+    }
+  }
+}

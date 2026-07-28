@@ -1,3 +1,4 @@
+import type { SessionSnapshot } from './dto.ts'
 import { isTerminalEvent, type ExpressionIntensity, type TurnEventEnvelope } from './turn-events.ts'
 
 export interface ExpressionCue {
@@ -19,6 +20,7 @@ export interface SessionEventCheckpoint {
   session_id?: string
   last_sequence: number
   processed_event_ids: string[]
+  processed_once_event_ids?: string[]
 }
 
 export class SequenceGapError extends Error {
@@ -35,6 +37,7 @@ export class SequenceGapError extends Error {
 export class SessionTurnReducer {
   readonly turns = new Map<string, TurnViewState>()
   private readonly processedEventIds = new Set<string>()
+  private readonly processedOnceEventIds = new Set<string>()
   lastSequence: number
   sessionId?: string
 
@@ -54,6 +57,8 @@ export class SessionTurnReducer {
         throw new TypeError('checkpoint event IDs must be non-empty strings')
       this.processedEventIds.add(eventId)
     }
+    for (const eventId of start.processed_once_event_ids ?? [])
+      this.processedOnceEventIds.add(eventId)
     this.lastSequence = start.last_sequence
     this.sessionId = start.session_id
   }
@@ -71,6 +76,11 @@ export class SessionTurnReducer {
     if (this.processedEventIds.has(event.event_id))
       return false
     this.processedEventIds.add(event.event_id)
+    if (event.replay_policy === 'ONCE') {
+      if (this.processedOnceEventIds.has(event.event_id))
+        return false
+      this.processedOnceEventIds.add(event.event_id)
+    }
     const state = this.turns.get(event.turn_id) ?? {
       turnId: event.turn_id,
       text: '',
@@ -97,10 +107,38 @@ export class SessionTurnReducer {
   }
 
   checkpoint(): SessionEventCheckpoint {
-    return {
+    const checkpoint: SessionEventCheckpoint = {
       session_id: this.sessionId,
       last_sequence: this.lastSequence,
       processed_event_ids: [...this.processedEventIds],
+    }
+    if (this.processedOnceEventIds.size > 0)
+      checkpoint.processed_once_event_ids = [...this.processedOnceEventIds]
+    return checkpoint
+  }
+
+  restoreSnapshot(snapshot: SessionSnapshot): void {
+    if (this.sessionId && snapshot.session_id !== this.sessionId)
+      throw new Error('snapshot belongs to another session')
+    this.sessionId = snapshot.session_id
+    this.lastSequence = snapshot.sequence
+    this.turns.clear()
+    this.processedEventIds.clear()
+    this.processedOnceEventIds.clear()
+    for (const turn of snapshot.turns) {
+      this.turns.set(turn.turn_id, {
+        turnId: turn.turn_id,
+        text: turn.text,
+        status: turn.status,
+        expression: turn.expression as ExpressionCue | undefined,
+        error: turn.error,
+      })
+    }
+    for (const eventId of snapshot.processed_event_ids ?? [])
+      this.processedEventIds.add(eventId)
+    for (const eventId of snapshot.processed_once_event_ids ?? []) {
+      this.processedOnceEventIds.add(eventId)
+      this.processedEventIds.add(eventId)
     }
   }
 

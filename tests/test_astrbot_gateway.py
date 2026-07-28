@@ -43,6 +43,37 @@ def platform_message(**overrides):
     return PlatformMessage(**values)
 
 
+def hello_response():
+    return {
+        "selected_protocol_version": "1.1",
+        "server_capabilities_revision": "astrbot-caps-1",
+        "server_capabilities": {
+            "text": True,
+            "voice": False,
+            "sprite": True,
+            "screen_context": False,
+            "formal_memory": True,
+            "sse": True,
+        },
+        "effective_capabilities": {
+            "text": True,
+            "voice": False,
+            "sprite": True,
+            "screen_context": False,
+            "formal_memory": False,
+            "sse": True,
+        },
+        "granted_permissions": {
+            "screen_read": False,
+            "microphone": False,
+            "audio_playback": False,
+            "notifications": False,
+            "formal_memory_write": False,
+        },
+        "supported_extensions": [],
+    }
+
+
 class FakeCoreClient:
     def __init__(self, fail=False, reply="Meguri reply"):
         self.fail = fail
@@ -221,7 +252,7 @@ class CommandParsingTests(unittest.TestCase):
 
 
 class GatewayTests(unittest.IsolatedAsyncioTestCase):
-    async def test_gateway_declares_astrbot_capability_boundary(self):
+    async def test_gateway_builds_canonical_four_part_identity(self):
         core = FakeCoreClient()
         reply = await MeguriGateway(
             core,
@@ -231,11 +262,14 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             platform_message()
         )
         self.assertEqual(reply.text, "Meguri reply")
-        capabilities = core.respond_payloads[0]["client_capabilities"]
-        self.assertFalse(capabilities["voice"])
-        self.assertFalse(capabilities["screen_context"])
-        self.assertTrue(capabilities["sprite"])
-        self.assertEqual(core.respond_payloads[0]["client_id"], "astrbot")
+        payload = core.respond_payloads[0]
+        identity = payload["identity"]
+        self.assertEqual(payload["protocol_version"], "1.0")
+        self.assertEqual(identity["client_instance"]["profile"], "astrbot")
+        self.assertEqual(identity["platform_actor"]["platform"], "QQOfficial")
+        self.assertNotIn("platform-user", identity["platform_actor"]["actor_id"])
+        self.assertNotIn("bot-account", identity["client_instance"]["id"])
+        self.assertEqual(identity["session"]["id"], reply.metadata["session_id"])
         self.assertEqual(core.respond_payloads[0]["reply_format"], "zh_ja_pairs")
         self.assertFalse(core.respond_payloads[0]["formal_memory_allowed"])
         render_payload = reply.metadata["meguri_render_payload"]
@@ -480,6 +514,8 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
 
         async def handler(request):
             requests.append(request)
+            if request.url.path == "/v1/hello":
+                return httpx.Response(200, json=hello_response())
             if request.method == "POST" and request.url.path == "/v1/turns":
                 return httpx.Response(
                     202,
@@ -514,8 +550,22 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["runtime_state"]["mode"], "work")
         self.assertEqual(result["expression"]["expression_tag"], "happy")
         self.assertEqual(result["memory_status"], "pending")
-        self.assertEqual(requests[0].headers["idempotency-key"], "platform-message-1")
+        self.assertEqual(requests[1].headers["idempotency-key"], "platform-message-1")
+        hello_body = json.loads(requests[0].content)
+        turn_body = json.loads(requests[1].content)
+        self.assertEqual(hello_body["protocol_versions"], ["1.1", "1.0"])
+        self.assertFalse(hello_body["capabilities"]["voice"])
+        self.assertTrue(hello_body["capabilities"]["sprite"])
+        self.assertFalse(hello_body["permissions"]["screen_read"])
+        self.assertEqual(turn_body["protocol_version"], "1.1")
+        self.assertEqual(turn_body["identity"]["client_instance"]["profile"], "astrbot")
+        self.assertNotIn("user_id", turn_body)
+        self.assertEqual(
+            requests[2].headers["meguri-protocol-version"],
+            "1.1",
+        )
         self.assertEqual([request.url.path for request in requests], [
+            "/v1/hello",
             "/v1/turns",
             "/v1/sessions/session-1/events",
         ])
@@ -582,6 +632,8 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
 
             async def first_handler(request):
                 nonlocal first_get
+                if request.url.path == "/v1/hello":
+                    return httpx.Response(200, json=hello_response())
                 if request.method == "POST":
                     return httpx.Response(202, json={
                         "turn_id": "turn-persisted",
@@ -606,10 +658,21 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
                     "session_id": "session-persisted",
                     "message": "hello",
                 })
+            negotiation = checkpoint.load_negotiation("astrbot-legacy")
+            self.assertEqual(
+                negotiation["selected_protocol_version"],
+                "1.1",
+            )
+            self.assertEqual(
+                negotiation["server_capabilities_revision"],
+                "astrbot-caps-1",
+            )
 
             requested_after = []
 
             async def second_handler(request):
+                if request.url.path == "/v1/hello":
+                    return httpx.Response(200, json=hello_response())
                 if request.method == "POST":
                     return httpx.Response(202, json={
                         "turn_id": "turn-persisted",
@@ -635,6 +698,99 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(requested_after, ["2"])
             self.assertEqual(result["response"]["reply"], "persisted reply")
             self.assertEqual(result["memory_status"], "pending")
+
+    async def test_http_client_restores_410_snapshot_then_resumes(self):
+        requests = []
+
+        def event(sequence, kind, *, required=False):
+            return {
+                "protocol_version": "1.9",
+                "event_id": f"snapshot-event-{sequence}",
+                "required": required,
+                "replay_policy": "STATE",
+                "type": kind,
+                "turn_id": "turn-snapshot",
+                "session_id": "session-snapshot",
+                "sequence": sequence,
+                "created_at": "2026-07-28T00:00:00Z",
+                "data": {"future_optional": True},
+                "metadata": {
+                    "trace_id": "trace-snapshot",
+                    "source": "meguri-core",
+                    "created_at": "2026-07-28T00:00:00Z",
+                    "build_id": "build-snapshot",
+                    "future_optional": {"ignored": True},
+                },
+                "future_optional": {"ignored": True},
+            }
+
+        stream = "".join(
+            f"id: {item['sequence']}\nevent: {item['type']}\n"
+            f"data: {json.dumps(item)}\n\n"
+            for item in [
+                event(6, "future.optional"),
+                event(7, "turn.completed", required=True),
+            ]
+        )
+        events_attempt = 0
+
+        async def handler(request):
+            nonlocal events_attempt
+            requests.append(request)
+            if request.url.path == "/v1/hello":
+                return httpx.Response(200, json=hello_response())
+            if request.url.path == "/v1/turns":
+                return httpx.Response(202, json={
+                    "protocol_version": "1.1",
+                    "turn_id": "turn-snapshot",
+                    "session_id": "session-snapshot",
+                    "build_id": "build-snapshot",
+                    "status": "accepted",
+                })
+            if request.url.path.endswith("/snapshot"):
+                return httpx.Response(200, json={
+                    "protocol_version": "1.8",
+                    "session_id": "session-snapshot",
+                    "sequence": 5,
+                    "turns": [{
+                        "turn_id": "turn-snapshot",
+                        "status": "running",
+                        "text": "restored text",
+                    }],
+                    "processed_event_ids": ["state-before-snapshot"],
+                    "processed_once_event_ids": ["tts-once-before-snapshot"],
+                    "runtime_state": {"mode": "work", "outfit_code": "01"},
+                    "created_at": "2026-07-28T00:00:00Z",
+                    "future_optional": {"ignored": True},
+                })
+            events_attempt += 1
+            if events_attempt == 1:
+                return httpx.Response(410, json={
+                    "protocol_version": "1.1",
+                    "error": {
+                        "code": "CURSOR_EXPIRED",
+                        "message": "cursor expired",
+                        "retryable": True,
+                    },
+                })
+            return httpx.Response(200, text=stream)
+
+        client = HttpMeguriCoreClient(transport=httpx.MockTransport(handler))
+        self.addAsyncCleanup(client.close)
+        result = await client.respond({
+            "user_id": "user-1",
+            "client_id": "astrbot",
+            "session_id": "session-snapshot",
+            "message": "hello",
+        })
+        self.assertEqual(result["response"]["reply"], "restored text")
+        event_requests = [
+            request for request in requests if request.url.path.endswith("/events")
+        ]
+        self.assertEqual(
+            [request.url.params.get("after_sequence") for request in event_requests],
+            ["0", "5"],
+        )
 
 
 class HttpRelayClientTests(unittest.IsolatedAsyncioTestCase):

@@ -1,3 +1,9 @@
+import {
+  assertCompatibleProtocolVersion,
+  assertRequiredExtensions,
+} from './negotiation.ts'
+import type { ProtocolVersion, TurnCreateResponse } from './dto.ts'
+
 export const turnEventTypes = [
   'turn.started',
   'turn.stage.changed',
@@ -24,14 +30,21 @@ export const turnEventTypes = [
 export type KnownTurnEventType = typeof turnEventTypes[number]
 export type TurnEventType = KnownTurnEventType | (string & {})
 export type ExpressionIntensity = 'low' | 'medium' | 'high'
+export type ReplayPolicy = 'STATE' | 'ONCE' | 'ALWAYS'
 
-export interface ClientCapabilities {
+export interface LegacyClientCapabilities {
   text: boolean
   sprite: boolean
   voice: boolean
   screen_context: boolean
+  formal_memory?: boolean
+  sse?: boolean
 }
 
+/**
+ * @deprecated Prefer TurnCreateRequest with an explicit IdentityContext.
+ * This shape remains accepted by existing adapters during v1 migration.
+ */
 export interface TurnRequest {
   user_id: string
   client_id: 'airi' | 'astrbot' | 'desktop_pet' | 'website'
@@ -39,20 +52,13 @@ export interface TurnRequest {
   parent_session_id?: string
   message: string
   attachments?: Array<Record<string, unknown>>
-  client_capabilities: ClientCapabilities
+  client_capabilities: LegacyClientCapabilities
   optional_screen_context_id?: string
   relationship_profile?: 'sibling' | 'pursuit' | 'lover'
   formal_memory_allowed?: boolean
   training_mode?: boolean
   reply_format?: 'default' | 'zh_ja_pairs'
   retrieval_mode?: 'NONE' | 'FAST' | 'SLOW'
-}
-
-export interface TurnCreateResponse {
-  turn_id: string
-  session_id: string
-  build_id: string
-  status: 'accepted' | 'running' | 'completed' | 'failed' | 'cancelled'
 }
 
 export interface EventMetadata {
@@ -63,29 +69,46 @@ export interface EventMetadata {
 }
 
 export interface TurnEventEnvelope<T extends Record<string, unknown> = Record<string, unknown>> {
-  protocol_version: '1.0'
+  protocol_version: ProtocolVersion
   event_id: string
   required: boolean
+  required_extension?: string
+  replay_policy?: ReplayPolicy
   type: TurnEventType
   turn_id: string
   session_id: string
   sequence: number
+  created_at?: string
   data: T
   metadata: EventMetadata
 }
 
 const eventTypeSet = new Set<string>(turnEventTypes)
+const onceEventTypes = new Set<string>([
+  'tts.requested',
+  'tts.audio.delta',
+  'tts.completed',
+  'notification.requested',
+  'animation.requested',
+  'side_effect.requested',
+])
 
-export function parseTurnEventEnvelope(value: unknown): TurnEventEnvelope {
+export function parseTurnEventEnvelope(
+  value: unknown,
+  options: { supportedExtensions?: readonly string[] } = {},
+): TurnEventEnvelope & { replay_policy: ReplayPolicy, created_at: string } {
   if (!isRecord(value))
     throw new TypeError('event envelope must be an object')
   const protocolVersion = stringField(value, 'protocol_version')
-  if (protocolVersion !== '1.0')
-    throw new TypeError(`unsupported protocol version: ${protocolVersion}`)
+  assertCompatibleProtocolVersion(protocolVersion)
   stringField(value, 'event_id')
   const type = stringField(value, 'type')
   if (typeof value.required !== 'boolean')
     throw new TypeError('required must be a boolean')
+  if (value.required_extension !== undefined) {
+    const extension = stringField(value, 'required_extension')
+    assertRequiredExtensions([extension], options.supportedExtensions ?? [])
+  }
   if (!eventTypeSet.has(type) && value.required)
     throw new TypeError(`unsupported required event type: ${type}`)
   stringField(value, 'turn_id')
@@ -100,7 +123,18 @@ export function parseTurnEventEnvelope(value: unknown): TurnEventEnvelope {
   const metadata = value.metadata
   for (const key of ['trace_id', 'source', 'created_at', 'build_id'])
     stringField(metadata, key)
-  return value as unknown as TurnEventEnvelope
+  const replayPolicy = value.replay_policy ?? (onceEventTypes.has(type) ? 'ONCE' : 'STATE')
+  if (!['STATE', 'ONCE', 'ALWAYS'].includes(String(replayPolicy)))
+    throw new TypeError(`unsupported replay policy: ${String(replayPolicy)}`)
+  const createdAt = value.created_at ?? metadata.created_at
+  if (typeof createdAt !== 'string' || createdAt.length === 0)
+    throw new TypeError('created_at must be a non-empty string')
+  return {
+    ...value,
+    protocol_version: protocolVersion,
+    replay_policy: replayPolicy,
+    created_at: createdAt,
+  } as TurnEventEnvelope & { replay_policy: ReplayPolicy, created_at: string }
 }
 
 export function isTerminalEvent(type: string): boolean {
@@ -117,3 +151,5 @@ function stringField(value: Record<string, unknown>, key: string): string {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+export type { TurnCreateResponse }

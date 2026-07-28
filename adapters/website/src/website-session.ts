@@ -5,7 +5,12 @@ import {
 import {
   SessionTurnReducer,
   type ClientCapabilities,
+  type ClientHello,
+  type ClientPermissions,
+  type IdentityContext,
+  type ProtocolVersion,
   type SessionEventCheckpoint,
+  type TurnCreateRequest,
   type TurnEventEnvelope,
   type TurnRequest,
   type TurnViewState,
@@ -14,6 +19,8 @@ import {
 export interface WebsiteIdentity {
   meguriUserId: string
   storageKey: string
+  platformActorId?: string
+  clientInstanceId?: string
 }
 
 export interface KeyValueStorage {
@@ -34,12 +41,16 @@ export interface WebsiteSessionRecordV2 {
   activeTurnId?: string
   checkpoint: SessionEventCheckpoint
   activeTurnState?: TurnViewState
+  selectedProtocolVersion?: ProtocolVersion
+  serverCapabilitiesRevision?: string
 }
 
 export type WebsiteSessionRecord = WebsiteSessionRecordV1 | WebsiteSessionRecordV2
 
 export interface WebsiteSessionOptions {
   capabilities?: Partial<ClientCapabilities>
+  permissions?: Partial<ClientPermissions>
+  protocolVersions?: ProtocolVersion[]
   createSessionId?: () => string
 }
 
@@ -53,6 +64,16 @@ const defaultCapabilities: ClientCapabilities = {
   sprite: true,
   voice: false,
   screen_context: false,
+  formal_memory: false,
+  sse: true,
+}
+
+const defaultPermissions: ClientPermissions = {
+  screen_read: false,
+  microphone: false,
+  audio_playback: false,
+  notifications: false,
+  formal_memory_write: false,
 }
 
 export class WebsiteSessionStore {
@@ -100,6 +121,11 @@ export class WebsiteMeguriSession {
   private readonly identity: WebsiteIdentity
   private readonly store: WebsiteSessionStore
   private readonly capabilities: ClientCapabilities
+  private readonly permissions: ClientPermissions
+  private readonly protocolVersions: ProtocolVersion[]
+  private selectedProtocolVersion?: ProtocolVersion
+  private serverCapabilitiesRevision?: string
+  private helloComplete = false
   private activeTurnId?: string
 
   constructor(
@@ -114,10 +140,18 @@ export class WebsiteMeguriSession {
     this.identity = identity
     this.store = new WebsiteSessionStore(storage, identity.storageKey)
     this.capabilities = { ...defaultCapabilities, ...options.capabilities }
+    this.permissions = { ...defaultPermissions, ...options.permissions }
+    this.protocolVersions = options.protocolVersions ?? ['1.1', '1.0']
     const saved = this.store.load()
     this.sessionId = saved?.sessionId ?? (options.createSessionId ?? createSessionId)()
     this.activeTurnId = saved?.activeTurnId
     this.reducer = new SessionTurnReducer(saved?.version === 2 ? saved.checkpoint : 0)
+    this.selectedProtocolVersion = saved?.version === 2
+      ? saved.selectedProtocolVersion
+      : undefined
+    this.serverCapabilitiesRevision = saved?.version === 2
+      ? saved.serverCapabilitiesRevision
+      : undefined
     if (saved?.version === 2 && saved.activeTurnState)
       this.reducer.turns.set(saved.activeTurnState.turnId, { ...saved.activeTurnState })
     this.persist()
@@ -127,19 +161,28 @@ export class WebsiteMeguriSession {
     return this.activeTurnId
   }
 
+  get negotiatedProtocolVersion(): ProtocolVersion | undefined {
+    return this.selectedProtocolVersion
+  }
+
+  get capabilitiesRevision(): string | undefined {
+    return this.serverCapabilitiesRevision
+  }
+
   async send(message: string, options: WebsiteSendOptions = {}): Promise<TurnViewState> {
     const normalized = message.trim()
     if (!normalized)
       throw new TypeError('message must not be empty')
     if (this.activeTurnId)
       throw new Error('an active website turn must be resumed or cancelled first')
-    const request: TurnRequest = {
-      user_id: this.identity.meguriUserId,
-      client_id: 'website',
-      session_id: this.sessionId,
+    await this.ensureHello()
+    const request: TurnCreateRequest = {
+      protocol_version: this.selectedProtocolVersion ?? '1.0',
+      identity: this.identityContext(),
       message: normalized,
-      client_capabilities: this.capabilities,
-      relationship_profile: options.relationshipProfile,
+      ...(options.relationshipProfile
+        ? { relationship_profile: options.relationshipProfile }
+        : {}),
     }
     const created = await this.api.createTurn(request, options.idempotencyKey)
     this.activeTurnId = created.turn_id
@@ -150,6 +193,7 @@ export class WebsiteMeguriSession {
   async resume(options: Omit<WebsiteSendOptions, 'idempotencyKey' | 'relationshipProfile'> = {}): Promise<TurnViewState | undefined> {
     if (!this.activeTurnId)
       return undefined
+    await this.ensureHello()
     return await this.followActive(options)
   }
 
@@ -173,6 +217,10 @@ export class WebsiteMeguriSession {
           this.persist()
           await options.onEvent?.(event)
         },
+        onSnapshot: async (snapshot) => {
+          this.persist()
+          await options.onSnapshot?.(snapshot)
+        },
       })
     }
     const state = this.reducer.turns.get(turnId)
@@ -193,7 +241,40 @@ export class WebsiteMeguriSession {
       activeTurnId: this.activeTurnId,
       checkpoint: this.reducer.checkpoint(),
       activeTurnState: activeTurnState ? { ...activeTurnState } : undefined,
+      selectedProtocolVersion: this.selectedProtocolVersion,
+      serverCapabilitiesRevision: this.serverCapabilitiesRevision,
     })
+  }
+
+  private async ensureHello(): Promise<void> {
+    if (this.helloComplete)
+      return
+    const hello: ClientHello = {
+      protocol_versions: this.protocolVersions,
+      identity: this.identityContext(),
+      capabilities: this.capabilities,
+      permissions: this.permissions,
+    }
+    const response = await this.api.hello(hello)
+    this.selectedProtocolVersion = response.selected_protocol_version
+    this.serverCapabilitiesRevision = response.server_capabilities_revision
+    this.helloComplete = true
+    this.persist()
+  }
+
+  private identityContext(): IdentityContext {
+    return {
+      meguri_user: { id: this.identity.meguriUserId },
+      platform_actor: {
+        platform: 'meguri.website',
+        actor_id: this.identity.platformActorId ?? `website-account-${this.identity.storageKey}`,
+      },
+      client_instance: {
+        id: this.identity.clientInstanceId ?? `website-client-${this.identity.storageKey}`,
+        profile: 'website',
+      },
+      session: { id: this.sessionId },
+    }
   }
 }
 
@@ -212,6 +293,14 @@ function isSessionRecord(value: unknown): value is WebsiteSessionRecord {
   if (record.version === 1)
     return true
   if (record.version !== 2 || !isCheckpoint(record.checkpoint))
+    return false
+  if (record.selectedProtocolVersion !== undefined
+    && (typeof record.selectedProtocolVersion !== 'string'
+      || !/^1\.\d+$/.test(record.selectedProtocolVersion)))
+    return false
+  if (record.serverCapabilitiesRevision !== undefined
+    && (typeof record.serverCapabilitiesRevision !== 'string'
+      || record.serverCapabilitiesRevision.length === 0))
     return false
   if (record.checkpoint.session_id !== undefined
     && record.checkpoint.session_id !== record.sessionId)

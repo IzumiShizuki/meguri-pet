@@ -33,8 +33,9 @@ public final class DefaultCapabilityPolicy implements CapabilityPolicy {
             if (sandbox.wallTime().compareTo(descriptor.timeout()) > 0) {
                 return Decision.deny("sandbox wall time exceeds the capability timeout");
             }
-            if (sandbox.allowedRoots().isEmpty()) {
-                return Decision.deny("remote agents require an explicit filesystem allow-list");
+            if (sandbox.processExecutionAllowed() && sandbox.allowedRoots().isEmpty()) {
+                return Decision.deny(
+                        "remote agents with process execution require a filesystem allow-list");
             }
         }
         return Decision.allow("descriptor, approval, and sandbox policy passed");

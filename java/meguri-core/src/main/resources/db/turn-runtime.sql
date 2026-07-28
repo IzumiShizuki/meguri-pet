@@ -37,12 +37,20 @@ CREATE TABLE IF NOT EXISTS turn_event (
     sequence BIGINT NOT NULL CHECK (sequence > 0),
     protocol_version VARCHAR(32) NOT NULL,
     required BOOLEAN NOT NULL,
+    required_extension VARCHAR(255),
     event_type VARCHAR(128) NOT NULL,
+    replay_policy VARCHAR(16) NOT NULL DEFAULT 'ALWAYS',
     data_json JSONB NOT NULL,
     metadata_json JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (session_id, sequence)
 );
+
+ALTER TABLE turn_event
+    ADD COLUMN IF NOT EXISTS required_extension VARCHAR(255);
+
+ALTER TABLE turn_event
+    ADD COLUMN IF NOT EXISTS replay_policy VARCHAR(16) NOT NULL DEFAULT 'ALWAYS';
 
 CREATE INDEX IF NOT EXISTS ix_turn_event_turn
     ON turn_event (turn_id, sequence);

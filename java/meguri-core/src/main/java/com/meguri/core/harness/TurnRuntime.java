@@ -14,4 +14,14 @@ public interface TurnRuntime {
     Flux<EventEnvelope> events(EventCursor cursor);
 
     Mono<TurnSnapshot> snapshot(String turnId);
+
+    default Mono<SessionSnapshot> sessionSnapshot(
+            String sessionId, String userId, String clientId) {
+        return Mono.empty();
+    }
+
+    default Mono<SessionReplayWindow> replayWindow(
+            String sessionId, String userId, String clientId) {
+        return Mono.just(new SessionReplayWindow(sessionId, 0, 0));
+    }
 }

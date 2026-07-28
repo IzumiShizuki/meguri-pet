@@ -11,9 +11,20 @@ import com.meguri.core.dto.MemoryStatus;
 import com.meguri.core.dto.ResolvedExpression;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.agent.AgentLifecycleEvent;
+import com.meguri.core.agent.CancellationToken;
+import com.meguri.core.capability.ApprovalService;
+import com.meguri.core.capability.CapabilityDescriptor;
+import com.meguri.core.capability.CapabilityImplementation;
+import com.meguri.core.capability.CapabilityResult;
+import com.meguri.core.capability.CapabilityRuntimeFacade;
+import com.meguri.core.capability.ExposurePlanner;
+import com.meguri.core.capability.ToolProposal;
 import com.meguri.core.harness.EventCursor;
 import com.meguri.core.harness.HarnessControlPlane;
 import com.meguri.core.harness.HarnessManifest;
+import com.meguri.core.harness.SessionReplayWindow;
+import com.meguri.core.harness.SessionSnapshot;
 import com.meguri.core.harness.TurnCommand;
 import com.meguri.core.harness.TurnRuntime;
 import com.meguri.core.harness.TurnSnapshot;
@@ -39,6 +50,9 @@ import com.meguri.core.resources.LocalResourcePromptContext;
 import com.meguri.core.memory.MemoryGateway;
 import com.meguri.core.memory.MemoryRecall;
 import com.meguri.core.memory.MemoryWriteResult;
+import com.meguri.core.retrieval.KnowledgeTurnRetrievalRuntime;
+import com.meguri.core.retrieval.RetrievalLaneResult;
+import com.meguri.core.retrieval.SourceType;
 import com.meguri.core.training.TrainingFeedbackRequest;
 import com.meguri.core.training.TrainingFeedbackService;
 import com.meguri.core.websearch.NoopWebSearchGateway;
@@ -67,11 +81,15 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
@@ -98,6 +116,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private final PersonaRuntime personaRuntime;
     private final CapabilityRegistry capabilities;
     private final CapabilityExecutor capabilityExecutor;
+    private final CapabilityRuntimeFacade capabilityRuntime;
+    private volatile KnowledgeTurnRetrievalRuntime knowledgeRetrieval;
 
     private final Map<String, Disposable> running = new ConcurrentHashMap<>();
 
@@ -118,9 +138,11 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                             TrainingFeedbackService trainingFeedback,
                             WeatherConversationService weatherConversation,
                             TurnJournal journal,
-                            SessionContextPersistence contextPersistence) {
+                            SessionContextPersistence contextPersistence,
+                            CapabilityRuntimeFacade capabilityRuntime) {
         this(llm, rag, new RuntimeStateMachine(), new ExpressionResolver(), Duration.ofMillis(10), objectMapper,
-                memory, webSearch, trainingFeedback, weatherConversation, journal, contextPersistence);
+                memory, webSearch, trainingFeedback, weatherConversation, journal,
+                contextPersistence, capabilityRuntime);
     }
 
     public TurnOrchestrator(LlmProvider llm, RagProvider rag,
@@ -202,6 +224,23 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                             WeatherConversationService weatherConversation,
                             TurnJournal journal,
                             SessionContextPersistence contextPersistence) {
+        this(llm, rag, stateMachine, expressionResolver, streamInterval, objectMapper,
+                memory, webSearch, trainingFeedback, weatherConversation, journal,
+                contextPersistence, null);
+    }
+
+    public TurnOrchestrator(LlmProvider llm, RagProvider rag,
+                            RuntimeStateMachine stateMachine,
+                            ExpressionResolver expressionResolver,
+                            Duration streamInterval,
+                            ObjectMapper objectMapper,
+                            MemoryGateway memory,
+                            WebSearchGateway webSearch,
+                            TrainingFeedbackService trainingFeedback,
+                            WeatherConversationService weatherConversation,
+                            TurnJournal journal,
+                            SessionContextPersistence contextPersistence,
+                            CapabilityRuntimeFacade capabilityRuntime) {
         this.stateMachine = Objects.requireNonNull(stateMachine, "stateMachine");
         this.expressionResolver = Objects.requireNonNull(expressionResolver, "expressionResolver");
         this.buildId = expressionResolver.buildId();
@@ -221,6 +260,14 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         this.personaRuntime = new DeterministicPersonaRuntime(this.stateMachine, this.objectMapper);
         this.capabilities = defaultCapabilities();
         this.capabilityExecutor = defaultCapabilityExecutor();
+        this.capabilityRuntime = capabilityRuntime == null
+                ? new CapabilityRuntimeFacade(32) : capabilityRuntime;
+        registerRuntimeCapabilities();
+    }
+
+    @Autowired(required = false)
+    public void configureKnowledgeRetrieval(KnowledgeTurnRetrievalRuntime runtime) {
+        this.knowledgeRetrieval = runtime;
     }
 
     public RuntimeStateMachine stateMachine() {
@@ -297,6 +344,109 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
 
     public List<EffectLedger.Receipt> effectReceipts(String turnId) {
         return capabilityExecutor.ledger().receipts(turnId);
+    }
+
+    public List<com.meguri.core.capability.CapabilityAudit.Event> capabilityAuditEvents() {
+        return capabilityRuntime.auditEvents();
+    }
+
+    public List<CapabilityDescriptor> availableRuntimeCapabilities() {
+        return capabilityRuntime.availableDescriptors();
+    }
+
+    /**
+     * Executes a remote Agent submission through the owning Turn's frozen
+     * Capability snapshot. The explicit HTTP request is the approval action;
+     * identity and exposure are still enforced by the runtime.
+     */
+    public <T> Mono<T> executeAgentCapability(
+            String turnId,
+            String tenantId,
+            String userId,
+            String clientId,
+            String sessionId,
+            Map<String, Object> input,
+            Supplier<Mono<T>> operation) {
+        Objects.requireNonNull(operation, "operation");
+        return executeAgentCapability(
+                turnId, tenantId, userId, clientId, sessionId, input,
+                ignored -> operation.get());
+    }
+
+    public <T> Mono<T> executeAgentCapability(
+            String turnId,
+            String tenantId,
+            String userId,
+            String clientId,
+            String sessionId,
+            Map<String, Object> input,
+            Function<AgentExecutionScope, Mono<T>> operation) {
+        Objects.requireNonNull(operation, "operation");
+        return Mono.defer(() -> {
+            TurnRecord record = journal.turn(required(turnId, "turnId"));
+            if (record == null) {
+                return Mono.error(new IllegalArgumentException(
+                        "owning turn was not found"));
+            }
+            TurnRequest request = record.getRequest();
+            if (!request.tenantId().equals(required(tenantId, "tenantId"))
+                    || !request.getUserId().equals(required(userId, "userId"))
+                    || !request.getClientId().equals(required(clientId, "clientId"))
+                    || !request.getSessionId().equals(required(sessionId, "sessionId"))) {
+                return Mono.error(new SecurityException(
+                        "agent invocation does not own the turn"));
+            }
+            if (record.isTerminal() || record.isCancelRequested()) {
+                return Mono.error(new IllegalStateException(
+                        "agent invocation requires an active turn"));
+            }
+            CapabilityRuntimeFacade.TurnCapabilities frozen =
+                    record.getRuntimeCapabilities();
+            if (frozen == null || !frozen.exposes("agent.invoke")) {
+                return Mono.error(new SecurityException(
+                        "agent.invoke is not exposed for this turn"));
+            }
+            AgentExecutionScope scope = new AgentExecutionScope(
+                    record.getDeadlineAt(),
+                    record.getTraceId(),
+                    frozen.snapshotId(),
+                    record.agentCancellation().child());
+            return executeCapability(
+                    record, "agent.invoke", Map.copyOf(input), true,
+                    () -> operation.apply(scope));
+        });
+    }
+
+    public record AgentExecutionScope(
+            Instant deadlineAt,
+            String traceId,
+            String capabilitySnapshotVersion,
+            CancellationToken cancellation) {
+        public AgentExecutionScope {
+            Objects.requireNonNull(deadlineAt, "deadlineAt");
+            traceId = required(traceId, "traceId");
+            capabilitySnapshotVersion = required(
+                    capabilitySnapshotVersion, "capabilitySnapshotVersion");
+            Objects.requireNonNull(cancellation, "cancellation");
+        }
+    }
+
+    public void recordAgentLifecycle(AgentLifecycleEvent event) {
+        if (event == null || event.turnId() == null) return;
+        TurnRecord record = journal.turn(event.turnId());
+        if (record == null) return;
+        LinkedHashMap<String, Object> data = new LinkedHashMap<>();
+        data.put("lifecycle_sequence", event.sequence());
+        data.put("lifecycle_type", event.type().name().toLowerCase(
+                java.util.Locale.ROOT));
+        putIfPresent(data, "execution_id", event.executionId());
+        putIfPresent(data, "step_execution_id", event.stepExecutionId());
+        putIfPresent(data, "task_id", event.taskId());
+        putIfPresent(data, "remote_task_id", event.remoteTaskId());
+        putIfPresent(data, "from_status", event.fromStatus());
+        putIfPresent(data, "to_status", event.toStatus());
+        putIfPresent(data, "detail", event.detail());
+        emit(record, agentEventType(event), Map.copyOf(data));
     }
 
     @Override
@@ -452,6 +602,67 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         return Mono.justOrEmpty(journal.turn(turnId)).map(this::snapshotOf);
     }
 
+    @Override
+    public Mono<SessionSnapshot> sessionSnapshot(
+            String sessionId, String userId, String clientId) {
+        return Mono.fromSupplier(() -> {
+            List<TurnSnapshot> snapshots = journal.turns().values().stream()
+                    .filter(record -> sessionId.equals(record.getRequest().getSessionId()))
+                    .filter(record -> userId == null || userId.equals(record.getRequest().getUserId()))
+                    .filter(record -> clientId == null || clientId.equals(record.getRequest().getClientId()))
+                    .sorted(java.util.Comparator.comparing(TurnRecord::getAcceptedAt))
+                    .map(this::snapshotOf)
+                    .toList();
+            if (snapshots.isEmpty()) return null;
+
+            List<EventEnvelope> visibleEvents = journal.events(sessionId).stream()
+                    .filter(event -> eventBelongsTo(event, userId, clientId))
+                    .sorted(java.util.Comparator.comparingLong(EventEnvelope::getSequence))
+                    .toList();
+            Map<String, EventEnvelope> latestState = new LinkedHashMap<>();
+            visibleEvents.stream()
+                    .filter(event -> event.getReplayPolicy()
+                            == com.meguri.core.adapter.domain.ReplayPolicy.STATE)
+                    .forEach(event -> latestState.put(
+                            event.getTurnId() + "\u0000" + event.getType(), event));
+            List<EventEnvelope> stateEvents = latestState.values().stream()
+                    .sorted(java.util.Comparator.comparingLong(EventEnvelope::getSequence))
+                    .toList();
+            return new SessionSnapshot(
+                    sessionId,
+                    visibleEvents.stream().mapToLong(EventEnvelope::getSequence)
+                            .max().orElse(0L),
+                    snapshots,
+                    stateEvents,
+                    visibleEvents.stream()
+                            .map(EventEnvelope::getEventId)
+                            .distinct()
+                            .toList(),
+                    visibleEvents.stream()
+                            .filter(event -> event.getReplayPolicy()
+                                    == com.meguri.core.adapter.domain.ReplayPolicy.ONCE)
+                            .map(EventEnvelope::getEventId)
+                            .distinct()
+                            .toList(),
+                    Instant.now());
+        }).flatMap(value -> value == null ? Mono.empty() : Mono.just(value));
+    }
+
+    @Override
+    public Mono<SessionReplayWindow> replayWindow(
+            String sessionId, String userId, String clientId) {
+        return Mono.fromSupplier(() -> {
+            List<EventEnvelope> visible = journal.events(sessionId).stream()
+                    .filter(event -> eventBelongsTo(event, userId, clientId))
+                    .toList();
+            long oldest = visible.stream().mapToLong(EventEnvelope::getSequence)
+                    .min().orElse(0L);
+            long latest = visible.stream().mapToLong(EventEnvelope::getSequence)
+                    .max().orElse(0L);
+            return new SessionReplayWindow(sessionId, oldest, latest);
+        });
+    }
+
     /**
      * A cold, polling event stream. Polling avoids a replay/live race between the
      * initial snapshot and a newly appended event, and also gives us a deterministic
@@ -506,13 +717,14 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (userId == null && clientId == null) return true;
         TurnRecord owner = journal.turn(event.getTurnId());
         return owner != null
-                && userId.equals(owner.getRequest().getUserId())
-                && clientId.equals(owner.getRequest().getClientId());
+                && (userId == null || userId.equals(owner.getRequest().getUserId()))
+                && (clientId == null || clientId.equals(owner.getRequest().getClientId()));
     }
 
     /** Used by tests and local lifecycle shutdown. */
     public synchronized void reset() {
         journal.turns().values().forEach(record -> {
+            capabilityRuntime.release(record.getRuntimeCapabilities());
             if (record.tryCancel()) {
                 record.completeDone();
             }
@@ -533,18 +745,37 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private void prepareRecord(TurnRecord record) {
         if (record.getManifest() != null) return;
         TurnRequest request = record.getRequest();
+        Instant frozenAt = Instant.now();
         PersonaRuntime.PersonaSnapshot persona = personaRuntime.reduce(request);
         CapabilityRegistry.Snapshot capabilitySnapshot = capabilities.freeze();
+        CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities =
+                capabilityRuntime.freeze(exposureContext(record));
+        KnowledgeTurnRetrievalRuntime.Snapshot knowledgeSnapshot = null;
+        if (knowledgeRetrieval != null) {
+            try {
+                knowledgeSnapshot = knowledgeRetrieval.freeze(
+                        request.tenantId(), frozenAt);
+            } catch (RuntimeException ignored) {
+                // Knowledge is optional for the companion response, but a failed
+                // authority read must never expose a partially loaded snapshot.
+            }
+        }
         record.freezePersonaSnapshot(persona);
         record.freezeCapabilitySnapshot(capabilitySnapshot);
+        record.freezeRuntimeCapabilities(runtimeCapabilities);
         record.freezeManifest(new HarnessManifest(
                 EventEnvelope.CURRENT_PROTOCOL_VERSION,
                 buildId,
                 "ctx-" + sessions.revision(request.getUserId(), request.getClientId(), request.getSessionId()),
                 persona.revision(),
-                capabilitySnapshot.version(),
-                capabilitySnapshot.grantedIds(),
-                Instant.now()));
+                runtimeCapabilities.snapshotId(),
+                runtimeCapabilities.exposed().stream()
+                        .map(CapabilityRuntimeFacade.CapabilityRef::id)
+                        .toList(),
+                knowledgeSnapshot == null
+                        ? "knowledge:unavailable" : knowledgeSnapshot.id(),
+                knowledgeSnapshot == null ? 0L : knowledgeSnapshot.revision(),
+                frozenAt));
         journal.persist(record);
     }
 
@@ -657,8 +888,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                 capabilityTimeout(record, "web.read", Duration.ofSeconds(8))))
                         .onErrorReturn(WebSearchRecall.unavailable(webSearch.providerName()))
                 : Mono.just(WebSearchRecall.disabled());
+        Mono<KnowledgeRecall> knowledge = retrieveKnowledge(
+                record, request, retrievalMode);
 
-        return Mono.zip(lore, recalledMemory, weather, web)
+        return Mono.zip(lore, recalledMemory, weather, web, knowledge)
                 .flatMap(retrieval -> {
                     RetrievalBundle bundle = new RetrievalBundle(
                             record.getTraceId(),
@@ -674,9 +907,9 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                             retrieval.getT2().memories()),
                                     new LaneResult(
                                             Lane.KNOWLEDGE_BASE,
-                                            retrievalMode == RetrievalMode.NONE ? "disabled" : "not_configured",
-                                            "none",
-                                            List.of()),
+                                            retrieval.getT5().status(),
+                                            retrieval.getT5().provider(),
+                                            retrieval.getT5().contextLines()),
                                     new LaneResult(
                                             Lane.WEB,
                                             retrieval.getT4().status(),
@@ -684,13 +917,21 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                             retrieval.getT4().contextLines())));
                     Map<String, Object> retrievalTrace = new LinkedHashMap<>(bundle.traceData());
                     retrievalTrace.put("retrieval_mode", retrievalMode.wireValue());
+                    if (retrieval.getT5().typedBundle() != null) {
+                        retrievalTrace.put(
+                                "knowledge_trace",
+                                beanMap(retrieval.getT5().typedBundle()));
+                    }
                     emit(record, "retrieval.completed", Map.copyOf(retrievalTrace));
                     transition(record, TurnStage.GENERATING);
                     List<String> contextualRecent = appendContext(promptRecent, retrieval.getT3().promptContext());
-                    return llm.respond(request, state, bundle.items(Lane.LORE), bundle.items(Lane.MEMORY),
+                    List<String> canon = appendContext(
+                            bundle.items(Lane.LORE),
+                            bundle.items(Lane.KNOWLEDGE_BASE));
+                    return llm.respond(request, state, canon, bundle.items(Lane.MEMORY),
                                     contextualRecent, bundle.items(Lane.WEB))
                             .map(retrieval.getT3()::augment)
-                            .flatMap(first -> sampleAlternative(record, request, state, bundle.items(Lane.LORE),
+                            .flatMap(first -> sampleAlternative(record, request, state, canon,
                                     bundle.items(Lane.MEMORY), contextualRecent,
                                     bundle.items(Lane.WEB), first, retrieval.getT3(), recent));
                 })
@@ -772,6 +1013,48 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 .map(item -> item.role() + ": " + item.content()).toList();
     }
 
+    private Mono<KnowledgeRecall> retrieveKnowledge(
+            TurnRecord record, TurnRequest request, RetrievalMode mode) {
+        if (mode == RetrievalMode.NONE) {
+            return Mono.just(KnowledgeRecall.disabled());
+        }
+        KnowledgeTurnRetrievalRuntime runtime = knowledgeRetrieval;
+        if (runtime == null) {
+            return Mono.just(KnowledgeRecall.notConfigured());
+        }
+        HarnessManifest manifest = record.getManifest();
+        if (manifest == null
+                || !manifest.knowledgeSnapshotId().startsWith("ks1.")) {
+            return Mono.just(KnowledgeRecall.unavailable());
+        }
+        com.meguri.core.retrieval.RetrievalMode typedMode = switch (mode) {
+            case NONE -> com.meguri.core.retrieval.RetrievalMode.NONE;
+            case FAST -> com.meguri.core.retrieval.RetrievalMode.FAST;
+            case SLOW -> com.meguri.core.retrieval.RetrievalMode.SLOW;
+        };
+        return executeCapability(
+                record,
+                "knowledge.read",
+                Map.of("query", request.getMessage()),
+                false,
+                () -> Mono.fromCallable(() -> runtime.retrieve(
+                                request.getMessage(),
+                                typedMode,
+                                request.tenantId(),
+                                request.getUserId(),
+                                Set.of(),
+                                manifest.knowledgeSnapshotId(),
+                                manifest.knowledgeRevision(),
+                                manifest.frozenAt(),
+                                record.getDeadlineAt(),
+                                record.getTraceId()))
+                        .subscribeOn(Schedulers.boundedElastic()))
+                .timeout(laneTimeout(record,
+                        capabilityTimeout(record, "knowledge.read", Duration.ofSeconds(5))))
+                .map(KnowledgeRecall::from)
+                .onErrorReturn(KnowledgeRecall.unavailable());
+    }
+
     private Mono<TurnWeatherContext> retrieveWeather(TurnRecord record, TurnRequest request) {
         WeatherConversationService.Intent intent = weatherConversation.classify(request.getMessage());
         if (intent == WeatherConversationService.Intent.NONE) {
@@ -793,6 +1076,90 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         combined.addAll(recent);
         combined.addAll(additional);
         return List.copyOf(combined);
+    }
+
+    private static String agentEventType(AgentLifecycleEvent event) {
+        return switch (event.type()) {
+            case SKILL_CREATED, STEP_CREATED -> "skill.started";
+            case SKILL_STATUS_CHANGED, STEP_STATUS_CHANGED ->
+                    lifecycleStatusType("skill", event.toStatus());
+            case DURABLE_WAITING -> "agent.waiting";
+            case TASK_STATUS_CHANGED ->
+                    lifecycleStatusType("agent", event.toStatus());
+            case CAPACITY_RELEASED -> "agent.completed";
+            case TASK_CREATED, CAPACITY_ACQUIRED, SUBMIT_PERMIT_RELEASED,
+                    REMOTE_SUBMITTED, RESULT_VALIDATED, IDEMPOTENT_REPLAY ->
+                    lifecycleStatusType("agent", event.toStatus());
+        };
+    }
+
+    private static String lifecycleStatusType(String prefix, String status) {
+        String normalized = status == null
+                ? "" : status.toUpperCase(java.util.Locale.ROOT);
+        if (normalized.contains("WAITING")) return prefix + ".waiting";
+        if ("SUCCEEDED".equals(normalized)) return prefix + ".completed";
+        if ("FAILED".equals(normalized)
+                || "CANCELLED".equals(normalized)
+                || "TIMED_OUT".equals(normalized)) {
+            return prefix + ".failed";
+        }
+        return prefix + ".started";
+    }
+
+    private static void putIfPresent(
+            Map<String, Object> target, String key, Object value) {
+        if (value != null) target.put(key, value);
+    }
+
+    private static String required(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " is required");
+        }
+        return value.trim();
+    }
+
+    private record KnowledgeRecall(
+            String status,
+            String provider,
+            List<String> contextLines,
+            com.meguri.core.retrieval.RetrievalBundle typedBundle) {
+        private KnowledgeRecall {
+            status = status == null || status.isBlank() ? "unavailable" : status;
+            provider = provider == null || provider.isBlank() ? "none" : provider;
+            contextLines = contextLines == null ? List.of() : List.copyOf(contextLines);
+        }
+
+        private static KnowledgeRecall from(
+                com.meguri.core.retrieval.RetrievalBundle bundle) {
+            RetrievalLaneResult lane = bundle.lanes().get(SourceType.KNOWLEDGE);
+            String status = lane == null
+                    ? "unavailable"
+                    : lane.status() == RetrievalLaneResult.Status.OK
+                            && lane.items().isEmpty()
+                                    ? "empty"
+                                    : lane.status().name().toLowerCase(java.util.Locale.ROOT);
+            String provider = lane == null ? "none" : lane.provider();
+            List<String> context = bundle.items().stream()
+                    .filter(item -> item.sourceType() == SourceType.KNOWLEDGE)
+                    .map(item -> item.citation().isEmpty()
+                            ? item.content()
+                            : item.content() + "\n[Knowledge source: "
+                                    + item.citation().displayReferences() + "]")
+                    .toList();
+            return new KnowledgeRecall(status, provider, context, bundle);
+        }
+
+        private static KnowledgeRecall disabled() {
+            return new KnowledgeRecall("disabled", "none", List.of(), null);
+        }
+
+        private static KnowledgeRecall notConfigured() {
+            return new KnowledgeRecall("not_configured", "none", List.of(), null);
+        }
+
+        private static KnowledgeRecall unavailable() {
+            return new KnowledgeRecall("unavailable", "none", List.of(), null);
+        }
     }
 
     private Mono<WebSearchRecall> retrieveWeb(TurnRecord record, TurnRequest request) {
@@ -955,6 +1322,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             throw persistenceError;
         }
         record.completeDone();
+        capabilityRuntime.release(record.getRuntimeCapabilities());
         return true;
     }
 
@@ -972,16 +1340,180 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             Map<String, Object> input,
             boolean approvalGranted,
             Supplier<Mono<T>> operation) {
-        CapabilityPolicy.ExecutionRequest execution = new CapabilityPolicy.ExecutionRequest(
+        return Mono.defer(() -> {
+            CompletableFuture<T> completion = new CompletableFuture<>();
+            AtomicBoolean abandoned = new AtomicBoolean();
+            Disposable task = Schedulers.boundedElastic().schedule(() -> {
+                try {
+                    T value = executeCapabilityBlocking(
+                            record, capabilityId, input, approvalGranted, operation);
+                    if (!abandoned.get()) completion.complete(value);
+                } catch (Throwable error) {
+                    if (!abandoned.get()) completion.completeExceptionally(error);
+                }
+            });
+            return Mono.fromFuture(completion, true)
+                    .doOnCancel(() -> {
+                        abandoned.set(true);
+                        task.dispose();
+                    });
+        });
+    }
+
+    private <T> T executeCapabilityBlocking(
+            TurnRecord record,
+            String capabilityId,
+            Map<String, Object> input,
+            boolean approvalGranted,
+            Supplier<Mono<T>> operation) {
+        String idempotencyKey = capabilityIdempotencyKey(
+                record, capabilityId, input);
+        String operationId = idempotencyKey == null
+                ? null
+                : isWriteCapability(capabilityId)
+                        ? idempotencyKey
+                        : record.getTurnId() + ":" + capabilityId + ":" + idempotencyKey;
+        ToolProposal proposal = toolProposal(
+                record, capabilityId, input, operationId, idempotencyKey, null);
+        if (requiresApproval(capabilityId)) {
+            ApprovalService.Approval approval =
+                    capabilityRuntime.requestApproval(
+                            record.getRuntimeCapabilities(), proposal);
+            LinkedHashMap<String, Object> requiredEvent =
+                    new LinkedHashMap<>();
+            requiredEvent.put("approval_id", approval.approvalId());
+            requiredEvent.put("capability_id", capabilityId);
+            putIfPresent(requiredEvent, "operation_id", operationId);
+            emit(record, "approval.required", Map.copyOf(requiredEvent));
+            if (approvalGranted) {
+                ApprovalService.Approval resolved = capabilityRuntime.resolveApproval(
+                        approval.approvalId(),
+                        ApprovalService.Decision.ACCEPT,
+                        "agent.invoke".equals(capabilityId)
+                                ? "explicit_agent_request"
+                                : "adapter_permission");
+                LinkedHashMap<String, Object> resolvedEvent =
+                        new LinkedHashMap<>();
+                resolvedEvent.put("approval_id", resolved.approvalId());
+                resolvedEvent.put("capability_id", capabilityId);
+                putIfPresent(resolvedEvent, "operation_id", operationId);
+                resolvedEvent.put(
+                        "decision",
+                        resolved.decision().name().toLowerCase());
+                emit(record, "approval.resolved", Map.copyOf(resolvedEvent));
+            }
+            proposal = toolProposal(
+                    record, capabilityId, input, operationId, idempotencyKey,
+                    approval.approvalId());
+        }
+
+        CapabilityPolicy.ExecutionRequest legacyExecution =
+                new CapabilityPolicy.ExecutionRequest(
+                        record.getTurnId(),
+                        record.getRequest().getUserId(),
+                        record.getTurnId() + ":" + capabilityId,
+                        approvalGranted,
+                        input,
+                        legacySandbox(record, capabilityId),
+                        record.getRequest().retrievalMode());
+        AtomicReference<T> output = new AtomicReference<>();
+        ToolProposal frozenProposal = proposal;
+        CapabilityResult result = capabilityRuntime.execute(
+                record.getRuntimeCapabilities(),
+                frozenProposal,
+                (ignoredInput, ignoredContext) -> {
+                    T value = capabilityExecutor.execute(
+                                    record.getCapabilitySnapshot(),
+                                    capabilityId,
+                                    legacyExecution,
+                                    operation)
+                            .block();
+                    if (value == null) {
+                        throw new IllegalStateException(
+                                "capability operation completed without a value");
+                    }
+                    output.set(value);
+                    return Map.of("executed", true);
+                });
+        if (result.status() != CapabilityResult.Status.SUCCESS) {
+            throw new IllegalStateException(
+                    "capability rejected: " + result.errorCode());
+        }
+        T value = output.get();
+        if (value == null) {
+            throw new IllegalStateException(
+                    "capability completed without an operation result");
+        }
+        return value;
+    }
+
+    private ToolProposal toolProposal(
+            TurnRecord record,
+            String capabilityId,
+            Map<String, Object> input,
+            String operationId,
+            String idempotencyKey,
+            String approvalId) {
+        TurnRequest request = record.getRequest();
+        boolean networkAllowed = request.retrievalMode() == RetrievalMode.SLOW
+                && ("web.read".equals(capabilityId)
+                || "weather.read".equals(capabilityId)
+                || "agent.invoke".equals(capabilityId));
+        return new ToolProposal(
                 record.getTurnId(),
-                record.getRequest().getUserId(),
-                record.getTurnId() + ":" + capabilityId,
-                approvalGranted,
+                record.getTraceId(),
+                request.tenantId(),
+                request.getUserId(),
+                request.getClientId(),
+                capabilityId,
                 input,
-                null,
-                record.getRequest().retrievalMode());
-        return capabilityExecutor.execute(
-                record.getCapabilitySnapshot(), capabilityId, execution, operation);
+                Set.of(),
+                operationId,
+                idempotencyKey,
+                approvalId,
+                networkAllowed,
+                1000);
+    }
+
+    private static boolean isWriteCapability(String capabilityId) {
+        return "memory.write".equals(capabilityId);
+    }
+
+    private static String capabilityIdempotencyKey(
+            TurnRecord record,
+            String capabilityId,
+            Map<String, Object> input) {
+        if (isWriteCapability(capabilityId)) {
+            return record.getTurnId() + ":" + capabilityId;
+        }
+        if (!"agent.invoke".equals(capabilityId)) return null;
+        Object supplied = input.get("idempotency_key");
+        if (supplied instanceof String value && !value.isBlank()) {
+            return value.trim();
+        }
+        return "invoke";
+    }
+
+    private static boolean requiresApproval(String capabilityId) {
+        return isWriteCapability(capabilityId)
+                || "agent.invoke".equals(capabilityId);
+    }
+
+    private static CapabilityPolicy.SandboxBudget legacySandbox(
+            TurnRecord record, String capabilityId) {
+        if (!"agent.invoke".equals(capabilityId)) return null;
+        Duration remaining = record.remaining();
+        Duration wallTime = remaining.compareTo(Duration.ofSeconds(30)) < 0
+                ? remaining : Duration.ofSeconds(30);
+        return new CapabilityPolicy.SandboxBudget(
+                wallTime,
+                1,
+                1,
+                1000,
+                Set.of("agent.invoke"),
+                Set.of(),
+                Set.of("configured-provider"),
+                false);
     }
 
     private Mono<List<com.meguri.core.dto.MemoryCandidate>> materializeMemoryCandidates(
@@ -1088,6 +1620,197 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         return cwd.resolve("datasets").resolve("meguri");
     }
 
+    private ExposurePlanner.ExposureContext exposureContext(TurnRecord record) {
+        TurnRequest request = record.getRequest();
+        CapabilityDescriptor.Mode mode = switch (request.retrievalMode()) {
+            case NONE, FAST -> CapabilityDescriptor.Mode.FAST;
+            case SLOW -> CapabilityDescriptor.Mode.DEEP;
+        };
+        return new ExposurePlanner.ExposureContext(
+                record.getTurnId(),
+                request.tenantId(),
+                request.getUserId(),
+                request.getClientId(),
+                Set.of(),
+                mode,
+                Set.of(),
+                1,
+                request.retrievalMode() == RetrievalMode.SLOW,
+                request.formalMemoryAllowed()
+                        ? CapabilityDescriptor.DataClassification.CONFIDENTIAL
+                        : CapabilityDescriptor.DataClassification.INTERNAL);
+    }
+
+    private void registerRuntimeCapabilities() {
+        registerRuntimeCapability(runtimeDescriptor(
+                "lore.read",
+                CapabilityDescriptor.Kind.READ_TOOL,
+                CapabilityDescriptor.SideEffect.READ,
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                Duration.ofSeconds(8),
+                Set.of(
+                        CapabilityDescriptor.Mode.FAST,
+                        CapabilityDescriptor.Mode.BALANCED,
+                        CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.INTERNAL,
+                false,
+                false,
+                objectSchema(
+                        Map.of("query", CapabilityDescriptor.ValueType.STRING),
+                        Set.of("query"))));
+        registerRuntimeCapability(runtimeDescriptor(
+                "memory.read",
+                CapabilityDescriptor.Kind.READ_TOOL,
+                CapabilityDescriptor.SideEffect.READ,
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                Duration.ofSeconds(5),
+                Set.of(
+                        CapabilityDescriptor.Mode.FAST,
+                        CapabilityDescriptor.Mode.BALANCED,
+                        CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.INTERNAL,
+                false,
+                false,
+                objectSchema(
+                        Map.of("query", CapabilityDescriptor.ValueType.STRING),
+                        Set.of("query"))));
+        registerRuntimeCapability(runtimeDescriptor(
+                "knowledge.read",
+                CapabilityDescriptor.Kind.READ_TOOL,
+                CapabilityDescriptor.SideEffect.READ,
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                Duration.ofSeconds(5),
+                Set.of(
+                        CapabilityDescriptor.Mode.FAST,
+                        CapabilityDescriptor.Mode.BALANCED,
+                        CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.INTERNAL,
+                false,
+                false,
+                objectSchema(
+                        Map.of("query", CapabilityDescriptor.ValueType.STRING),
+                        Set.of("query"))));
+        registerRuntimeCapability(runtimeDescriptor(
+                "web.read",
+                CapabilityDescriptor.Kind.READ_TOOL,
+                CapabilityDescriptor.SideEffect.EXTERNAL,
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                Duration.ofSeconds(8),
+                Set.of(CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.PUBLIC,
+                true,
+                false,
+                objectSchema(
+                        Map.of("message", CapabilityDescriptor.ValueType.STRING),
+                        Set.of("message"))));
+        registerRuntimeCapability(runtimeDescriptor(
+                "weather.read",
+                CapabilityDescriptor.Kind.READ_TOOL,
+                CapabilityDescriptor.SideEffect.EXTERNAL,
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                Duration.ofSeconds(5),
+                Set.of(CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.PUBLIC,
+                true,
+                false,
+                objectSchema(
+                        Map.of("message", CapabilityDescriptor.ValueType.STRING),
+                        Set.of("message"))));
+        registerRuntimeCapability(runtimeDescriptor(
+                "memory.write",
+                CapabilityDescriptor.Kind.WRITE_TOOL,
+                CapabilityDescriptor.SideEffect.WRITE,
+                CapabilityDescriptor.ApprovalRequirement.RISK_BASED,
+                Duration.ofSeconds(5),
+                Set.of(
+                        CapabilityDescriptor.Mode.FAST,
+                        CapabilityDescriptor.Mode.BALANCED,
+                        CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.CONFIDENTIAL,
+                false,
+                true,
+                objectSchema(
+                        Map.of(
+                                "turn_id", CapabilityDescriptor.ValueType.STRING,
+                                "user_id", CapabilityDescriptor.ValueType.STRING,
+                                "client_id", CapabilityDescriptor.ValueType.STRING,
+                                "session_id", CapabilityDescriptor.ValueType.STRING,
+                                "candidate_count", CapabilityDescriptor.ValueType.NUMBER,
+                                "candidates", CapabilityDescriptor.ValueType.ARRAY),
+                        Set.of(
+                                "turn_id", "user_id", "client_id", "session_id",
+                                "candidate_count", "candidates"))));
+        registerRuntimeCapability(runtimeDescriptor(
+                "agent.invoke",
+                CapabilityDescriptor.Kind.REMOTE_AGENT,
+                CapabilityDescriptor.SideEffect.EXTERNAL,
+                CapabilityDescriptor.ApprovalRequirement.RISK_BASED,
+                Duration.ofSeconds(30),
+                Set.of(CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.INTERNAL,
+                true,
+                false,
+                new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of())));
+    }
+
+    private void registerRuntimeCapability(CapabilityDescriptor descriptor) {
+        capabilityRuntime.register(
+                descriptor,
+                (input, context) -> Map.of("authorized", true));
+    }
+
+    private static CapabilityDescriptor runtimeDescriptor(
+            String id,
+            CapabilityDescriptor.Kind kind,
+            CapabilityDescriptor.SideEffect sideEffect,
+            CapabilityDescriptor.ApprovalRequirement approval,
+            Duration timeout,
+            Set<CapabilityDescriptor.Mode> modes,
+            CapabilityDescriptor.DataClassification classification,
+            boolean network,
+            boolean idempotentWrite,
+            CapabilityDescriptor.Schema inputSchema) {
+        return new CapabilityDescriptor(
+                id,
+                "1",
+                kind,
+                "meguri-core",
+                inputSchema,
+                new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of()),
+                Set.of(),
+                sideEffect,
+                approval,
+                timeout,
+                CapabilityDescriptor.RetryPolicy.none(),
+                new CapabilityDescriptor.ConcurrencyPolicy(4),
+                modes,
+                classification,
+                kind == CapabilityDescriptor.Kind.REMOTE_AGENT
+                        ? CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL
+                        : CapabilityDescriptor.ResultTrust.TRUSTED_LOCAL,
+                "turn-operation://" + id,
+                CapabilityDescriptor.Health.HEALTHY,
+                false,
+                1,
+                network
+                        ? new CapabilityDescriptor.NetworkPolicy(
+                                true, Set.of("configured-provider"))
+                        : CapabilityDescriptor.NetworkPolicy.denied(),
+                Set.of(),
+                new CapabilityDescriptor.CostPolicy(0, 1000),
+                CapabilityDescriptor.CachePolicy.disabled(),
+                idempotentWrite
+                        ? new CapabilityDescriptor.IdempotencyPolicy(true, true)
+                        : CapabilityDescriptor.IdempotencyPolicy.none());
+    }
+
+    private static CapabilityDescriptor.Schema objectSchema(
+            Map<String, CapabilityDescriptor.ValueType> properties,
+            Set<String> required) {
+        return new CapabilityDescriptor.Schema(
+                properties, required, false, Set.of());
+    }
+
     private CapabilityRegistry defaultCapabilities() {
         CapabilityRegistry registry = new CapabilityRegistry();
         registry.register(new CapabilityRegistry.Descriptor(
@@ -1096,6 +1819,9 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         registry.register(new CapabilityRegistry.Descriptor(
                 "memory.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.READ,
                 CapabilityRegistry.Approval.NONE, Duration.ofSeconds(5), 4, memoryProviderName()));
+        registry.register(new CapabilityRegistry.Descriptor(
+                "knowledge.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.READ,
+                CapabilityRegistry.Approval.NONE, Duration.ofSeconds(5), 4, "KnowledgeRuntime"));
         registry.register(new CapabilityRegistry.Descriptor(
                 "memory.write", CapabilityRegistry.Kind.WRITE_TOOL, CapabilityRegistry.Effect.WRITE,
                 CapabilityRegistry.Approval.RISK_BASED, Duration.ofSeconds(5), 2, memoryProviderName()));
@@ -1106,6 +1832,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 "weather.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.EXTERNAL,
                 CapabilityRegistry.Approval.NONE, Duration.ofSeconds(5), 2,
                 weatherConversation.getClass().getSimpleName()));
+        registry.register(new CapabilityRegistry.Descriptor(
+                "agent.invoke", CapabilityRegistry.Kind.REMOTE_AGENT, CapabilityRegistry.Effect.EXTERNAL,
+                CapabilityRegistry.Approval.RISK_BASED, Duration.ofSeconds(30), 2,
+                "AgentRuntime"));
         return registry;
     }
 
@@ -1115,6 +1845,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         executor.registerSchema("lore.read", new CapabilityInputSchema(
                 Map.of("query", CapabilityInputSchema.ValueKind.STRING), Set.of("query"), false));
         executor.registerSchema("memory.read", new CapabilityInputSchema(
+                Map.of("query", CapabilityInputSchema.ValueKind.STRING), Set.of("query"), false));
+        executor.registerSchema("knowledge.read", new CapabilityInputSchema(
                 Map.of("query", CapabilityInputSchema.ValueKind.STRING), Set.of("query"), false));
         executor.registerSchema("web.read", new CapabilityInputSchema(
                 Map.of("message", CapabilityInputSchema.ValueKind.STRING), Set.of("message"), false));
@@ -1130,6 +1862,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         "candidates", CapabilityInputSchema.ValueKind.ARRAY),
                 Set.of("turn_id", "user_id", "client_id", "session_id", "candidate_count", "candidates"),
                 false));
+        executor.registerSchema("agent.invoke", new CapabilityInputSchema(
+                Map.of(), Set.of(), true));
         return executor;
     }
 

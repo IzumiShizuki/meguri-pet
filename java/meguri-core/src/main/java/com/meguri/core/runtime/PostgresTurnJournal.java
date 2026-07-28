@@ -103,13 +103,22 @@ public final class PostgresTurnJournal implements TurnJournal {
     @Override
     public List<EventEnvelope> events(String sessionId) {
         return jdbc.query("""
-                        SELECT event_id, protocol_version, required, event_type, turn_id,
-                               session_id, sequence, data_json, metadata_json
+                        SELECT event_id, protocol_version, required, required_extension,
+                               event_type, turn_id, session_id, sequence, replay_policy,
+                               data_json, metadata_json, created_at
                         FROM turn_event
                         WHERE session_id = ?
                         ORDER BY sequence
                         """,
                 (rs, rowNum) -> readEvent(rs), sessionId);
+    }
+
+    @Override
+    public long firstSequence(String sessionId) {
+        Long value = jdbc.queryForObject(
+                "SELECT COALESCE(MIN(sequence), 0) FROM turn_event WHERE session_id = ?",
+                Long.class, sessionId);
+        return value == null ? 0L : value;
     }
 
     @Override
@@ -174,8 +183,9 @@ public final class PostgresTurnJournal implements TurnJournal {
 
         events.clear();
         jdbc.query("""
-                        SELECT event_id, protocol_version, required, event_type, turn_id,
-                               session_id, sequence, data_json, metadata_json
+                        SELECT event_id, protocol_version, required, required_extension,
+                               event_type, turn_id, session_id, sequence, replay_policy,
+                               data_json, metadata_json, created_at
                         FROM turn_event
                         ORDER BY session_id, sequence
                         """,
@@ -224,21 +234,26 @@ public final class PostgresTurnJournal implements TurnJournal {
                 EventEnvelope.CURRENT_PROTOCOL_VERSION,
                 newId("event"),
                 TurnEventTypes.isRequired(type),
+                null,
                 type,
                 record.getTurnId(),
                 sessionId,
                 next.longValue(),
+                TurnEventTypes.replayPolicy(type, data),
+                metadata.getCreatedAt(),
                 data,
                 metadata);
         jdbc.update("""
                 INSERT INTO turn_event (
                     event_id, turn_id, session_id, sequence, protocol_version,
-                    required, event_type, data_json, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)
+                    required, required_extension, event_type, replay_policy,
+                    data_json, metadata_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)
                 """,
                 event.getEventId(), event.getTurnId(), event.getSessionId(), event.getSequence(),
-                event.getProtocolVersion(), event.isRequired(), event.getType(), write(event.getData()),
-                write(event.getMetadata()), Timestamp.from(event.getMetadata().getCreatedAt()));
+                event.getProtocolVersion(), event.isRequired(), event.getRequiredExtension(),
+                event.getType(), event.getReplayPolicy().name(), write(event.getData()),
+                write(event.getMetadata()), Timestamp.from(event.getCreatedAt()));
         jdbc.update("""
                 INSERT INTO turn_outbox (event_id, aggregate_id, session_id, payload_json)
                 VALUES (?, ?, ?, CAST(? AS jsonb))
@@ -329,10 +344,13 @@ public final class PostgresTurnJournal implements TurnJournal {
                 rs.getString("protocol_version"),
                 rs.getString("event_id"),
                 rs.getBoolean("required"),
+                rs.getString("required_extension"),
                 rs.getString("event_type"),
                 rs.getString("turn_id"),
                 rs.getString("session_id"),
                 rs.getLong("sequence"),
+                com.meguri.core.adapter.domain.ReplayPolicy.valueOf(rs.getString("replay_policy")),
+                rs.getTimestamp("created_at").toInstant(),
                 read(rs.getString("data_json"), OBJECT_MAP),
                 read(rs.getString("metadata_json"), EventMetadata.class));
     }

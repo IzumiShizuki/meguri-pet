@@ -1,0 +1,20 @@
+{
+  "normal": [
+    { "sequence": 1, "event_id": "normal-1", "type": "turn.started", "replay_policy": "STATE" },
+    { "sequence": 2, "event_id": "normal-2", "type": "text.delta", "replay_policy": "STATE" },
+    { "sequence": 3, "event_id": "normal-3", "type": "turn.completed", "replay_policy": "STATE" }
+  ],
+  "disconnect_resume_after_sequence": 2,
+  "duplicate_event_id": "normal-2",
+  "cancel": ["cancel_requested", "cancelled"],
+  "unknown_optional_event": { "required": false, "type": "future.presentation.hint" },
+  "major_rejected": "2.0",
+  "minor_accepted": "1.9",
+  "cursor_expired": { "code": "CURSOR_EXPIRED", "snapshot_sequence": 40 },
+  "once_replay": {
+    "event_id": "tts-side-effect-1",
+    "type": "tts.requested",
+    "replay_policy": "ONCE",
+    "expected_dispatch_count": 1
+  }
+}
