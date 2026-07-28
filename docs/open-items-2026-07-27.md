@@ -19,57 +19,36 @@
 
 ## Notion 20 Audit
 
-- `20.0/20.5`: the local Turn lifecycle now includes a PostgreSQL journal,
-  transactional event/outbox writes, atomic session sequences, restart
-  recovery and bounded subscriber buffers. Still open: real PostgreSQL fault
-  tests, outbox dispatch/ack/retry, cursor compaction and replay-gap snapshots.
-- `20.1`: provider token counting, one global prompt budget and PostgreSQL
-  Message DAG snapshots are implemented locally. Still open: durable background
-  summary/precompression jobs and real database recovery evidence.
-- `20.2`: candidate review, versions, risk level, merge policy, base version,
-  optimistic concurrency and `CREATE_ONLY` are implemented. Direct supersede,
-  legacy upsert and the runtime bridge now fail closed into candidate review;
-  L0 payloads are redacted before the first repository write, and ordinary
-  candidates cannot mutate protected relationship fields. Still open: file
-  projection, true three-way conflict handling and production outbox evidence.
-- `20.3`: Lore vector/keyword/rerank rankings now use RRF and Java emits one
-  four-lane `RetrievalBundle`. Lore failure now degrades independently to an
-  `unavailable` lane instead of failing the Turn. Still open: a real Knowledge Base provider,
-  result-level scores/filter reasons and a complete query-to-answer trace.
-- `20.4`: deterministic snapshots, provenance, override TTL and isolated
-  temporal debounce/cooldown/hysteresis are implemented. Still open: complete
-  profile/relationship/scene/interaction persistence and cross-client sync.
-- `20.6`: policy, approval, schema validation, executor, concurrency/timeout,
-  MCP normalization and bounded Remote Agent policy are wired into Turn
-  execution. Still open: a PostgreSQL Effect Ledger, compensation/undo and a
-  real OS/container sandbox.
-- `20.7`: AIRI, AstrBot and Website share the v1 protocol with local reconnect,
-  duplicate suppression, identity scoping and downgrade tests. Website and
-  AstrBot now persist reducer checkpoints before side effects and restore them
-  across page/plugin restarts. Cross-client authenticated E2E, Client Hello,
-  cursor-expiry snapshots and durable server event replay remain open; AIRI
-  native Live2D wiring is still a separate spike boundary.
+- The 2026-07-29 full re-audit classifies every 20.x page as partially
+  implemented. The canonical Chinese matrix and evidence are in
+  `docs/notion-20-implementation-plan-2026-07-28.md`.
+- `20.1`: finish typed ContextBundle, online summary/rehydration, build trace and
+  durable precompression.
+- `20.2`: finish merge policies, three-way conflicts, last stable branches,
+  tombstone projections and the local file mirror/repair loop.
+- `20.3`: Knowledge/Graph is implemented; finish one typed runtime across Lore,
+  Memory, Knowledge, Graph and Web, including Memory RRF and Web extraction.
+- `20.4`: build authoritative Profile/Relationship/Scene repositories, the
+  three-stage Persona reducer, PromptPolicyComposer and Persona evaluation.
+- `20.5`: connect native provider streaming, dispatch Turn outbox records, add
+  stable restart codes/retry lineage and run PostgreSQL fault injection.
+- `20.6`: connect Prompt Skills, add a real Remote Agent transport, migrate the
+  remaining direct Gateways and validate a real MCP server.
+- `20.7`: align required event catalogs, use retry-stable idempotency keys, run
+  one fixture suite across all adapters and complete authenticated cross-client E2E.
 
 ## Latest verification
 
-- Java 21: 139 passed, 1 environment-dependent test skipped.
-- Python: 341 passed, 8 PostgreSQL tests skipped because
-  `MEGURI_TEST_DATABASE_URL` is unavailable.
-- TypeScript protocol/adapter/website: 25 passed; Desktop Node: 13 passed,
-  1 symlink test skipped.
-- AIRI targeted verification: 85 tests passed across Adapter, Tamagotchi and
-  Stage UI; relevant ESLint and `core-agent` typecheck passed.
-- AIRI full `stage-tamagotchi` typecheck remains blocked by the existing missing
-  `apps/server` and `@proj-airi/server-runtime/server` module boundary.
-- AIRI's full Tamagotchi suite also retains unrelated Windows baseline failures:
-  symlink creation requires privileges, one path assertion assumes `/`, and an
-  unbuilt `@proj-airi/electron-vueuse` package entry prevents one suite import.
-- Both repositories pass `git diff --check`; the large worktrees still need to
-  be split into reviewable commits.
+- Java 21: 287 tests executed, 0 failures, 0 errors, 1 skipped.
+- Python: 342 passed, 8 skipped.
+- Root TypeScript: 42/42 passed.
+- AIRI Meguri Adapter: 22/22 passed; strict TypeScript and targeted ESLint passed.
+- AIRI Stage: 405 tests passed; 4 existing Windows/upstream failures remain.
+- Both repositories were clean after commits `a594069` and `ab80ed8e`; neither
+  branch has been pushed by this audit.
 - Do not label PostgreSQL, cross-client authentication or Remote Agent isolation
   as production-complete without environment-backed evidence.
-- The requirement-by-requirement Chinese audit is recorded in
-  `docs/notion-20-audit-2026-07-28.md`.
+- The old `docs/notion-20-audit-2026-07-28.md` is retained as a historical snapshot.
 
 ## Review Note
 

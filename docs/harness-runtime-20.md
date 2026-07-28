@@ -1,5 +1,10 @@
 # Meguri Harness Runtime 20
 
+Status note (2026-07-29): this file describes the runtime seam and production
+gates. The canonical requirement-by-requirement status is maintained in
+`docs/notion-20-implementation-plan-2026-07-28.md`; it currently classifies
+20.0-20.7 as partially implemented.
+
 This document records the implementation boundary derived from the 19.x
 current-state documents and the 20.x strengthened design documents. It
 distinguishes three different claims: code implemented locally, behavior
@@ -141,40 +146,41 @@ completion:
    database or Testcontainers, including restart, concurrency, unavailable
    database and transaction-failure scenarios.
 2. Implement the Turn outbox dispatcher, delivery acknowledgement, retry and
-   idempotent consumer contract. Add cursor compaction plus replay-gap snapshot
-   behavior for clients whose checkpoint is older than retained events.
+   idempotent consumer contract. Cursor expiry and session snapshots now exist,
+   but event retention/compaction and real PostgreSQL replay-gap evidence remain.
 3. Add a background summary/precompression job. The current global token
    budget can synchronously remove optional records, but does not schedule
    durable summarization work.
 4. Complete Memory file projection and true three-way conflict resolution.
    Prove Memory outbox delivery and recovery against PostgreSQL.
-5. Add a real Knowledge Base provider, result-level fused scores and filter
-   reasons, and one query-to-answer retrieval trace.
+5. Route Lore, Memory, Knowledge, Graph and Web through one typed Planner,
+   Bundle and Trace. Replace Memory's heterogeneous linear score fusion with
+   RRF or a validated calibration model, and complete Web search/extract safety.
 6. Persist full Persona profile, relationship, scene and interaction state,
    then define cross-client synchronization rules.
-7. Persist an Effect Ledger, define compensation or undo semantics, and run
-   Remote Agents inside a real OS/container sandbox. Policy budgets alone do
-   not isolate a process.
+7. Connect Prompt Skills to Context assembly, provide a real Remote Agent/A2A
+   transport, migrate remaining direct Gateways into Capability Runtime, define
+   compensation semantics, and prove process/network isolation where required.
 8. Add authenticated AIRI, AstrBot and Website E2E tests against the same Core
    and Relay, including expired tokens, forged identities, reconnect and
    durable replay.
 9. Wire native AIRI Live2D only if it is selected as a delivery requirement.
    The current PNG-first implementation remains an explicit integration stage.
-10. Generate Java, TypeScript and Python protocol models from one schema rather
-    than maintaining compatible handwritten models.
+10. Generate Java, TypeScript and Python protocol models from one schema,
+    align Tool/Approval/Skill/Agent required event catalogs, and make client
+    idempotency keys stable across request retries.
 
 Until these gates close, the correct status is: durable components implemented
 and locally contract-tested, but production Harness 20 is not yet proven.
 
 ## Latest verification snapshot
 
-- Java 21: 139 tests passed, 1 environment-dependent test skipped.
-- Python: 341 tests passed; 8 real PostgreSQL tests skipped because
-  `MEGURI_TEST_DATABASE_URL` is unavailable.
-- TypeScript protocol, AIRI and Website: 25 tests passed.
-- Desktop Node: 13 tests passed, 1 symlink test skipped.
-- AIRI targeted suites: 85 tests passed; relevant ESLint and `core-agent`
-  typecheck passed. Full `stage-tamagotchi` typecheck is still blocked by the
-  existing missing server package boundary.
+- Java 21: 287 tests executed, 0 failures, 0 errors, 1 environment-dependent
+  test skipped.
+- Python: 342 tests passed; 8 environment/real PostgreSQL tests skipped.
+- Root TypeScript protocol and adapters: 42/42 passed.
+- AIRI Meguri Adapter: 22/22 passed; targeted strict TypeScript and ESLint passed.
+- AIRI Stage: 405 tests passed; 4 existing Windows/upstream environment failures
+  remain outside the Meguri adapter change set.
 - No real PostgreSQL or authenticated cross-client E2E evidence is available
   on this workstation.
