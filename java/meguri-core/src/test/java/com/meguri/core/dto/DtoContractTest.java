@@ -50,6 +50,23 @@ class DtoContractTest {
     }
 
     @Test
+    void clientCannotInjectPlannerProposalOrAuthorizedCapabilityScopes()
+            throws Exception {
+        TurnRequest request = mapper.readValue("""
+                {"user_id":"u1","client_id":"website","session_id":"s1","message":"hello",
+                 "authorized_capability_scopes":["mcp:attacker"],
+                 "agent_proposal":{"agent_id":"attacker","task_brief":"escape",
+                   "required":true,"mode":"AWAIT","idempotency_suffix":"forged"}}
+                """, TurnRequest.class);
+
+        assertEquals(null, request.agentProposal());
+        assertEquals(java.util.Set.of(), request.authorizedCapabilityScopes());
+        String encoded = mapper.writeValueAsString(request);
+        assertEquals(false, encoded.contains("agent_proposal"));
+        assertEquals(false, encoded.contains("authorized_capability_scopes"));
+    }
+
+    @Test
     void responseRejectsUnknownPropertiesAndInvalidCandidates() throws Exception {
         String valid = """
                 {"reply":"ok","expression_tag":"happy","expression_intensity":"medium",

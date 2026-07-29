@@ -70,9 +70,11 @@ public final class CapabilityExecutor implements AutoCloseable {
             return rejected(plan, proposal, descriptor, code);
         }
 
-        if (descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE) {
+        boolean trackedEffect = tracksEffect(descriptor, proposal);
+        if (trackedEffect) {
             if (proposal.operationId() == null) return rejected(plan, proposal, descriptor, "OPERATION_ID_REQUIRED");
-            if (descriptor.idempotency().required() && proposal.idempotencyKey() == null) {
+            if (descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE
+                    && descriptor.idempotency().required() && proposal.idempotencyKey() == null) {
                 return rejected(plan, proposal, descriptor, "IDEMPOTENCY_KEY_REQUIRED");
             }
             OperationStore.Claim claim = operations.claim(
@@ -96,7 +98,7 @@ public final class CapabilityExecutor implements AutoCloseable {
         }
 
         CapabilityResult result = invoke(plan, proposal, grant, approval);
-        if (descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE) {
+        if (trackedEffect) {
             operations.complete(proposal.operationId(), result);
         }
         return result;
@@ -113,7 +115,7 @@ public final class CapabilityExecutor implements AutoCloseable {
         if (!bulkhead.tryAcquire()) return rejected(plan, proposal, descriptor, "BULKHEAD_REJECTED");
         long started = System.nanoTime();
         try {
-            int attempts = retryAttempts(descriptor);
+            int attempts = retryAttempts(descriptor, proposal);
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 try {
                     Map<String, Object> raw = timedInvoke(grant, proposal, attempt, descriptor.timeout());
@@ -122,7 +124,7 @@ public final class CapabilityExecutor implements AutoCloseable {
                             elapsedMillis(started));
                     return result;
                 } catch (TimeoutException timeout) {
-                    CapabilityResult result = timeoutResult(descriptor);
+                    CapabilityResult result = timeoutResult(descriptor, proposal);
                     record(plan, proposal, descriptor, approval, "COMPLETED", attempt, result,
                             elapsedMillis(started));
                     return result;
@@ -141,8 +143,10 @@ public final class CapabilityExecutor implements AutoCloseable {
                     boolean retry = attempt < attempts;
                     if (retry) sleep(descriptor.retry().backoff());
                     else {
-                        CapabilityResult result = CapabilityResult.failure("IMPLEMENTATION_FAILED",
-                                descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE);
+                        CapabilityResult result = tracksExternalEffect(descriptor, proposal)
+                                ? unknownOutcome()
+                                : CapabilityResult.failure("IMPLEMENTATION_FAILED",
+                                        descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE);
                         record(plan, proposal, descriptor, approval, "COMPLETED", attempt, result,
                                 elapsedMillis(started));
                         return result;
@@ -212,18 +216,40 @@ public final class CapabilityExecutor implements AutoCloseable {
                 || descriptor.kind() == CapabilityDescriptor.Kind.WRITE_TOOL;
     }
 
-    private static int retryAttempts(CapabilityDescriptor descriptor) {
-        if (descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE
-                && !descriptor.idempotency().required()) return 1;
+    private static int retryAttempts(
+            CapabilityDescriptor descriptor, ToolProposal proposal) {
+        if ((descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE
+                && !descriptor.idempotency().required())
+                || tracksExternalEffect(descriptor, proposal)) {
+            return 1;
+        }
         return descriptor.retry().maxAttempts();
     }
 
-    private static CapabilityResult timeoutResult(CapabilityDescriptor descriptor) {
-        if (descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE) {
-            return new CapabilityResult(CapabilityResult.Status.UNKNOWN_OUTCOME, "UNKNOWN_OUTCOME",
-                    Map.of(), "", null, java.util.List.of("VERIFY_BEFORE_RETRY"), false);
+    private static CapabilityResult timeoutResult(
+            CapabilityDescriptor descriptor, ToolProposal proposal) {
+        if (descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE
+                || tracksExternalEffect(descriptor, proposal)) {
+            return unknownOutcome();
         }
         return CapabilityResult.failure("TIMEOUT", true);
+    }
+
+    private static boolean tracksEffect(
+            CapabilityDescriptor descriptor, ToolProposal proposal) {
+        return descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE
+                || tracksExternalEffect(descriptor, proposal);
+    }
+
+    private static boolean tracksExternalEffect(
+            CapabilityDescriptor descriptor, ToolProposal proposal) {
+        return descriptor.sideEffect() == CapabilityDescriptor.SideEffect.EXTERNAL
+                && proposal.idempotencyKey() != null;
+    }
+
+    private static CapabilityResult unknownOutcome() {
+        return new CapabilityResult(CapabilityResult.Status.UNKNOWN_OUTCOME, "UNKNOWN_OUTCOME",
+                Map.of(), "", null, java.util.List.of("VERIFY_BEFORE_RETRY"), false);
     }
 
     private CapabilityResult rejected(

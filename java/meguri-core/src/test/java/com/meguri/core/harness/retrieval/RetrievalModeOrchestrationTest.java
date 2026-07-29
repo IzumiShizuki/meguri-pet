@@ -53,7 +53,8 @@ class RetrievalModeOrchestrationTest {
             assertThat(dependencies.web.policyChecks).hasValue(0);
             assertThat(dependencies.web.searches).hasValue(0);
             assertThat(dependencies.rag.searches).hasValue(1);
-            assertThat(dependencies.memory.recalls).hasValue(1);
+            // The request has no authenticated formal-memory grant, so Memory fails closed.
+            assertThat(dependencies.memory.recalls).hasValue(0);
             assertThat(dependencies.memory.extractions).hasValue(0);
             assertThat(dependencies.llm.web).isEmpty();
         } finally {

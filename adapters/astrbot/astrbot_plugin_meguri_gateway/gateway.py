@@ -51,12 +51,35 @@ class MeguriGateway:
             if command is not None:
                 return await self._handle_command(identity, message, command)
             return await self._chat(identity, message, message.text)
-        except (CoreUnavailableError, CoreProtocolError, TimeoutError):
+        except CoreProtocolError as exc:
             await self.deduplicator.forget(message)
             return GatewayReply(
                 text="Meguri 服务暂时不可用，请稍后再试。",
                 degraded=True,
-                metadata={"session_id": identity.session_id},
+                metadata={
+                    "session_id": identity.session_id,
+                    "protocol_error": {
+                        "code": exc.code,
+                        "retryable": exc.retryable,
+                        "details": exc.details,
+                        "status_code": exc.status_code,
+                    },
+                },
+            )
+        except (CoreUnavailableError, TimeoutError):
+            await self.deduplicator.forget(message)
+            return GatewayReply(
+                text="Meguri 服务暂时不可用，请稍后再试。",
+                degraded=True,
+                metadata={
+                    "session_id": identity.session_id,
+                    "protocol_error": {
+                        "code": "INTERNAL",
+                        "retryable": True,
+                        "details": {},
+                        "status_code": None,
+                    },
+                },
             )
         except (RelayUnavailableError, RelayProtocolError):
             await self.deduplicator.forget(message)

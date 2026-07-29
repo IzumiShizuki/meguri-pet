@@ -33,7 +33,8 @@ class TurnRuntimeTest {
         assertThat(accepted.manifest()).isNotNull();
         assertThat(accepted.manifest().protocolVersion()).isEqualTo("1.0");
         assertThat(accepted.manifest().grantedCapabilities())
-                .contains("lore.read", "memory.read", "memory.write", "web.read", "weather.read");
+                .contains("memory.write", "weather.read")
+                .doesNotContain("lore.read", "memory.read", "knowledge.read", "web.read");
 
         StepVerifier.create(runtime.events(new EventCursor(
                         request.getSessionId(), 0L, accepted.turnId())))
@@ -50,8 +51,7 @@ class TurnRuntimeTest {
         assertThat(completed.result()).isNotNull();
         assertThat(runtime.effectReceipts(accepted.turnId()))
                 .extracting(EffectLedger.Receipt::capabilityId)
-                .containsExactlyInAnyOrder(
-                        "lore.read", "memory.read", "weather.read", "web.read", "memory.write");
+                .containsExactly("weather.read");
         assertThat(runtime.effectReceipts(accepted.turnId()))
                 .allSatisfy(receipt -> assertThat(receipt.status())
                         .isEqualTo(EffectLedger.Status.COMPLETED));

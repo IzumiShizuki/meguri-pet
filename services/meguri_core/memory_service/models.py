@@ -14,6 +14,7 @@ from .enums import (
     IdentityBindingStatus,
     MemoryScope,
     MemoryStatus,
+    MemoryVersionStatus,
     MemoryType,
     MergePolicy,
     RiskLevel,
@@ -154,12 +155,17 @@ class MemoryUpdate(StrictModel):
     _validate_datetimes = field_validator("effective_at", "expires_at")(
         _timezone_required
     )
+    _validate_content_json = field_validator("content_json")(
+        validate_candidate_content_json
+    )
 
 
 class MemoryVersion(StrictModel):
     version_id: UUID
     memory_id: UUID
     version_no: int = Field(ge=1)
+    status: MemoryVersionStatus = MemoryVersionStatus.ACTIVE
+    base_version_id: UUID | None = None
     content_text: str
     content_json: dict[str, Any] = Field(default_factory=dict)
     language: str | None = None
@@ -183,6 +189,7 @@ class MemoryItem(StrictModel):
     status: MemoryStatus
     canonical_key: str | None = None
     current_version_id: UUID
+    last_stable_version_id: UUID | None = None
     importance: float = Field(ge=0, le=1)
     confidence: float = Field(ge=0, le=1)
     effective_at: datetime | None = None

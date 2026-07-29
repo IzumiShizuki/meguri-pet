@@ -13,10 +13,25 @@ CREATE TABLE IF NOT EXISTS turn_runtime (
     deadline_at TIMESTAMPTZ NOT NULL,
     manifest_json JSONB,
     result_json JSONB,
+    failure_code VARCHAR(128),
     error TEXT,
+    retry_of_turn_id VARCHAR(128) REFERENCES turn_runtime(turn_id),
+    owner_id VARCHAR(255),
+    lease_until TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    cancel_requested BOOLEAN NOT NULL DEFAULT FALSE,
+    version BIGINT NOT NULL DEFAULT 0 CHECK (version >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS failure_code VARCHAR(128);
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS retry_of_turn_id VARCHAR(128) REFERENCES turn_runtime(turn_id);
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS owner_id VARCHAR(255);
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_turn_runtime_idempotency
     ON turn_runtime (user_id, client_id, session_id, idempotency_key)
@@ -24,6 +39,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_turn_runtime_idempotency
 
 CREATE INDEX IF NOT EXISTS ix_turn_runtime_session
     ON turn_runtime (session_id, accepted_at);
+
+CREATE INDEX IF NOT EXISTS ix_turn_runtime_recovery
+    ON turn_runtime (lease_until, accepted_at)
+    WHERE status NOT IN ('completed', 'failed', 'cancelled');
 
 CREATE TABLE IF NOT EXISTS turn_session_sequence (
     session_id VARCHAR(255) PRIMARY KEY,
@@ -55,6 +74,10 @@ ALTER TABLE turn_event
 CREATE INDEX IF NOT EXISTS ix_turn_event_turn
     ON turn_event (turn_id, sequence);
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_turn_event_terminal
+    ON turn_event (turn_id)
+    WHERE event_type IN ('turn.completed', 'turn.failed', 'turn.cancelled');
+
 CREATE TABLE IF NOT EXISTS turn_outbox (
     outbox_id BIGSERIAL PRIMARY KEY,
     event_id VARCHAR(128) NOT NULL UNIQUE REFERENCES turn_event(event_id) ON DELETE CASCADE,
@@ -65,14 +88,23 @@ CREATE TABLE IF NOT EXISTS turn_outbox (
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     available_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     claimed_at TIMESTAMPTZ,
+    claim_owner VARCHAR(255),
+    lease_until TIMESTAMPTZ,
     delivered_at TIMESTAMPTZ,
     last_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE turn_outbox ADD COLUMN IF NOT EXISTS claim_owner VARCHAR(255);
+ALTER TABLE turn_outbox ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
+
 CREATE INDEX IF NOT EXISTS ix_turn_outbox_pending
     ON turn_outbox (available_at, outbox_id)
     WHERE status = 'pending';
+
+CREATE INDEX IF NOT EXISTS ix_turn_outbox_reclaim
+    ON turn_outbox (lease_until, outbox_id)
+    WHERE status = 'claimed';
 
 CREATE TABLE IF NOT EXISTS session_context_graph (
     user_id VARCHAR(255) NOT NULL,

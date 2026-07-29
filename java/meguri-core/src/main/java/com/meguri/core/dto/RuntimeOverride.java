@@ -13,6 +13,9 @@ public record RuntimeOverride(
         @JsonProperty("expires_at") OffsetDateTime expiresAt) {
     @JsonCreator
     public RuntimeOverride {
+        if (relationshipProfile != null) {
+            throw new IllegalArgumentException("relationship_profile must use RelationshipTransitionService");
+        }
         if (outfitCode != null && !SetOutfits.ALLOWED.contains(outfitCode)) {
             throw new IllegalArgumentException("outfit_code must be one of 01-06; 07 and 08 are disabled");
         }

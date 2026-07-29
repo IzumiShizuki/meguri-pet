@@ -14,6 +14,22 @@ import reactor.core.publisher.Mono;
  * a particular vendor.
  */
 public interface LlmProvider {
+    /** Canonical 20.x boundary. Legacy implementations are adapted without losing typed inputs upstream. */
+    default Mono<LlmResponse> respond(ProviderRequest request) {
+        return respond(request.turn(), request.runtimeState(), request.legacyCanon(),
+                request.legacyMemories(), request.legacyRecentContext(),
+                request.legacyWebResults());
+    }
+
+    /**
+     * Optional server-side semantic refinement for SLOW turns. An empty result
+     * means the main model should answer with the already assembled evidence.
+     */
+    default Mono<AgentPlanningRequest.Decision> planAgent(
+            AgentPlanningRequest request) {
+        return Mono.empty();
+    }
+
     Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
                               List<String> canon, List<String> memories,
                               List<String> recentContext);
@@ -30,6 +46,12 @@ public interface LlmProvider {
                                                   List<String> canon, List<String> memories,
                                                   List<String> recentContext, List<String> webResults) {
         return respond(request, state, canon, memories, recentContext, webResults);
+    }
+
+    default Mono<LlmResponse> respondAlternative(ProviderRequest request) {
+        return respondAlternative(request.turn(), request.runtimeState(), request.legacyCanon(),
+                request.legacyMemories(), request.legacyRecentContext(),
+                request.legacyWebResults());
     }
 
     default Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
@@ -49,8 +71,48 @@ public interface LlmProvider {
                 .flux();
     }
 
+    /** Native text channel. Web context is kept separate from local context. */
+    default Flux<String> stream(TurnRequest request, RuntimeState state,
+                                List<String> canon, List<String> memories,
+                                List<String> recentContext, List<String> webResults) {
+        return stream(request, state, canon, memories, recentContext);
+    }
+
+    default Flux<String> stream(ProviderRequest request) {
+        return stream(request.turn(), request.runtimeState(), request.legacyCanon(),
+                request.legacyMemories(), request.legacyRecentContext(),
+                request.legacyWebResults());
+    }
+
+    /** True only when stream() emits provider tokens before a complete response exists. */
+    default boolean supportsNativeStreaming() {
+        return false;
+    }
+
+    /**
+     * Non-blocking control-plane fallback after the text stream has completed.
+     * Native providers may override this with a lightweight classifier.
+     */
+    default Mono<LlmResponse> finalizeStream(String reply, TurnRequest request, RuntimeState state) {
+        return Mono.just(new LlmResponse(reply));
+    }
+
+    default Mono<LlmResponse> finalizeStream(String reply, ProviderRequest request) {
+        return finalizeStream(reply, request.turn(), request.runtimeState());
+    }
+
     default String providerName() {
-        return getClass().getSimpleName();
+        String name = getClass().getSimpleName();
+        return name == null || name.isBlank() ? "anonymous-llm" : name;
+    }
+
+    default String modelId() {
+        String name = providerName();
+        return name == null || name.isBlank() ? "anonymous-llm" : name;
+    }
+
+    default ProviderTokenizer tokenizer() {
+        return new DeterministicProviderTokenizer();
     }
 
     /** Optional offline-safe hook for bounded session-level candidate extraction. */

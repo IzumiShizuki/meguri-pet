@@ -72,10 +72,18 @@ class TurnJournalPersistenceContractTest {
                 .contains("uq_turn_runtime_idempotency")
                 .contains("create table if not exists turn_session_sequence")
                 .contains("unique (session_id, sequence)")
+                .contains("uq_turn_event_terminal")
                 .contains("create table if not exists turn_outbox")
                 .contains("create table if not exists session_context_graph")
                 .contains("event_id varchar(128) not null unique")
-                .contains("where status = 'pending'");
+                .contains("where status = 'pending'")
+                .contains("failure_code varchar(128)")
+                .contains("retry_of_turn_id varchar(128)")
+                .contains("owner_id varchar(255)")
+                .contains("lease_until timestamptz")
+                .contains("ix_turn_runtime_recovery")
+                .contains("claim_owner varchar(255)")
+                .contains("where status = 'claimed'");
     }
 
     @Test

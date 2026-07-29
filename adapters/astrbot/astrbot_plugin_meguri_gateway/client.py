@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Protocol
 from urllib.parse import quote, urlparse
@@ -14,7 +15,20 @@ class CoreUnavailableError(RuntimeError):
 
 
 class CoreProtocolError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "INTERNAL",
+        retryable: bool = False,
+        details: dict[str, Any] | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.retryable = retryable
+        self.details = details or {}
+        self.status_code = status_code
 
 
 _KNOWN_EVENT_TYPES = frozenset(
@@ -29,13 +43,56 @@ _KNOWN_EVENT_TYPES = frozenset(
         "sprite.resolved",
         "memory.candidate.created",
         "memory.write.completed",
+        "memory.updated",
+        "relationship.updated",
+        "tool.proposed",
+        "approval.required",
+        "approval.resolved",
         "tool.started",
         "tool.completed",
+        "tool.failed",
+        "skill.started",
+        "skill.waiting",
+        "skill.completed",
+        "skill.failed",
+        "agent.started",
+        "agent.waiting",
+        "agent.completed",
+        "agent.failed",
+        "semantic.cue",
+        "voice.requested",
+        "audio.ready",
         "training.candidates.ready",
         "tts.requested",
         "tts.audio.delta",
         "tts.completed",
         "session.synced",
+        "turn.completed",
+        "turn.cancelled",
+        "turn.failed",
+    }
+)
+_STATE_EVENT_TYPES = frozenset(
+    {
+        "turn.started",
+        "turn.stage.changed",
+        "text.delta",
+        "text.completed",
+        "semantic.completed",
+        "expression.cue",
+        "sprite.resolved",
+        "memory.updated",
+        "relationship.updated",
+        "approval.required",
+        "session.synced",
+        "skill.started",
+        "skill.waiting",
+        "skill.completed",
+        "skill.failed",
+        "agent.started",
+        "agent.waiting",
+        "agent.completed",
+        "agent.failed",
         "turn.completed",
         "turn.cancelled",
         "turn.failed",
@@ -135,6 +192,27 @@ class HttpMeguriCoreClient:
                 formal_memory_allowed=bool(legacy.get("formal_memory_allowed", False)),
             ),
         )
+
+    def respond_sync(
+        self,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        """Synchronous wrapper over the exact same Turn/SSE implementation."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            async def run_and_close() -> dict[str, Any]:
+                try:
+                    return await self.respond(
+                        payload, idempotency_key=idempotency_key
+                    )
+                finally:
+                    await self.close()
+
+            return asyncio.run(run_and_close())
+        raise RuntimeError("respond_sync cannot run inside an active event loop")
 
     async def _respond_with_turn(
         self,
@@ -540,12 +618,37 @@ class HttpMeguriCoreClient:
 
     @staticmethod
     def _raise_for_status(response: httpx.Response) -> None:
+        if response.is_success:
+            return
         try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise CoreProtocolError(
-                f"meguri-core returned HTTP {exc.response.status_code}"
-            ) from exc
+            body = response.json()
+        except ValueError:
+            body = None
+        error = body.get("error") if isinstance(body, dict) else None
+        if isinstance(error, dict):
+            code = error.get("code")
+            message = error.get("message")
+            retryable = error.get("retryable")
+            details = error.get("details", {})
+            if (
+                isinstance(code, str)
+                and code
+                and isinstance(message, str)
+                and message
+                and isinstance(retryable, bool)
+                and isinstance(details, dict)
+            ):
+                raise CoreProtocolError(
+                    message,
+                    code=code,
+                    retryable=retryable,
+                    details=details,
+                    status_code=response.status_code,
+                )
+        raise CoreProtocolError(
+            f"meguri-core returned HTTP {response.status_code}",
+            status_code=response.status_code,
+        )
 
     @staticmethod
     def _json_object(response: httpx.Response) -> dict[str, Any]:
@@ -601,8 +704,23 @@ def _accept_sse_data(
         raise CoreProtocolError("meguri-core event sequence is invalid")
     if not isinstance(data, dict) or not isinstance(metadata, dict):
         raise CoreProtocolError("meguri-core event payload is invalid")
+    created_at = value.get("created_at")
+    if not isinstance(created_at, str) or not created_at:
+        raise CoreProtocolError("meguri-core event creation time is invalid")
+    for field in ("trace_id", "source", "created_at", "build_id"):
+        if not isinstance(metadata.get(field), str) or not metadata[field]:
+            raise CoreProtocolError(
+                f"meguri-core event metadata {field} is invalid"
+            )
+    if event_turn_id != turn_id:
+        raise CoreProtocolError("meguri-core event crossed the requested turn scope")
     if event_session_id != session_id:
         raise CoreProtocolError("meguri-core event crossed the requested session scope")
+    expected_replay = _expected_replay_policy(event_type, data)
+    if event_type in _KNOWN_EVENT_TYPES and replay_policy != expected_replay:
+        raise CoreProtocolError(
+            f"meguri-core event replay policy mismatch for {event_type}"
+        )
     checkpoint = int(state["checkpoint"])
     seen_event_ids: set[str] = state["seen_event_ids"]
     once_event_ids: set[str] = state["once_event_ids"]
@@ -779,8 +897,25 @@ def _assert_protocol_v1(version: str) -> None:
     major, separator, minor = version.partition(".")
     if separator != "." or major != "1" or not minor.isdigit():
         raise CoreProtocolError(
-            f"meguri-core returned incompatible protocol version: {version}"
+            f"meguri-core returned incompatible protocol version: {version}",
+            code="UNSUPPORTED_PROTOCOL_MAJOR",
         )
+
+
+def _expected_replay_policy(
+    event_type: str, data: dict[str, Any]
+) -> str:
+    if event_type.startswith("tts.") or event_type in {
+        "voice.requested",
+        "audio.ready",
+    }:
+        return "ONCE"
+    if event_type == "semantic.cue" and data.get("channel") in {
+        "animation",
+        "notification",
+    }:
+        return "ONCE"
+    return "STATE" if event_type in _STATE_EVENT_TYPES else "ALWAYS"
 
 
 def _string_list(value: Any) -> bool:

@@ -49,6 +49,26 @@ public final class InMemoryTurnJournal implements TurnJournal {
     }
 
     @Override
+    public synchronized Acceptance acceptRetry(TurnRequest request, String idempotencyKey,
+                                                Instant deadlineAt, String retryOfTurnId) {
+        TurnRecord predecessor = turns.get(retryOfTurnId);
+        if (predecessor == null || predecessor.getStatus() != TurnStatus.FAILED
+                || !sameScope(predecessor.getRequest(), request)) {
+            throw new IllegalArgumentException(
+                    "retry_of_turn_id must reference a failed Turn in the same scope");
+        }
+        Acceptance acceptance = accept(request, idempotencyKey, deadlineAt);
+        if (!acceptance.created()) {
+            if (!retryOfTurnId.equals(acceptance.record().getRetryOfTurnId())) {
+                throw new IdempotencyConflictException();
+            }
+            return acceptance;
+        }
+        acceptance.record().setRetryOfTurnId(retryOfTurnId);
+        return acceptance;
+    }
+
+    @Override
     public TurnRecord create(TurnRequest request, Instant deadlineAt) {
         TurnRecord record = new TurnRecord(newId("turn"), newId("trace"), request, deadlineAt);
         turns.put(record.getTurnId(), record);
@@ -109,6 +129,18 @@ public final class InMemoryTurnJournal implements TurnJournal {
     }
 
     @Override
+    public EventEnvelope appendExecution(TurnRecord record, String ownerId, String type,
+                                         Map<String, Object> data, EventMetadata metadata) {
+        synchronized (record) {
+            if (record.isTerminal()
+                    && ("text.delta".equals(type) || "text.completed".equals(type))) {
+                throw new IllegalStateException("cannot append " + type + " after the Turn is terminal");
+            }
+            return append(record, type, data, metadata);
+        }
+    }
+
+    @Override
     public void clear() {
         turns.clear();
         events.clear();
@@ -134,6 +166,12 @@ public final class InMemoryTurnJournal implements TurnJournal {
 
     private static String normalize(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private static boolean sameScope(TurnRequest left, TurnRequest right) {
+        return left.getUserId().equals(right.getUserId())
+                && left.getClientId().equals(right.getClientId())
+                && left.getSessionId().equals(right.getSessionId());
     }
 
     private static String newId(String prefix) {

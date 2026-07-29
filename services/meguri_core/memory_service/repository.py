@@ -6,21 +6,24 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Text, and_, cast, delete, func, or_, select, text
+from sqlalchemy import Text, and_, case, cast, delete, exists, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.exc import IntegrityError
 
 from .contracts import MemoryConflictError
 
 from .enums import (
-    ActorType,
     AuditAction,
     CandidateStatus,
     EmbeddingStatus,
     IdentityBindingStatus,
     MemoryScope,
     MemoryStatus,
+    MemoryVersionStatus,
+    MergePolicy,
     OutboxStatus,
+    candidate_transition_allowed,
+    memory_transition_allowed,
 )
 from .models import (
     IdentityBinding,
@@ -49,10 +52,36 @@ from .orm import (
     SessionSummaryRow,
 )
 from .review_policy import CandidateReviewPolicy, is_redacted_candidate
+from .merge import MemoryMergeEngine, is_ancestor_version
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _approved_item_filter():
+    return exists(
+        select(MemoryCandidateRow.candidate_id).where(
+            MemoryCandidateRow.accepted_memory_id == MemoryItemRow.memory_id,
+            MemoryCandidateRow.status.in_(
+                [CandidateStatus.APPROVED.value, CandidateStatus.AUTO_APPROVED.value]
+            ),
+        )
+    )
+
+
+def _retrieval_version_id():
+    return case(
+        (
+            MemoryItemRow.status == MemoryStatus.CONFLICTED.value,
+            MemoryItemRow.last_stable_version_id,
+        ),
+        else_=MemoryItemRow.current_version_id,
+    )
+
+
+def _retrievable_item_statuses() -> list[str]:
+    return [MemoryStatus.ACTIVE.value, MemoryStatus.CONFLICTED.value]
 
 
 @dataclass(frozen=True)
@@ -98,6 +127,8 @@ def version_model(row: MemoryVersionRow) -> MemoryVersion:
         version_id=row.version_id,
         memory_id=row.memory_id,
         version_no=row.version_no,
+        status=row.status,
+        base_version_id=row.base_version_id,
         content_text=row.content_text,
         content_json=row.content_json,
         language=row.language,
@@ -121,6 +152,7 @@ def item_model(row: MemoryItemRow, version: MemoryVersionRow) -> MemoryItem:
         status=row.status,
         canonical_key=row.canonical_key,
         current_version_id=version.version_id,
+        last_stable_version_id=row.last_stable_version_id,
         importance=row.importance,
         confidence=row.confidence,
         effective_at=row.effective_at,
@@ -219,6 +251,15 @@ class SqlAlchemyMemoryRepository:
         status: CandidateStatus,
         review_reason: str | None = None,
     ) -> MemoryCandidate:
+        if status not in {
+            CandidateStatus.PENDING,
+            CandidateStatus.PENDING_REVIEW,
+            CandidateStatus.NEEDS_CONFIRMATION,
+            CandidateStatus.REJECTED,
+        }:
+            raise MemoryConflictError(
+                f"candidate cannot be created directly in state: {status.value}"
+            )
         evaluation = CandidateReviewPolicy().evaluate(candidate)
         if evaluation.rejected and not is_redacted_candidate(candidate):
             raise ValueError(
@@ -270,6 +311,15 @@ class SqlAlchemyMemoryRepository:
         reason: str,
         accepted_memory_id: UUID | None = None,
     ) -> MemoryCandidate:
+        current = CandidateStatus(row.status)
+        if not candidate_transition_allowed(current, status):
+            raise MemoryConflictError(
+                f"illegal candidate transition: {current.value} -> {status.value}"
+            )
+        if status is CandidateStatus.APPROVED and accepted_memory_id is None:
+            raise MemoryConflictError("approved candidate requires an accepted memory")
+        if status in {CandidateStatus.REJECTED, CandidateStatus.EXPIRED}:
+            accepted_memory_id = None
         row.status = status.value
         row.reviewed_by = actor.actor_id
         row.reviewed_at = utc_now()
@@ -339,6 +389,22 @@ class SqlAlchemyMemoryRepository:
             )
         )
 
+    async def get_item_by_version(
+        self, version_id: UUID, *, tenant_id: str, user_id: str
+    ) -> MemoryItem | None:
+        memory_id = await self.session.scalar(
+            select(MemoryVersionRow.memory_id)
+            .join(MemoryItemRow, MemoryItemRow.memory_id == MemoryVersionRow.memory_id)
+            .where(
+                MemoryVersionRow.version_id == version_id,
+                MemoryItemRow.tenant_id == tenant_id,
+                MemoryItemRow.user_id == user_id,
+            )
+        )
+        if memory_id is None:
+            return None
+        return await self.get_item(memory_id, tenant_id=tenant_id, user_id=user_id)
+
     async def create_feedback(
         self, feedback: MemoryFeedbackCreate
     ) -> MemoryFeedback | None:
@@ -379,13 +445,15 @@ class SqlAlchemyMemoryRepository:
                 MemoryVersionRow,
                 and_(
                     MemoryVersionRow.memory_id == MemoryItemRow.memory_id,
-                    MemoryVersionRow.version_id == MemoryItemRow.current_version_id,
+                    MemoryVersionRow.version_id == _retrieval_version_id(),
                 ),
             )
             .where(
                 MemoryItemRow.tenant_id == tenant_id,
                 MemoryItemRow.user_id == user_id,
-                MemoryItemRow.status == MemoryStatus.ACTIVE.value,
+                MemoryItemRow.status.in_(_retrievable_item_statuses()),
+                MemoryVersionRow.status == MemoryVersionStatus.ACTIVE.value,
+                _approved_item_filter(),
                 or_(MemoryItemRow.expires_at.is_(None), MemoryItemRow.expires_at > now),
             )
         )
@@ -422,6 +490,8 @@ class SqlAlchemyMemoryRepository:
             version_id=uuid4(),
             memory_id=item_row.memory_id,
             version_no=1,
+            status=MemoryVersionStatus.ACTIVE.value,
+            base_version_id=None,
             content_text=candidate.content_text,
             content_json=candidate.content_json,
             language=candidate.content_json.get("language"),
@@ -442,8 +512,10 @@ class SqlAlchemyMemoryRepository:
         self.session.add(version_row)
         await self.session.flush()
         item_row.current_version_id = version_row.version_id
+        item_row.last_stable_version_id = version_row.version_id
         item_row.status = MemoryStatus.ACTIVE.value
         await self.enqueue_embedding(version_row.version_id, candidate.tenant_id)
+        await self.enqueue_file_mirror(item_row.memory_id, version_row.version_id, candidate.tenant_id)
         try:
             await self.session.flush()
         except IntegrityError as exc:
@@ -466,6 +538,8 @@ class SqlAlchemyMemoryRepository:
         )
         if locked is None:
             raise KeyError(str(current.memory_id))
+        if locked.status != MemoryStatus.ACTIVE.value:
+            raise MemoryConflictError("only active memory can be superseded")
         previous = await self.session.scalar(
             select(MemoryVersionRow).where(
                 MemoryVersionRow.version_id == locked.current_version_id
@@ -473,6 +547,10 @@ class SqlAlchemyMemoryRepository:
         )
         if previous is None:
             raise RuntimeError("current memory version is missing")
+        if previous.status != MemoryVersionStatus.ACTIVE.value:
+            raise MemoryConflictError("current memory version is not active")
+        if locked.last_stable_version_id != previous.version_id:
+            raise MemoryConflictError("current memory is not the last stable version")
         if update.base_version_id is None:
             raise MemoryConflictError("base_version_id is required for supersede")
         if update.base_version_id != previous.version_id:
@@ -482,6 +560,8 @@ class SqlAlchemyMemoryRepository:
             version_id=uuid4(),
             memory_id=locked.memory_id,
             version_no=previous.version_no + 1,
+            status=MemoryVersionStatus.ACTIVE.value,
+            base_version_id=update.base_version_id,
             content_text=update.content_text,
             content_json=update.content_json,
             language=update.content_json.get("language"),
@@ -495,7 +575,9 @@ class SqlAlchemyMemoryRepository:
         )
         self.session.add(version_row)
         await self.session.flush()
+        previous.status = MemoryVersionStatus.SUPERSEDED.value
         locked.current_version_id = version_row.version_id
+        locked.last_stable_version_id = version_row.version_id
         locked.status = MemoryStatus.ACTIVE.value
         locked.confidence = update.confidence if update.confidence is not None else locked.confidence
         locked.importance = update.importance if update.importance is not None else locked.importance
@@ -504,8 +586,211 @@ class SqlAlchemyMemoryRepository:
         locked.deleted_at = None
         locked.updated_at = now
         await self.enqueue_embedding(version_row.version_id, update.tenant_id)
+        await self.enqueue_file_mirror(locked.memory_id, version_row.version_id, update.tenant_id)
         await self.session.flush()
         return item_model(locked, version_row)
+
+    async def merge_candidate(
+        self,
+        current: MemoryItem,
+        candidate: MemoryCandidateCreate,
+        *,
+        actor: MemoryActor,
+        reason: str,
+    ) -> MemoryItem:
+        locked = await self.session.scalar(
+            select(MemoryItemRow).where(MemoryItemRow.memory_id == current.memory_id).with_for_update()
+        )
+        if locked is None:
+            raise KeyError(str(current.memory_id))
+        if locked.status != MemoryStatus.ACTIVE.value:
+            raise MemoryConflictError(
+                "conflicted or non-active memory requires explicit conflict resolution"
+            )
+        active = await self.session.scalar(
+            select(MemoryVersionRow).where(MemoryVersionRow.version_id == locked.current_version_id)
+        )
+        if active is None:
+            raise RuntimeError("current memory version is missing")
+        if active.status != MemoryVersionStatus.ACTIVE.value:
+            raise MemoryConflictError("current memory version is not active")
+        if locked.last_stable_version_id != active.version_id:
+            raise MemoryConflictError("current memory is not the last stable version")
+        if candidate.base_version_id is None:
+            raise MemoryConflictError(
+                f"{candidate.merge_policy.value} requires base_version_id"
+            )
+        base = await self.session.scalar(
+            select(MemoryVersionRow).where(
+                MemoryVersionRow.version_id == candidate.base_version_id,
+                MemoryVersionRow.memory_id == locked.memory_id,
+            )
+        )
+        if base is None:
+            raise MemoryConflictError("candidate base version does not belong to the memory")
+        if base.status in {
+            MemoryVersionStatus.CONFLICT_BRANCH.value,
+            MemoryVersionStatus.TOMBSTONE.value,
+        }:
+            raise MemoryConflictError("candidate base must be a stable memory version")
+        if candidate.merge_policy in {
+            MergePolicy.THREE_WAY_MERGE,
+            MergePolicy.MANUAL,
+        }:
+            versions = list(
+                (
+                    await self.session.scalars(
+                        select(MemoryVersionRow).where(
+                            MemoryVersionRow.memory_id == locked.memory_id
+                        )
+                    )
+                ).all()
+            )
+            parent_by_version = {
+                version.version_id: version.supersedes_version_id for version in versions
+            }
+            if not is_ancestor_version(
+                base.version_id, active.version_id, parent_by_version
+            ):
+                raise MemoryConflictError(
+                    "candidate base is not an ancestor of the current stable version"
+                )
+        elif base.version_id != active.version_id:
+            raise MemoryConflictError("memory base version changed before merge")
+        result = MemoryMergeEngine().merge(
+            candidate.merge_policy,
+            current=active.content_json,
+            proposed=candidate.content_json,
+            base=base.content_json if base is not None else None,
+        )
+        if candidate.merge_policy is MergePolicy.CONFIRM and not result.conflicted:
+            return item_model(locked, active)
+        now = utc_now()
+        next_number = int(
+            await self.session.scalar(
+                select(func.coalesce(func.max(MemoryVersionRow.version_no), 0)).where(
+                    MemoryVersionRow.memory_id == locked.memory_id
+                )
+            )
+            or 0
+        ) + 1
+        branch = result.conflicted
+        version = MemoryVersionRow(
+            version_id=uuid4(), memory_id=locked.memory_id, version_no=next_number,
+            status=(MemoryVersionStatus.CONFLICT_BRANCH.value if branch else MemoryVersionStatus.ACTIVE.value),
+            base_version_id=candidate.base_version_id,
+            content_text=candidate.content_text,
+            content_json=(candidate.content_json if branch else result.content_json),
+            language=candidate.content_json.get("language"),
+            relationship_stage=active.relationship_stage,
+            supersedes_version_id=None if branch else active.version_id,
+            change_reason=reason,
+            provenance={**candidate.provenance, "conflicted_fields": sorted(result.conflicted_fields)},
+            created_by_type=actor.actor_type.value, created_by_id=actor.actor_id, created_at=now,
+        )
+        self.session.add(version)
+        await self.session.flush()
+        if branch:
+            locked.status = MemoryStatus.CONFLICTED.value
+            locked.last_stable_version_id = locked.last_stable_version_id or active.version_id
+            await self.enqueue_projection(
+                "conflict.notification", locked.memory_id,
+                {"tenant_id": candidate.tenant_id, "memory_id": str(locked.memory_id),
+                 "branch_version_id": str(version.version_id),
+                 "last_stable_version_id": str(locked.last_stable_version_id)},
+            )
+            locked.updated_at = now
+            await self.session.flush()
+            return item_model(locked, active)
+        active.status = MemoryVersionStatus.SUPERSEDED.value
+        locked.current_version_id = version.version_id
+        locked.last_stable_version_id = version.version_id
+        locked.status = MemoryStatus.ACTIVE.value
+        locked.updated_at = now
+        await self.enqueue_embedding(version.version_id, candidate.tenant_id)
+        await self.enqueue_file_mirror(locked.memory_id, version.version_id, candidate.tenant_id)
+        await self.session.flush()
+        return item_model(locked, version)
+
+    async def tombstone_item(self, item: MemoryItem, *, actor: MemoryActor, reason: str) -> MemoryItem:
+        locked = await self.session.scalar(
+            select(MemoryItemRow).where(MemoryItemRow.memory_id == item.memory_id).with_for_update()
+        )
+        if locked is None:
+            raise KeyError(str(item.memory_id))
+        current = await self.session.scalar(
+            select(MemoryVersionRow).where(MemoryVersionRow.version_id == locked.current_version_id)
+        )
+        if current is None:
+            raise RuntimeError("current memory version is missing")
+        now = utc_now()
+        tombstone = MemoryVersionRow(
+            version_id=uuid4(), memory_id=locked.memory_id, version_no=current.version_no + 1,
+            status=MemoryVersionStatus.TOMBSTONE.value, base_version_id=current.version_id,
+            content_text="[deleted]", content_json={}, supersedes_version_id=current.version_id,
+            change_reason=reason, provenance={"deletion": True},
+            created_by_type=actor.actor_type.value, created_by_id=actor.actor_id, created_at=now,
+        )
+        self.session.add(tombstone)
+        await self.session.flush()
+        current.status = MemoryVersionStatus.SUPERSEDED.value
+        locked.current_version_id = tombstone.version_id
+        locked.status = MemoryStatus.DELETED.value
+        locked.deleted_at = locked.updated_at = now
+        deletion = {
+            "tenant_id": item.tenant_id,
+            "memory_id": str(item.memory_id),
+            "version_id": str(tombstone.version_id),
+            "deleted_version_id": str(current.version_id),
+        }
+        await self.enqueue_projection("embedding.deleted", current.version_id, deletion)
+        await self.enqueue_projection("file_mirror.deleted", tombstone.version_id, deletion)
+        await self.session.flush()
+        return item_model(locked, tombstone)
+
+    async def restore_item(self, item: MemoryItem, *, actor: MemoryActor, reason: str) -> MemoryItem:
+        locked = await self.session.scalar(
+            select(MemoryItemRow).where(MemoryItemRow.memory_id == item.memory_id).with_for_update()
+        )
+        if locked is None or locked.status != MemoryStatus.DELETED.value:
+            raise MemoryConflictError("only a deleted memory can be restored")
+        tombstone = await self.session.scalar(
+            select(MemoryVersionRow).where(MemoryVersionRow.version_id == locked.current_version_id)
+        )
+        stable = await self.session.scalar(
+            select(MemoryVersionRow).where(MemoryVersionRow.version_id == locked.last_stable_version_id)
+        )
+        if tombstone is None or stable is None:
+            raise RuntimeError("deleted memory has no stable version to restore")
+        if tombstone.status != MemoryVersionStatus.TOMBSTONE.value:
+            raise MemoryConflictError("deleted memory current version is not a tombstone")
+        if stable.status != MemoryVersionStatus.SUPERSEDED.value:
+            raise MemoryConflictError("deleted memory last stable version is invalid")
+        now = utc_now()
+        restored = MemoryVersionRow(
+            version_id=uuid4(), memory_id=locked.memory_id, version_no=tombstone.version_no + 1,
+            status=MemoryVersionStatus.ACTIVE.value, base_version_id=tombstone.version_id,
+            content_text=stable.content_text, content_json=stable.content_json,
+            language=stable.language, relationship_stage=stable.relationship_stage,
+            supersedes_version_id=tombstone.version_id, change_reason=reason,
+            provenance={"restored_from_version_id": str(stable.version_id)},
+            created_by_type=actor.actor_type.value, created_by_id=actor.actor_id, created_at=now,
+        )
+        self.session.add(restored)
+        await self.session.flush()
+        locked.current_version_id = locked.last_stable_version_id = restored.version_id
+        locked.status = MemoryStatus.ACTIVE.value
+        locked.deleted_at = None
+        locked.updated_at = now
+        await self.enqueue_embedding(restored.version_id, item.tenant_id)
+        await self.enqueue_file_mirror(item.memory_id, restored.version_id, item.tenant_id)
+        await self.session.flush()
+        return item_model(locked, restored)
+
+    async def delete_embedding_projection(self, version_id: UUID) -> None:
+        await self.session.execute(
+            delete(MemoryEmbeddingRow).where(MemoryEmbeddingRow.version_id == version_id)
+        )
 
     async def set_item_status(
         self,
@@ -519,6 +804,11 @@ class SqlAlchemyMemoryRepository:
         )
         if row is None:
             raise KeyError(str(item.memory_id))
+        current = MemoryStatus(row.status)
+        if not memory_transition_allowed(current, target):
+            raise MemoryConflictError(
+                f"illegal memory transition: {current.value} -> {target.value}"
+            )
         row.status = target.value
         row.deleted_at = utc_now() if target is MemoryStatus.DELETED else None
         row.updated_at = utc_now()
@@ -635,12 +925,28 @@ class SqlAlchemyMemoryRepository:
         }
 
     async def enqueue_embedding(self, version_id: UUID, tenant_id: str) -> None:
+        await self.enqueue_projection(
+            "embedding.requested", version_id,
+            {"tenant_id": tenant_id, "version_id": str(version_id)},
+        )
+
+    async def enqueue_file_mirror(
+        self, memory_id: UUID, version_id: UUID, tenant_id: str
+    ) -> None:
+        await self.enqueue_projection(
+            "file_mirror.requested", version_id,
+            {"tenant_id": tenant_id, "memory_id": str(memory_id), "version_id": str(version_id)},
+        )
+
+    async def enqueue_projection(
+        self, event_type: str, aggregate_id: UUID, payload: dict[str, Any]
+    ) -> None:
         self.session.add(
             MemoryOutboxRow(
                 outbox_id=uuid4(),
-                event_type="embedding.requested",
-                aggregate_id=version_id,
-                payload={"tenant_id": tenant_id, "version_id": str(version_id)},
+                event_type=event_type,
+                aggregate_id=aggregate_id,
+                payload=payload,
                 status=OutboxStatus.PENDING.value,
                 attempts=0,
                 available_at=utc_now(),
@@ -653,6 +959,7 @@ class SqlAlchemyMemoryRepository:
         worker_id: str,
         limit: int,
         lease_seconds: int,
+        event_types: tuple[str, ...] = ("embedding.requested",),
     ) -> list[MemoryOutboxRow]:
         now = utc_now()
         stale_before = now - timedelta(seconds=lease_seconds)
@@ -661,7 +968,7 @@ class SqlAlchemyMemoryRepository:
                 await self.session.scalars(
                     select(MemoryOutboxRow)
                     .where(
-                        MemoryOutboxRow.event_type == "embedding.requested",
+                        MemoryOutboxRow.event_type.in_(event_types),
                         MemoryOutboxRow.available_at <= now,
                         or_(
                             MemoryOutboxRow.status.in_(
@@ -727,30 +1034,40 @@ class SqlAlchemyMemoryRepository:
             )
         )
 
-    async def complete_outbox(self, outbox_id: UUID) -> None:
+    async def complete_outbox(
+        self,
+        outbox_id: UUID,
+        *,
+        worker_id: str,
+        claim_locked_at: datetime,
+    ) -> bool:
         row = await self.session.scalar(
             select(MemoryOutboxRow).where(MemoryOutboxRow.outbox_id == outbox_id).with_for_update()
         )
-        if row:
-            row.status = OutboxStatus.COMPLETED.value
-            row.completed_at = utc_now()
-            row.locked_at = None
-            row.locked_by = None
-            row.last_error = None
+        if not self._owns_outbox_claim(row, worker_id, claim_locked_at):
+            return False
+        row.status = OutboxStatus.COMPLETED.value
+        row.completed_at = utc_now()
+        row.locked_at = None
+        row.locked_by = None
+        row.last_error = None
+        return True
 
     async def fail_outbox(
         self,
         outbox_id: UUID,
         *,
+        worker_id: str,
+        claim_locked_at: datetime,
         error_code: str,
         max_attempts: int,
         retry_delay_seconds: int,
-    ) -> None:
+    ) -> bool:
         row = await self.session.scalar(
             select(MemoryOutboxRow).where(MemoryOutboxRow.outbox_id == outbox_id).with_for_update()
         )
-        if row is None:
-            return
+        if not self._owns_outbox_claim(row, worker_id, claim_locked_at):
+            return False
         row.attempts += 1
         row.status = (
             OutboxStatus.DEAD_LETTER.value
@@ -761,6 +1078,41 @@ class SqlAlchemyMemoryRepository:
         row.last_error = error_code[:200]
         row.locked_at = None
         row.locked_by = None
+        return True
+
+    @staticmethod
+    def _owns_outbox_claim(
+        row: MemoryOutboxRow | None,
+        worker_id: str,
+        claim_locked_at: datetime,
+    ) -> bool:
+        return bool(
+            row is not None
+            and row.status == OutboxStatus.PROCESSING.value
+            and row.locked_by == worker_id
+            and row.locked_at == claim_locked_at
+        )
+
+    async def requeue_dead_letters(self, *, event_types: tuple[str, ...]) -> int:
+        rows = list(
+            (
+                await self.session.scalars(
+                    select(MemoryOutboxRow)
+                    .where(
+                        MemoryOutboxRow.event_type.in_(event_types),
+                        MemoryOutboxRow.status == OutboxStatus.DEAD_LETTER.value,
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+        )
+        for row in rows:
+            row.status = OutboxStatus.PENDING.value
+            row.attempts = 0
+            row.available_at = utc_now()
+            row.locked_at = row.locked_by = row.last_error = None
+        await self.session.flush()
+        return len(rows)
 
     async def vector_search(self, query: MemorySearchQuery) -> list[RetrievedItem]:
         if query.query_embedding is None:
@@ -772,7 +1124,7 @@ class SqlAlchemyMemoryRepository:
                 MemoryVersionRow,
                 and_(
                     MemoryVersionRow.memory_id == MemoryItemRow.memory_id,
-                    MemoryVersionRow.version_id == MemoryItemRow.current_version_id,
+                    MemoryVersionRow.version_id == _retrieval_version_id(),
                 ),
             )
             .join(
@@ -785,8 +1137,11 @@ class SqlAlchemyMemoryRepository:
             .where(
                 MemoryItemRow.tenant_id == query.tenant_id,
                 MemoryItemRow.user_id == query.user_id,
-                MemoryItemRow.status == MemoryStatus.ACTIVE.value,
+                MemoryItemRow.status.in_(_retrievable_item_statuses()),
+                MemoryVersionRow.status == MemoryVersionStatus.ACTIVE.value,
+                _approved_item_filter(),
                 MemoryItemRow.scope.in_([scope.value for scope in query.scopes]),
+                or_(MemoryItemRow.effective_at.is_(None), MemoryItemRow.effective_at <= query.now),
                 or_(MemoryItemRow.expires_at.is_(None), MemoryItemRow.expires_at > query.now),
             )
             .order_by(distance)
@@ -816,14 +1171,17 @@ class SqlAlchemyMemoryRepository:
                 MemoryVersionRow,
                 and_(
                     MemoryVersionRow.memory_id == MemoryItemRow.memory_id,
-                    MemoryVersionRow.version_id == MemoryItemRow.current_version_id,
+                    MemoryVersionRow.version_id == _retrieval_version_id(),
                 ),
             )
             .where(
                 MemoryItemRow.tenant_id == query.tenant_id,
                 MemoryItemRow.user_id == query.user_id,
-                MemoryItemRow.status == MemoryStatus.ACTIVE.value,
+                MemoryItemRow.status.in_(_retrievable_item_statuses()),
+                MemoryVersionRow.status == MemoryVersionStatus.ACTIVE.value,
+                _approved_item_filter(),
                 MemoryItemRow.scope.in_([scope.value for scope in query.scopes]),
+                or_(MemoryItemRow.effective_at.is_(None), MemoryItemRow.effective_at <= query.now),
                 MemoryItemRow.canonical_key == query.canonical_key,
                 or_(MemoryItemRow.expires_at.is_(None), MemoryItemRow.expires_at > query.now),
             )
@@ -848,14 +1206,17 @@ class SqlAlchemyMemoryRepository:
                 MemoryVersionRow,
                 and_(
                     MemoryVersionRow.memory_id == MemoryItemRow.memory_id,
-                    MemoryVersionRow.version_id == MemoryItemRow.current_version_id,
+                    MemoryVersionRow.version_id == _retrieval_version_id(),
                 ),
             )
             .where(
                 MemoryItemRow.tenant_id == query.tenant_id,
                 MemoryItemRow.user_id == query.user_id,
-                MemoryItemRow.status == MemoryStatus.ACTIVE.value,
+                MemoryItemRow.status.in_(_retrievable_item_statuses()),
+                MemoryVersionRow.status == MemoryVersionStatus.ACTIVE.value,
+                _approved_item_filter(),
                 MemoryItemRow.scope.in_([scope.value for scope in query.scopes]),
+                or_(MemoryItemRow.effective_at.is_(None), MemoryItemRow.effective_at <= query.now),
                 or_(MemoryItemRow.expires_at.is_(None), MemoryItemRow.expires_at > query.now),
                 or_(
                     document.op("@@")(ts_query),

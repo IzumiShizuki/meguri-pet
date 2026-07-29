@@ -1,19 +1,10 @@
 # Meguri Harness Runtime 20
 
-Status note (2026-07-29): this file describes the runtime seam and production
-gates. The canonical requirement-by-requirement status is maintained in
-`docs/notion-20-implementation-plan-2026-07-28.md`; it currently classifies
-20.0-20.7 as partially implemented.
+状态说明（2026-07-29）：Harness 20 的本地代码和自动化契约已经实现；真实 PostgreSQL、外部 Provider、MCP/Remote Agent、真实客户端进程和生产运维仍待环境验收。逐页状态与证据以 `docs/notion-20-implementation-plan-2026-07-28.md` 为准。
 
-This document records the implementation boundary derived from the 19.x
-current-state documents and the 20.x strengthened design documents. It
-distinguishes three different claims: code implemented locally, behavior
-covered by local tests, and production behavior proven against real
-infrastructure. A local implementation is not production evidence.
+## 对外接口
 
-## Selected interface
-
-The external seam is intentionally small:
+客户端只依赖一个最小 Turn Runtime：
 
 ```java
 public interface TurnRuntime {
@@ -23,164 +14,124 @@ public interface TurnRuntime {
 }
 ```
 
-`TurnCommand` is a sealed start/cancel command. AIRI, AstrBot, Website and the synchronous compatibility endpoint all use the same Turn lifecycle. Health, Persona overrides and other operator actions remain on a separate `HarnessControlPlane`.
+`TurnCommand` 只表达开始和取消。AIRI、AstrBot、Website 与同步兼容接口复用同一 Turn 生命周期；健康检查、Persona 临时覆盖和管理操作位于独立 Control Plane，不进入聊天业务协议。
 
-Three designs were compared before implementation:
+## Canonical Turn Pipeline
 
-- A minimal three-entry Turn Runtime gives normal callers the highest leverage and keeps recovery rules local.
-- A phase-graph framework gives module authors maximum flexibility but exposes too much policy to clients.
-- A bound one-call client runtime best hides create/replay/reconnect for UI callers, and can be built over the same protocol later.
+```text
+Adapter identity / idempotency / deadline
+-> immutable current user message
+-> EffectivePersonaState
+-> frozen Knowledge + Capability snapshots
+-> UnifiedRetrievalFacade
+-> RetrievalBundle
+-> CompanionContextRuntime
+-> ContextBundle + ContextBuildTrace
+-> PromptPolicyComposer
+-> optional main-model Agent proposal
+-> server revalidation / approval / budget / capacity
+-> untrusted Agent result rehydration
+-> final ProviderRequest
+-> native provider stream
+-> durable Turn events
+-> PresentationResolver
+-> terminal Turn
+-> asynchronous Memory Job
+```
 
-The selected hybrid uses the minimal Turn Runtime externally and typed internal Context, Persona, Capability and journal modules. Registry flexibility does not leak into client adapters.
+`CanonicalTurnPipeline` 是 Persona、Retrieval、Context、Prompt 和 ProviderRequest 的唯一同步准备入口。Turn 接受后，快照只能读取或恢复，不能在生成中途重新解析出另一套 Persona、Knowledge 或 Capability 状态。
 
-## Implemented locally
+## 冻结对象
 
-### Companion Context
+每个 Turn 固定以下对象或版本：
 
-- Raw messages are immutable `MessageNode` values linked by `parentMessageId`.
-- Each session has an `activeLeafMessageId`; selecting a sampled answer creates a new branch instead of overwriting the original node.
-- `QUOTE`, `RESUME_FROM` and `TOPIC_LINK` are typed references.
-- Topic merge preserves the candidate graph and projects it onto the parent branch.
-- Derived summaries are separate versioned records with source message IDs,
-  context revision and a source revision digest. Editing, deleting or replacing
-  a source branch marks them `STALE`; stale summaries are never assembled into
-  the model context.
-- Graph snapshots expose all nodes, the active path, references, summaries and revision.
-- `SessionContextPersistence` keeps storage outside the graph model. The
-  `postgres` profile persists and restores the complete graph snapshot by
-  user, client and session.
-- `OpenAiProviderTokenizer` supplies provider-model token counting, and
-  `GlobalPromptBudget` applies one budget to the system prompt and all context
-  lanes.
+- `EffectivePersonaState`：Persona、Relationship、Scene、Interaction、Temporal、Client Capability 与 Policy revision。
+- `FrozenKnowledgeSnapshot`：本轮可见的 ACTIVE Knowledge 文档版本。
+- `CapabilityRuntimeFacade.TurnCapabilities`：本轮暴露的能力 ID、版本和 Registry snapshot。
+- `RetrievalBundle`：Query Rewrite、各 lane 状态、排名证据、citation、graph evidence 和降级。
+- `ContextBundle`：分支原文、摘要、rehydration、正式记忆、检索项、工具结果、预算和裁剪。
+- `ProviderRequest`：上述 Provider 可见输入及 Knowledge/Retrieval/Context/Capability trace ID。
+- `HarnessManifest`：协议、构建、Persona、Relationship、Scene、Policy、Knowledge、Capability、Provider 与 Model 版本。
 
-### Persona Runtime
+## Context 与 Persona
 
-- Persona resolution is behind `PersonaRuntime` rather than exposed as a mutable state machine to the HTTP controller.
-- Every Turn freezes a Persona revision and field-level provenance before execution.
-- Verified adapter identity, temporal state, explicit turn input and client capability policy are recorded as separate sources.
-- Temporal and outfit transitions are isolated by user and client. Debounce,
-  cooldown and hysteresis cover boundary transitions instead of allowing
-  rapid client-visible state flapping.
+- 原始消息是由稳定 message ID 和 parent ID 连接的不可变 DAG。
+- 当前用户消息在 Context 构建前写入；助手回复绑定到该用户消息，幂等重试不会重复追加。
+- Summary 是派生版本，source digest 变化后变为 STALE，不能进入 Context。
+- typed reference 支持引用、恢复和 Topic 关联；rehydration 只恢复可见且被引用的局部原文。
+- Context 使用 Provider tokenizer 和来源预算，保留当前输入与关键来源的最低席位，并持久化可 replay trace。
+- Persona、Relationship、Scene 与长期记忆是独立权威状态；客户端不能通过请求体自报关系升级。
+- `PromptPolicyComposer` 只把可信 Persona/Policy 写入 System/Developer block。RAG、Web、Tool、MCP、Graph 和 Agent 结果保持不可信数据角色。
 
-### Turn Runtime
+## Retrieval
 
-- `TurnJournal` owns acceptance, scoped idempotency, request hashing, event sequences and replay.
-- Reusing an idempotency key with a different payload is a conflict instead of silently returning the wrong Turn.
-- Each Turn freezes one `HarnessManifest` containing Context, Persona, Capability, protocol and build revisions.
-- Stages are `created`, `planning`, `retrieving`, `generating`, `finalizing` and one terminal stage.
-- Retrieval lanes run concurrently with a shared absolute Turn deadline and per-capability timeouts.
-- A structured-only provider emits one complete delta; the runtime no longer simulates token streaming with 18-character chunks.
-- The synchronous chat endpoint submits and observes this same lifecycle instead of running a second orchestration pipeline.
-- `PostgresTurnJournal` persists Turn snapshots, events, scoped idempotency,
-  payload hashes, session sequences and outbox rows. Event and outbox writes
-  share one transaction.
-- PostgreSQL recovery restores completed snapshots and replayable events.
-  Turns interrupted by a process restart become explicit failed terminal
-  records rather than appearing to continue in memory.
-- Each live SSE subscriber has a bounded 256-event buffer.
+- `UnifiedRetrievalFacade` 统一 Lore、正式 Memory、Knowledge、条件式 Graph 和 SLOW Web。
+- `NONE` 不检索；`FAST` 不调用 Web 或 Remote Agent；`SLOW` 只开放 Web 和 Agent 规划资格，不会自动授予 Agent 审批。
+- Query Rewrite 同时输出规范查询、关系意图和实体候选；Graph 只用于 1-3 hop 关系问题。
+- Graph 每条边绑定同 ACTIVE 文档版本的可见 evidence chunk；失败时确定性回退 Hybrid，不增加权限。
+- 各 lane 有独立超时和降级，单路失败不会阻断普通回复。
+- `retrieval.completed` 只暴露 trace、状态、provider、数量和降级，不记录原始用户消息或检索正文。
 
-### Capability Runtime
+## Capability 与 Agent
 
-- Descriptors distinguish `PROMPT_SKILL`, `RESOURCE`, `READ_TOOL`, `WRITE_TOOL` and `REMOTE_AGENT`.
-- Every descriptor declares effect, approval policy, timeout, concurrency limit and implementation.
-- Registration is separate from authorization. A sorted, versioned registry snapshot is frozen for each Turn.
-- Retrieval and Memory lane timeouts are read from the frozen snapshot, so a hot registry change cannot alter an in-flight Turn.
-- `CapabilityPolicy` and `CapabilityExecutor` enforce frozen grants, input
-  schema checks, concurrency bounds, deadlines and risk-based write approval.
-- Lore, Memory, Web and Weather calls pass through the executor instead of
-  bypassing policy. Formal Memory uses the authenticated
-  `formal_memory_allowed` grant.
-- Retrieval mode is frozen as `NONE`, `FAST` or `SLOW`. `NONE` skips all
-  retrieval lanes; `FAST` permits only Lore and Memory and is re-enforced by
-  capability policy so Web, Weather and Remote Agent cannot be smuggled in via
-  operation input or a stale grant.
-- MCP descriptors and input schemas are normalized before registration.
-  Remote Agent descriptors receive a bounded policy budget; this is not an
-  operating-system sandbox.
-- Execution returns content-free Effect Receipts. A durable Effect Ledger is
-  still a production gate.
+- Capability 分为 `PROMPT_SKILL`、`RESOURCE`、`READ_TOOL`、`WRITE_TOOL` 和 `REMOTE_AGENT`。
+- Catalog、Registry、Exposure、Policy、Approval、Executor、Normalizer 与 Audit 保持独立职责。
+- 未暴露、越权、Schema 错误、网络策略错误、缺审批或审批上下文漂移均 fail closed。
+- 写操作绑定 operation ID、idempotency key 和 payload digest；未知结果不能按“未执行”自动重试。
+- Turn 主链的 Weather 和显式 Agent 调用只经过 `CapabilityRuntimeFacade`，不再嵌套旧 Harness Executor。
+- MCP 支持截至 `2025-11-25` 的协议协商、Session/JSON/SSE、分页与 `list_changed`；工具、资源和 Prompt 先转换为本地 Descriptor 并重新授权。
+- MCP Prompt/Resource 只在 Turn 显式选择后读取，外部内容始终是 `UNTRUSTED USER_DATA`，不会提升为可信 Prompt Skill。
+- SLOW 模式下主模型只负责提出 proposal；服务端再次校验 Agent allowlist、Policy、Schema、Approval、预算与容量后才执行。
+- 公共 Turn JSON 不能自报 Agent proposal、Capability scope 或审批布尔值。
+- Remote Agent 继承并缩减父级 deadline、trace、取消、Capability、token、tool、cost、depth 和 child budget。
+- Agent 的 submit concurrency 与 in-flight capacity 分开限制；等待状态持久化并释放本地执行资源。
 
-### Retrieval Runtime
+## Turn、事件与恢复
 
-- Java produces one `RetrievalBundle` with fixed Lore, Memory, Knowledge Base
-  and Web lanes.
-- The Python DashScope Lore path combines vector, keyword and rerank rankings
-  using reciprocal rank fusion.
-- Optional `retrieval.completed` events and traces record provider, status,
-  result count and content SHA-256 without writing retrieved text to the
-  journal.
-- Lore errors and timeouts become an `unavailable` lane with no items. They do
-  not fail the Turn or prevent the base LLM response.
+- 接受使用 tenant/user/client/session 作用域幂等和 payload hash；同 key 不同请求会冲突。
+- Stages 为 `created -> planning -> retrieving -> generating -> finalizing -> terminal`。
+- 所有关键模块共享 Turn 绝对 deadline，只能使用剩余预算。
+- Provider 原生流的每个 `text.delta` 先写 Journal，再被 SSE/Adapter 读取；结构化 Provider 只发送一个完整 delta，不伪造 token stream。
+- `PostgresTurnJournal` 在同一事务中写 Turn 生命周期、事件、sequence 和 Outbox。
+- execution owner 使用 lease、heartbeat 和 CAS；过期 Worker 不能继续追加事件或终态。
+- SSE 通过持久 sequence 回放；cursor 过期返回稳定错误和 Session Snapshot，不重新执行 Turn。
+- Outbox 支持 claim、heartbeat、ack、retry 与 dead letter，只有真实 Delivery Bean 存在时才启动消费者。
+- 终态追加成功后完成 `record.done` 并释放 Capability snapshot；任何后续 Memory Job 故障不改变终态。
 
-### Adapter Protocol v1
+## Adapter Protocol v1
 
-- Envelopes contain `protocol_version`, stable `event_id`, `required`, session sequence and metadata.
-- Replay returns the same event IDs.
-- TypeScript accepts unknown optional events and advances its sequence checkpoint; unknown required events fail explicitly.
-- Java, TypeScript and Python share the v1 envelope fields.
-- The Controller delegates SSE replay to `TurnRuntime`; it no longer owns a duplicate polling loop.
-- Website persists a v2 reducer/active-Turn checkpoint before page side effects
-  and migrates v1 records. AstrBot stores the same replay cursor and reply
-  assembly state in an atomic JSON checkpoint keyed by session and Turn, so a
-  plugin restart can resume a previously accepted idempotent Turn.
+- Envelope 包含协议版本、稳定 event ID、required 标记、ReplayPolicy、session sequence 和 metadata。
+- 未知 optional 事件只推进 checkpoint；未知 required 事件明确失败。
+- AIRI、AstrBot、Website 在执行 ONCE 副作用前持久 event ID 与 sequence。
+- 三端共享 Client Hello、能力/权限协商、终态目录、错误码、Snapshot 和 canonical fixture。
+- Adapter 只映射本地表现资产，不决定 Persona、关系、检索、正式记忆或服务端权限。
+- `meguri_user_id`、平台 actor、client instance 和 session 使用独立标识；原始平台 actor 只在 Adapter 边界出现，Core 只持久化不可逆映射与绑定结果。
+- Client Binding 拒绝 actor 换绑和绑定降级；请求体身份不能覆盖认证 principal。
 
-### Formal Memory safety
+## 异步 Memory 边界
 
-- Direct and compatibility supersede calls create a version-bound candidate;
-  they do not mutate a canonical item before explicit approval.
-- Legacy upsert and the Java/Python bridge fail closed when an authoritative
-  candidate workflow is unavailable.
-- Prohibited/L0 candidates are replaced by a SHA-256 fingerprint, a fixed
-  placeholder and a content-free rejection reason before the repository sees
-  them. Rejected candidates cannot later be approved.
-- Candidate models reject protected relationship fields recursively, while the
-  repository hard-codes a new relationship stage to `null` and preserves the
-  previous stage during an approved supersede.
+- 正文不执行同步候选抽取或长期记忆写入。
+- `turn.completed` 后只入队 Post-Reply Memory Job。
+- Worker 独立执行抽取、风险/审批流程和正式写入，并具有 lease、heartbeat、retry、Dead Letter 和取消策略。
+- 正式 Memory 的 PostgreSQL 版本是权威；向量与本地文件只是可修复投影。
 
-## Production gates still open
+## 生产验收门槛
 
-The following work is still required before claiming production Harness 20
-completion:
+本地实现不替代以下真实环境证据：
 
-1. Prove the PostgreSQL Turn and Context implementations against a real
-   database or Testcontainers, including restart, concurrency, unavailable
-   database and transaction-failure scenarios.
-2. Implement the Turn outbox dispatcher, delivery acknowledgement, retry and
-   idempotent consumer contract. Cursor expiry and session snapshots now exist,
-   but event retention/compaction and real PostgreSQL replay-gap evidence remain.
-3. Add a background summary/precompression job. The current global token
-   budget can synchronously remove optional records, but does not schedule
-   durable summarization work.
-4. Complete Memory file projection and true three-way conflict resolution.
-   Prove Memory outbox delivery and recovery against PostgreSQL.
-5. Route Lore, Memory, Knowledge, Graph and Web through one typed Planner,
-   Bundle and Trace. Replace Memory's heterogeneous linear score fusion with
-   RRF or a validated calibration model, and complete Web search/extract safety.
-6. Persist full Persona profile, relationship, scene and interaction state,
-   then define cross-client synchronization rules.
-7. Connect Prompt Skills to Context assembly, provide a real Remote Agent/A2A
-   transport, migrate remaining direct Gateways into Capability Runtime, define
-   compensation semantics, and prove process/network isolation where required.
-8. Add authenticated AIRI, AstrBot and Website E2E tests against the same Core
-   and Relay, including expired tokens, forged identities, reconnect and
-   durable replay.
-9. Wire native AIRI Live2D only if it is selected as a delivery requirement.
-   The current PNG-first implementation remains an explicit integration stage.
-10. Generate Java, TypeScript and Python protocol models from one schema,
-    align Tool/Approval/Skill/Agent required event catalogs, and make client
-    idempotency keys stable across request retries.
+1. PostgreSQL/pgvector 的迁移、查询计划、并发、事务故障、重启与恢复。
+2. Provider 的真实原生流、TTFT、中断、取消、deadline 和部分文本行为。
+3. MCP 与 Remote Agent 的认证、断连、重复投递、恶意输出、版本 drain 和跨进程恢复。
+4. AIRI、AstrBot、Website 对同一 Core 的真实身份、跨端正式记忆、session 隔离与重连。
+5. Outbox 的真实消费者幂等、监控告警和 Dead Letter 运维。
+6. 生产 secret、备份恢复、容量、灰度、回滚和故障演练。
 
-Until these gates close, the correct status is: durable components implemented
-and locally contract-tested, but production Harness 20 is not yet proven.
+## 最新自动化快照
 
-## Latest verification snapshot
-
-- Java 21: 287 tests executed, 0 failures, 0 errors, 1 environment-dependent
-  test skipped.
-- Python: 342 tests passed; 8 environment/real PostgreSQL tests skipped.
-- Root TypeScript protocol and adapters: 42/42 passed.
-- AIRI Meguri Adapter: 22/22 passed; targeted strict TypeScript and ESLint passed.
-- AIRI Stage: 405 tests passed; 4 existing Windows/upstream environment failures
-  remain outside the Meguri adapter change set.
-- No real PostgreSQL or authenticated cross-client E2E evidence is available
-  on this workstation.
+- Java 21：404 tests，0 failures，0 errors，1 skipped。
+- Python：376 passed，8 skipped；本次变更文件 Ruff 与 compileall 通过。
+- Alembic：单一 head `20260729_0007`，离线 `0001 -> 0007 -> base` 全链通过。
+- 根 TypeScript：48/48 passed。
+- 跨端 fixture：Website/协议、AstrBot/Python、AIRI 全部通过。
+- AIRI Adapter：31/31、严格 TypeScript、指定 ESLint 通过。
+- AstrBot 插件 ZIP 打包通过。

@@ -15,8 +15,25 @@ export const turnEventTypes = [
   'sprite.resolved',
   'memory.candidate.created',
   'memory.write.completed',
+  'memory.updated',
+  'relationship.updated',
+  'tool.proposed',
+  'approval.required',
+  'approval.resolved',
   'tool.started',
   'tool.completed',
+  'tool.failed',
+  'skill.started',
+  'skill.waiting',
+  'skill.completed',
+  'skill.failed',
+  'agent.started',
+  'agent.waiting',
+  'agent.completed',
+  'agent.failed',
+  'semantic.cue',
+  'voice.requested',
+  'audio.ready',
   'training.candidates.ready',
   'tts.requested',
   'tts.audio.delta',
@@ -84,14 +101,42 @@ export interface TurnEventEnvelope<T extends Record<string, unknown> = Record<st
 }
 
 const eventTypeSet = new Set<string>(turnEventTypes)
-const onceEventTypes = new Set<string>([
-  'tts.requested',
-  'tts.audio.delta',
-  'tts.completed',
-  'notification.requested',
-  'animation.requested',
-  'side_effect.requested',
+const stateEventTypes = new Set<string>([
+  'turn.started',
+  'turn.stage.changed',
+  'text.delta',
+  'text.completed',
+  'semantic.completed',
+  'expression.cue',
+  'sprite.resolved',
+  'approval.required',
+  'memory.updated',
+  'relationship.updated',
+  'session.synced',
+  'skill.started',
+  'skill.waiting',
+  'skill.completed',
+  'skill.failed',
+  'agent.started',
+  'agent.waiting',
+  'agent.completed',
+  'agent.failed',
+  'turn.completed',
+  'turn.cancelled',
+  'turn.failed',
 ])
+
+/** Mirrors the Core authority in TurnEventTypes.replayPolicy. */
+export function replayPolicyForEvent(
+  type: string,
+  data: Record<string, unknown> = {},
+): ReplayPolicy {
+  if (type.startsWith('tts.') || type === 'voice.requested' || type === 'audio.ready')
+    return 'ONCE'
+  if (type === 'semantic.cue' && (data.channel === 'animation' || data.channel === 'notification'))
+    return 'ONCE'
+  return stateEventTypes.has(type) ? 'STATE' : 'ALWAYS'
+}
 
 export function parseTurnEventEnvelope(
   value: unknown,
@@ -123,9 +168,15 @@ export function parseTurnEventEnvelope(
   const metadata = value.metadata
   for (const key of ['trace_id', 'source', 'created_at', 'build_id'])
     stringField(metadata, key)
-  const replayPolicy = value.replay_policy ?? (onceEventTypes.has(type) ? 'ONCE' : 'STATE')
+  const replayPolicy = value.replay_policy ?? replayPolicyForEvent(type, value.data)
   if (!['STATE', 'ONCE', 'ALWAYS'].includes(String(replayPolicy)))
     throw new TypeError(`unsupported replay policy: ${String(replayPolicy)}`)
+  const canonicalReplayPolicy = replayPolicyForEvent(type, value.data)
+  if (eventTypeSet.has(type) && replayPolicy !== canonicalReplayPolicy) {
+    throw new TypeError(
+      `non-canonical replay policy for ${type}: expected ${canonicalReplayPolicy}, received ${String(replayPolicy)}`,
+    )
+  }
   const createdAt = value.created_at ?? metadata.created_at
   if (typeof createdAt !== 'string' || createdAt.length === 0)
     throw new TypeError('created_at must be a non-empty string')

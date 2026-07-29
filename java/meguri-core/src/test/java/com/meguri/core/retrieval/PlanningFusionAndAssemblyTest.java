@@ -13,6 +13,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PlanningFusionAndAssemblyTest {
     @Test
+    void deterministicGateSkipsGreetingsButPreservesExplicitSlowRequests() {
+        RetrievalGate gate = new RetrievalGate();
+
+        assertThat(gate.classify("你好！", RetrievalMode.FAST))
+                .isEqualTo(RetrievalMode.NONE);
+        assertThat(gate.classify("你好，请联网查一下今天的新闻", RetrievalMode.SLOW))
+                .isEqualTo(RetrievalMode.SLOW);
+    }
+
+    @Test
     void ordinaryQuestionDoesNotEnableGraphButRelationshipQuestionDoes() {
         DefaultRetrievalPlanner planner = new DefaultRetrievalPlanner();
 

@@ -97,7 +97,13 @@ public final class InMemoryAgentRuntimeStore implements
     @Override
     public List<AgentTask> findResumable() {
         return tasks.values().stream()
-                .filter(task -> task.status() == AgentRuntimeState.AgentStatus.WAITING_EXTERNAL)
+                .filter(task -> switch (task.status()) {
+                    case CREATED, QUEUED, RUNNING, WAITING_EXTERNAL -> true;
+                    case SUCCEEDED, FAILED, CANCELLED, TIMED_OUT -> false;
+                })
+                .sorted(java.util.Comparator
+                        .comparing(AgentTask::updatedAt)
+                        .thenComparing(AgentTask::taskId))
                 .toList();
     }
 

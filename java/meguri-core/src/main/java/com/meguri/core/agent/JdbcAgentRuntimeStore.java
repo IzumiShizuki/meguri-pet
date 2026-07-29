@@ -162,7 +162,7 @@ public final class JdbcAgentRuntimeStore implements
     public List<AgentTask> findResumable() {
         return jdbc.query("""
                 SELECT * FROM agent_task
-                WHERE status = 'WAITING_EXTERNAL' AND remote_task_id IS NOT NULL
+                WHERE status IN ('CREATED', 'QUEUED', 'RUNNING', 'WAITING_EXTERNAL')
                 ORDER BY updated_at, task_id
                 """, this::readTask);
     }

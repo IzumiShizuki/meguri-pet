@@ -137,16 +137,11 @@ public final class RuntimeStateMachine {
         String overrideMode = firstNonBlank(
                 stringValue(userOverride, "getMode", "mode"),
                 stringValue(clientOverride, "getMode", "mode"));
-        String overrideRelationship = stringValue(
-                userOverride, "getRelationshipProfile", "relationshipProfile");
         if (overrideOutfit != null) {
             outfit = overrideOutfit;
         }
         if (overrideMode != null) {
             mode = overrideMode;
-        }
-        if (overrideRelationship != null && !overrideRelationship.isBlank()) {
-            relationship = overrideRelationship;
         }
 
         boolean desktopClient = "desktop_pet".equals(clientId) || "airi".equals(clientId);

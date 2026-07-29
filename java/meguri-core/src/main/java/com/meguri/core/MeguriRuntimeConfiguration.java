@@ -15,6 +15,12 @@ import com.meguri.core.capability.McpSourceStore;
 import com.meguri.core.capability.PersistingCapabilityCatalog;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
+import com.meguri.core.llm.ProviderTokenizer;
+import com.meguri.core.context.CompanionContextRuntime;
+import com.meguri.core.context.ContextBundle;
+import com.meguri.core.context.ContextProfile;
+import com.meguri.core.context.ContextRuntimePersistence;
+import com.meguri.core.context.InMemoryContextRuntimePersistence;
 import com.meguri.core.metrics.PromptCacheMetricsService;
 import com.meguri.core.rag.MockRagProvider;
 import com.meguri.core.rag.PythonRagGateway;
@@ -24,6 +30,7 @@ import com.meguri.core.runtime.PostgresTurnJournal;
 import com.meguri.core.runtime.NoopSessionContextPersistence;
 import com.meguri.core.runtime.PostgresSessionContextPersistence;
 import com.meguri.core.runtime.SessionContextPersistence;
+import com.meguri.core.runtime.SessionContextStore;
 import com.meguri.core.runtime.TurnJournal;
 import com.meguri.core.websearch.DuckDuckGoWebSearchGateway;
 import com.meguri.core.websearch.BingRssWebSearchGateway;
@@ -47,6 +54,7 @@ import reactor.netty.http.client.HttpClient;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.util.Map;
+import javax.sql.DataSource;
 
 /** Spring wiring that keeps provider selection explicit and offline-first. */
 @Configuration
@@ -57,33 +65,105 @@ public class MeguriRuntimeConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "in-memory", matchIfMissing = true)
-    public TurnJournal meguriTurnJournal(ObjectMapper mapper) {
-        return new InMemoryTurnJournal(mapper);
+    public ProviderTokenizer meguriProviderTokenizer(LlmProvider provider) {
+        return provider.tokenizer();
     }
 
     @Bean
-    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "postgres")
-    public TurnJournal meguriPostgresTurnJournal(
-            JdbcTemplate jdbcTemplate,
-            TransactionTemplate transactions,
+    public ContextProfile meguriContextProfile(
+            LlmProvider provider,
+            @Value("${meguri.context.max-input-tokens:16000}") int maxInputTokens,
+            @Value("${meguri.context.reserved-output-tokens:1600}") int reservedOutputTokens,
+            @Value("${meguri.context.protocol-overhead-tokens:700}") int protocolOverheadTokens) {
+        java.util.EnumMap<ContextBundle.BlockType, ContextProfile.SourceBudget> budgets =
+                new java.util.EnumMap<>(ContextBundle.BlockType.class);
+        budgets.put(ContextBundle.BlockType.RECENT_RAW, new ContextProfile.SourceBudget(1200, 7000));
+        budgets.put(ContextBundle.BlockType.SUMMARY, new ContextProfile.SourceBudget(256, 2500));
+        budgets.put(ContextBundle.BlockType.REHYDRATED, new ContextProfile.SourceBudget(256, 2000));
+        budgets.put(ContextBundle.BlockType.MEMORY, new ContextProfile.SourceBudget(256, 2000));
+        budgets.put(ContextBundle.BlockType.RETRIEVAL, new ContextProfile.SourceBudget(512, 3500));
+        budgets.put(ContextBundle.BlockType.TOOL_RESULT, new ContextProfile.SourceBudget(0, 1500));
+        return new ContextProfile(provider.modelId(), maxInputTokens, reservedOutputTokens,
+                protocolOverheadTokens, 0.70, 0.90, budgets);
+    }
+
+    @Bean
+    public TurnJournal meguriTurnJournal(
+            ObjectProvider<DataSource> dataSourceProvider,
+            ObjectProvider<JdbcTemplate> jdbcProvider,
+            ObjectProvider<TransactionTemplate> transactionProvider,
             ObjectMapper mapper,
+            @Value("${meguri.turn-journal.mode:auto}") String configuredMode,
             @Value("${meguri.build-id:meguri_local_mock}") String buildId) {
+        DataSource dataSource = dataSourceProvider.getIfAvailable();
+        String mode = configuredMode == null ? "auto"
+                : configuredMode.trim().toLowerCase(java.util.Locale.ROOT);
+        if (dataSource == null) {
+            if ("postgres".equals(mode)) {
+                throw new IllegalStateException("PostgreSQL Turn journal requires a DataSource");
+            }
+            if (!"auto".equals(mode) && !"in-memory".equals(mode)) {
+                throw new IllegalArgumentException("unsupported Turn journal mode: " + mode);
+            }
+            return new InMemoryTurnJournal(mapper);
+        }
+        if ("in-memory".equals(mode)) {
+            throw new IllegalStateException(
+                    "in-memory Turn journal is forbidden when a DataSource is available");
+        }
+        if (!"auto".equals(mode) && !"postgres".equals(mode)) {
+            throw new IllegalArgumentException("unsupported Turn journal mode: " + mode);
+        }
+        JdbcTemplate jdbcTemplate = jdbcProvider.getIfAvailable();
+        TransactionTemplate transactions = transactionProvider.getIfAvailable();
+        if (jdbcTemplate == null || transactions == null) {
+            throw new IllegalStateException("PostgreSQL Turn journal requires JDBC transactions");
+        }
         String recoveryBuildId = buildId == null || buildId.isBlank() ? "meguri_local_mock" : buildId.trim();
         return new PostgresTurnJournal(jdbcTemplate, mapper, transactions, recoveryBuildId);
     }
 
     @Bean
-    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "in-memory", matchIfMissing = true)
-    public SessionContextPersistence meguriSessionContextPersistence() {
-        return new NoopSessionContextPersistence();
+    public SessionContextPersistence meguriSessionContextPersistence(
+            ObjectProvider<DataSource> dataSourceProvider,
+            ObjectProvider<JdbcTemplate> jdbcProvider,
+            ObjectMapper mapper,
+            @Value("${meguri.turn-journal.mode:auto}") String configuredMode) {
+        String mode = configuredMode == null
+                ? "auto" : configuredMode.trim().toLowerCase(java.util.Locale.ROOT);
+        DataSource dataSource = dataSourceProvider.getIfAvailable();
+        if ("in-memory".equals(mode) || "auto".equals(mode) && dataSource == null) {
+            return new NoopSessionContextPersistence();
+        }
+        if (!"auto".equals(mode) && !"postgres".equals(mode)) {
+            throw new IllegalArgumentException("unsupported Session Context mode: " + mode);
+        }
+        JdbcTemplate jdbc = jdbcProvider.getIfAvailable();
+        if (dataSource == null || jdbc == null) {
+            throw new IllegalStateException("PostgreSQL Session Context requires DataSource and JdbcTemplate");
+        }
+        return new PostgresSessionContextPersistence(jdbc, mapper);
     }
 
     @Bean
-    @ConditionalOnProperty(name = "meguri.turn-journal.mode", havingValue = "postgres")
-    public SessionContextPersistence meguriPostgresSessionContextPersistence(
-            JdbcTemplate jdbcTemplate, ObjectMapper mapper) {
-        return new PostgresSessionContextPersistence(jdbcTemplate, mapper);
+    public ContextRuntimePersistence meguriContextRuntimePersistence(
+            SessionContextPersistence sessionPersistence) {
+        return sessionPersistence instanceof ContextRuntimePersistence durable
+                ? durable : new InMemoryContextRuntimePersistence();
+    }
+
+    @Bean
+    public SessionContextStore meguriSessionContextStore(
+            SessionContextPersistence persistence) {
+        return new SessionContextStore(20, persistence);
+    }
+
+    @Bean
+    public CompanionContextRuntime meguriCompanionContextRuntime(
+            SessionContextStore sessions,
+            ContextRuntimePersistence persistence,
+            ProviderTokenizer tokenizer) {
+        return new CompanionContextRuntime(sessions, persistence, tokenizer);
     }
 
     @Bean

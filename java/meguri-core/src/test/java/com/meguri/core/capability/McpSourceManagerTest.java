@@ -138,8 +138,8 @@ class McpSourceManagerTest {
                     approvalId, staleProposal.networkAllowed(),
                     staleProposal.maximumCostUnits()));
 
-            assertThat(stale.errorCode()).isEqualTo("IMPLEMENTATION_FAILED");
-            assertThat(adapter.invocations).hasValue(0);
+            assertThat(stale.status()).isEqualTo(CapabilityResult.Status.SUCCESS);
+            assertThat(adapter.invocations).hasValue(1);
             CapabilityRuntimeFacade.TurnCapabilities current =
                     runtime.freeze(context("current-risk", "mcp.alpha.lookup"));
             assertThat(runtime.exposedDescriptors(current))
@@ -266,6 +266,76 @@ class McpSourceManagerTest {
         }
     }
 
+    @Test
+    void explicitPollRefreshesOnlyWhenTheAdapterReportsAChangedCatalog() {
+        try (CapabilityRuntimeFacade runtime = new CapabilityRuntimeFacade(8)) {
+            FakeAdapter adapter = new FakeAdapter();
+            adapter.tools = List.of(tool("lookup", true, "string"));
+            McpSourceManager manager = manager(runtime, adapter);
+            manager.register(configuration());
+            String original = manager.status("alpha").capabilityVersions()
+                    .get("mcp.alpha.lookup");
+
+            manager.poll("alpha");
+            assertThat(manager.status("alpha").capabilityVersions())
+                    .containsEntry("mcp.alpha.lookup", original);
+
+            adapter.tools = List.of(tool("lookup", true, "number"));
+            adapter.pollChanged = true;
+            manager.poll("alpha");
+
+            assertThat(manager.status("alpha").capabilityVersions()
+                    .get("mcp.alpha.lookup")).isNotEqualTo(original);
+            assertThat(adapter.polls).hasValue(2);
+        }
+    }
+
+    @Test
+    void explicitlyReadsOnlyRegisteredPromptAndResourceFromConnectedSource() {
+        try (CapabilityRuntimeFacade runtime = new CapabilityRuntimeFacade(8)) {
+            FakeAdapter adapter = new FakeAdapter();
+            adapter.prompts = List.of(Map.of("name", "summarize"));
+            adapter.resources = List.of(Map.of("uri", "docs://one", "name", "one"));
+            McpSourceManager manager = manager(runtime, adapter);
+            manager.register(configuration());
+
+            assertThat(manager.getPrompt(
+                    "alpha", "summarize", Map.of("style", "short"),
+                    Set.of("mcp:alpha")))
+                    .singleElement().satisfies(content -> {
+                        assertThat(content.server()).isEqualTo("alpha");
+                        assertThat(content.kind()).isEqualTo(McpExternalContent.Kind.PROMPT);
+                        assertThat(content.trust()).isEqualTo(
+                                McpExternalContent.Trust.UNTRUSTED_EXTERNAL);
+                    });
+            assertThat(manager.readResource(
+                    "alpha", "docs://one", Set.of("mcp:alpha")))
+                    .singleElement().satisfies(content -> {
+                        assertThat(content.server()).isEqualTo("alpha");
+                        assertThat(content.kind()).isEqualTo(McpExternalContent.Kind.RESOURCE);
+                        assertThat(content.trust()).isEqualTo(
+                                McpExternalContent.Trust.UNTRUSTED_EXTERNAL);
+                    });
+            assertThatThrownBy(() -> manager.getPrompt(
+                    "alpha", "not-listed", Map.of(), Set.of("mcp:alpha")))
+                    .isInstanceOf(SecurityException.class);
+            assertThatThrownBy(() -> manager.getPrompt(
+                    "alpha", "summarize", Map.of(), Set.of()))
+                    .isInstanceOf(SecurityException.class)
+                    .hasMessageContaining("scope");
+            assertThatThrownBy(() -> manager.readResource(
+                    "alpha", "docs://one", Set.of("mcp:other")))
+                    .isInstanceOf(SecurityException.class)
+                    .hasMessageContaining("scope");
+
+            manager.remove("alpha");
+            assertThatThrownBy(() -> manager.readResource(
+                    "alpha", "docs://one", Set.of("mcp:alpha")))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("unknown MCP source");
+        }
+    }
+
     private static McpSourceManager manager(
             CapabilityRuntimeFacade runtime, FakeAdapter adapter) {
         return new McpSourceManager(runtime, (configuration, authorization) -> adapter,
@@ -314,17 +384,44 @@ class McpSourceManagerTest {
 
     private static final class FakeAdapter implements McpAdapter {
         private List<Map<String, Object>> tools = new ArrayList<>();
+        private List<Map<String, Object>> prompts = new ArrayList<>();
+        private List<Map<String, Object>> resources = new ArrayList<>();
         private Runnable listener;
         private final AtomicInteger invocations = new AtomicInteger();
+        private final AtomicInteger polls = new AtomicInteger();
+        private boolean pollChanged;
 
         @Override
         public Negotiation negotiate(int maximumProtocol, Set<String> capabilities) {
-            return new Negotiation(maximumProtocol, Set.of("tools", "list_changed"));
+            return new Negotiation(maximumProtocol,
+                    Set.of("tools", "prompts", "resources", "list_changed"));
         }
 
         @Override
         public List<Map<String, Object>> listTools() {
             return tools;
+        }
+
+        @Override
+        public List<Map<String, Object>> listPrompts() {
+            return prompts;
+        }
+
+        @Override
+        public List<Map<String, Object>> listResources() {
+            return resources;
+        }
+
+        @Override
+        public List<Map<String, Object>> getPrompt(
+                String promptName, Map<String, Object> arguments) {
+            return List.of(Map.of("role", "user", "content", Map.of(
+                    "type", "text", "text", "remote prompt")));
+        }
+
+        @Override
+        public List<Map<String, Object>> readResource(String uri) {
+            return List.of(Map.of("uri", uri, "text", "remote resource"));
         }
 
         @Override
@@ -339,6 +436,14 @@ class McpSourceManagerTest {
         @Override
         public void onListChanged(Runnable listener) {
             this.listener = listener;
+        }
+
+        @Override
+        public boolean pollForListChanges() {
+            polls.incrementAndGet();
+            boolean result = pollChanged;
+            pollChanged = false;
+            return result;
         }
     }
 }

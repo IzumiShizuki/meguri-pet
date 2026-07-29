@@ -10,6 +10,7 @@ import com.meguri.core.adapter.domain.ClientHello;
 import com.meguri.core.adapter.domain.ClientHelloResponse;
 import com.meguri.core.adapter.domain.ClientPermissions;
 import com.meguri.core.adapter.domain.ProtocolVersion;
+import com.meguri.core.adapter.domain.PlatformActorMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -74,6 +75,7 @@ public final class ClientHandshakeService {
                 required(tenantId, "tenantId"),
                 userId,
                 hello.client().clientId(),
+                null,
                 hello.client().clientVersion(),
                 selectedVersion.toString(),
                 revision,
@@ -108,6 +110,10 @@ public final class ClientHandshakeService {
         }
 
         String userId = required(authenticatedUserId, "authenticatedUserId");
+        if (!userId.equals(hello.identity().meguriUser().id())) {
+            throw new IllegalArgumentException(
+                    "meguri_user.id does not match the authenticated user");
+        }
         AdapterProtocolCapabilities serverCapabilities =
                 AdapterProtocolCapabilities.serverDefaults();
         AdapterProtocolCapabilities effectiveCapabilities =
@@ -125,6 +131,9 @@ public final class ClientHandshakeService {
                 required(tenantId, "tenantId"),
                 userId,
                 hello.identity().clientInstance().profile(),
+                PlatformActorMapper.hash(
+                        hello.identity().platformActor().platform(),
+                        hello.identity().platformActor().actorId()),
                 hello.clientVersion(),
                 selectedVersion.toString(),
                 revision,

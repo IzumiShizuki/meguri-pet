@@ -2,6 +2,7 @@ package com.meguri.core.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.meguri.core.adapter.domain.PlatformActorMapper;
 import com.meguri.core.dto.ClientCapabilities;
 import com.meguri.core.dto.RuntimeOverride;
 import com.meguri.core.dto.TurnRequest;
@@ -145,7 +146,9 @@ class RuntimeWebControllerTest {
         TurnRecord turn = orchestrator.turn(turnId);
         turn.getDone().join();
         assertThat(turn.getRequest().getPlatformId()).isEqualTo("meguri.website");
-        assertThat(turn.getRequest().getPlatformActorId()).isEqualTo("account-42");
+        assertThat(turn.getRequest().getPlatformActorId())
+                .isEqualTo(PlatformActorMapper.hash(
+                        "meguri.website", "account-42"));
         assertThat(turn.getRequest().getClientInstanceId()).isEqualTo("browser-tab-01");
 
         List<String> onceIds = orchestrator.eventsFor("s-canonical").stream()

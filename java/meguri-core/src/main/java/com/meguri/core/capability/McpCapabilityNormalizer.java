@@ -52,7 +52,10 @@ public final class McpCapabilityNormalizer {
                 "mcp://" + serverId + "/" + name,
                 CapabilityDescriptor.Health.HEALTHY,
                 false,
-                protocolVersion,
+                // MCP negotiation is pinned in the capability version. This
+                // field gates Meguri's Adapter/Capability protocol, not MCP's
+                // independent date-version level.
+                1,
                 new CapabilityDescriptor.NetworkPolicy(true, Set.of(serverId)),
                 Set.of(),
                 new CapabilityDescriptor.CostPolicy(1, 100),

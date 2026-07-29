@@ -1,6 +1,7 @@
 package com.meguri.core.dto;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.meguri.core.harness.retrieval.RetrievalMode;
@@ -10,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /** Inbound turn contract. Unknown adapter fields are intentionally ignored. */
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -31,6 +33,9 @@ public final class TurnRequest {
     private final String platformActorId;
     private final String clientInstanceId;
     private final String tenantId;
+    private final Set<String> authorizedCapabilityScopes;
+    private final List<McpContentSelection> mcpContentSelections;
+    private final AgentProposal agentProposal;
 
     public TurnRequest(String userId, String clientId, String sessionId, String message) {
         this(userId, clientId, sessionId, null, message, List.of(), new ClientCapabilities(), null, null, false, false);
@@ -97,7 +102,7 @@ public final class TurnRequest {
         this(userId, clientId, sessionId, parentSessionId, message, attachments,
                 clientCapabilities, optionalScreenContextId, relationshipProfile,
                 formalMemoryAllowed, trainingMode, replyFormat, retrievalMode,
-                null, null, null, "meguri-local");
+                null, null, null, "meguri-local", Set.of(), List.of(), null);
     }
 
     private TurnRequest(String userId, String clientId, String sessionId, String parentSessionId, String message,
@@ -112,7 +117,10 @@ public final class TurnRequest {
                         String platformId,
                         String platformActorId,
                         String clientInstanceId,
-                        String tenantId) {
+                        String tenantId,
+                        Set<String> authorizedCapabilityScopes,
+                        List<McpContentSelection> mcpContentSelections,
+                        AgentProposal agentProposal) {
         this.userId = required(userId, "user_id");
         this.clientId = required(clientId, "client_id");
         if (!SetValues.CLIENT_IDS.contains(this.clientId)) {
@@ -140,6 +148,11 @@ public final class TurnRequest {
         this.platformActorId = optional(platformActorId);
         this.clientInstanceId = optional(clientInstanceId);
         this.tenantId = required(tenantId, "tenant_id");
+        this.authorizedCapabilityScopes = Set.copyOf(
+                authorizedCapabilityScopes == null ? Set.of() : authorizedCapabilityScopes);
+        this.mcpContentSelections = mcpContentSelections == null
+                ? List.of() : List.copyOf(mcpContentSelections);
+        this.agentProposal = agentProposal;
     }
 
     @JsonCreator
@@ -156,13 +169,16 @@ public final class TurnRequest {
             @JsonProperty("formal_memory_allowed") Boolean formalMemoryAllowed,
             @JsonProperty("training_mode") Boolean trainingMode,
             @JsonProperty("reply_format") String replyFormat,
-            @JsonProperty("retrieval_mode") RetrievalMode retrievalMode) {
-        this(userId, clientId, sessionId, parentSessionId, message, attachments, clientCapabilities,
-                optionalScreenContextId, relationshipProfile,
+            @JsonProperty("retrieval_mode") RetrievalMode retrievalMode,
+            @JsonProperty("mcp_content") List<McpContentSelection> mcpContentSelections,
+            @JsonProperty("agent_proposal") AgentProposal ignoredClientAgentProposal) {
+        this(userId, clientId, sessionId, parentSessionId, message, attachments,
+                clientCapabilities, optionalScreenContextId, relationshipProfile,
                 formalMemoryAllowed != null && formalMemoryAllowed,
-                trainingMode != null && trainingMode,
-                replyFormat,
-                retrievalMode);
+                trainingMode != null && trainingMode, replyFormat,
+                retrievalMode == null ? RetrievalMode.compatibleDefault() : retrievalMode,
+                null, null, null, "meguri-local", Set.of(),
+                mcpContentSelections, null);
     }
 
     private static String required(String value, String field) {
@@ -226,6 +242,16 @@ public final class TurnRequest {
     public String clientInstanceId() { return clientInstanceId; }
     @JsonProperty("tenant_id") public String getTenantId() { return tenantId; }
     public String tenantId() { return tenantId; }
+    @JsonIgnore public Set<String> getAuthorizedCapabilityScopes() {
+        return authorizedCapabilityScopes;
+    }
+    public Set<String> authorizedCapabilityScopes() { return authorizedCapabilityScopes; }
+    @JsonProperty("mcp_content") public List<McpContentSelection> getMcpContentSelections() {
+        return mcpContentSelections;
+    }
+    public List<McpContentSelection> mcpContentSelections() { return mcpContentSelections; }
+    @JsonIgnore public AgentProposal getAgentProposal() { return agentProposal; }
+    public AgentProposal agentProposal() { return agentProposal; }
 
     /**
      * Rebinds the memory permission after the adapter identity has been
@@ -236,7 +262,8 @@ public final class TurnRequest {
         return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
                 attachments, clientCapabilities, optionalScreenContextId,
                 relationshipProfile, allowed, trainingMode, replyFormat, retrievalMode,
-                platformId, platformActorId, clientInstanceId, tenantId);
+                platformId, platformActorId, clientInstanceId, tenantId,
+                authorizedCapabilityScopes, mcpContentSelections, agentProposal);
     }
 
     public TurnRequest withAdapterIdentity(
@@ -248,7 +275,7 @@ public final class TurnRequest {
                 required(platformId, "platform_id"),
                 required(platformActorId, "platform_actor_id"),
                 required(clientInstanceId, "client_instance_id"),
-                tenantId);
+                tenantId, authorizedCapabilityScopes, mcpContentSelections, agentProposal);
     }
 
     public TurnRequest withTenantId(String tenantId) {
@@ -256,7 +283,38 @@ public final class TurnRequest {
                 attachments, clientCapabilities, optionalScreenContextId,
                 relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat,
                 retrievalMode, platformId, platformActorId, clientInstanceId,
-                required(tenantId, "tenant_id"));
+                required(tenantId, "tenant_id"), authorizedCapabilityScopes,
+                mcpContentSelections, agentProposal);
+    }
+
+    /** Applies server-authorized scopes after adapter authentication. */
+    public TurnRequest withAuthorizedCapabilityScopes(Set<String> scopes) {
+        return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
+                attachments, clientCapabilities, optionalScreenContextId,
+                relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat,
+                retrievalMode, platformId, platformActorId, clientInstanceId,
+                tenantId, Objects.requireNonNull(scopes, "scopes"),
+                mcpContentSelections, agentProposal);
+    }
+
+    public TurnRequest withMcpContentSelections(
+            List<McpContentSelection> selections) {
+        return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
+                attachments, clientCapabilities, optionalScreenContextId,
+                relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat,
+                retrievalMode, platformId, platformActorId, clientInstanceId,
+                tenantId, authorizedCapabilityScopes,
+                Objects.requireNonNull(selections, "selections"), agentProposal);
+    }
+
+    /** Internal planner seam; JSON clients cannot populate this proposal. */
+    public TurnRequest withAgentProposal(AgentProposal proposal) {
+        return new TurnRequest(userId, clientId, sessionId, parentSessionId, message,
+                attachments, clientCapabilities, optionalScreenContextId,
+                relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat,
+                retrievalMode, platformId, platformActorId, clientInstanceId,
+                tenantId, authorizedCapabilityScopes, mcpContentSelections,
+                Objects.requireNonNull(proposal, "proposal"));
     }
 
     @Override public boolean equals(Object other) {
@@ -271,8 +329,46 @@ public final class TurnRequest {
                 && Objects.equals(platformId, that.platformId)
                 && Objects.equals(platformActorId, that.platformActorId)
                 && Objects.equals(clientInstanceId, that.clientInstanceId)
-                && tenantId.equals(that.tenantId);
+                && tenantId.equals(that.tenantId)
+                && authorizedCapabilityScopes.equals(that.authorizedCapabilityScopes)
+                && mcpContentSelections.equals(that.mcpContentSelections)
+                && Objects.equals(agentProposal, that.agentProposal);
     }
-    @Override public int hashCode() { return Objects.hash(userId, clientId, sessionId, parentSessionId, message, attachments, clientCapabilities, optionalScreenContextId, relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat, retrievalMode, platformId, platformActorId, clientInstanceId, tenantId); }
-    @Override public String toString() { return "TurnRequest[userId=" + userId + ", clientId=" + clientId + ", sessionId=" + sessionId + ", parentSessionId=" + parentSessionId + ", message=" + message + ", attachments=" + attachments + ", clientCapabilities=" + clientCapabilities + ", optionalScreenContextId=" + optionalScreenContextId + ", relationshipProfile=" + relationshipProfile + ", formalMemoryAllowed=" + formalMemoryAllowed + ", trainingMode=" + trainingMode + ", replyFormat=" + replyFormat + ", retrievalMode=" + retrievalMode + ", platformId=" + platformId + ", platformActorId=" + platformActorId + ", clientInstanceId=" + clientInstanceId + ", tenantId=" + tenantId + "]"; }
+    @Override public int hashCode() { return Objects.hash(userId, clientId, sessionId, parentSessionId, message, attachments, clientCapabilities, optionalScreenContextId, relationshipProfile, formalMemoryAllowed, trainingMode, replyFormat, retrievalMode, platformId, platformActorId, clientInstanceId, tenantId, authorizedCapabilityScopes, mcpContentSelections, agentProposal); }
+    @Override public String toString() { return "TurnRequest[userId=" + userId + ", clientId=" + clientId + ", sessionId=" + sessionId + ", parentSessionId=" + parentSessionId + ", message=" + message + ", attachments=" + attachments + ", clientCapabilities=" + clientCapabilities + ", optionalScreenContextId=" + optionalScreenContextId + ", relationshipProfile=" + relationshipProfile + ", formalMemoryAllowed=" + formalMemoryAllowed + ", trainingMode=" + trainingMode + ", replyFormat=" + replyFormat + ", retrievalMode=" + retrievalMode + ", platformId=" + platformId + ", platformActorId=" + platformActorId + ", clientInstanceId=" + clientInstanceId + ", tenantId=" + tenantId + ", authorizedCapabilityScopes=" + authorizedCapabilityScopes + ", mcpContentSelections=" + mcpContentSelections.size() + ", agentProposal=" + agentProposal + "]"; }
+
+    public record McpContentSelection(
+            @JsonProperty("kind") Kind kind,
+            @JsonProperty("source_id") String sourceId,
+            @JsonProperty("identifier") String identifier,
+            @JsonProperty("arguments") Map<String, Object> arguments,
+            @JsonProperty("required") boolean required) {
+        public McpContentSelection {
+            kind = Objects.requireNonNull(kind, "mcp_content.kind");
+            sourceId = TurnRequest.required(sourceId, "mcp_content.source_id");
+            identifier = TurnRequest.required(identifier, "mcp_content.identifier");
+            arguments = arguments == null
+                    ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(arguments));
+        }
+
+        public enum Kind { PROMPT, RESOURCE }
+    }
+
+    public record AgentProposal(
+            @JsonProperty("agent_id") String agentId,
+            @JsonProperty("task_brief") String taskBrief,
+            @JsonProperty("required") boolean required,
+            @JsonProperty("mode") String mode,
+            @JsonProperty("idempotency_suffix") String idempotencySuffix) {
+        public AgentProposal {
+            agentId = TurnRequest.required(agentId, "agent_proposal.agent_id");
+            taskBrief = TurnRequest.required(taskBrief, "agent_proposal.task_brief");
+            mode = mode == null || mode.isBlank() ? "AWAIT" : mode.trim().toUpperCase();
+            if (!Set.of("AWAIT", "DURABLE_ASYNC").contains(mode)) {
+                throw new IllegalArgumentException("unsupported agent_proposal.mode: " + mode);
+            }
+            idempotencySuffix = idempotencySuffix == null || idempotencySuffix.isBlank()
+                    ? "explicit" : idempotencySuffix.trim();
+        }
+    }
 }

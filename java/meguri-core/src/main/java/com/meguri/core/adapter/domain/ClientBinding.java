@@ -7,6 +7,7 @@ public record ClientBinding(
         String tenantId,
         String meguriUserId,
         String clientId,
+        String platformActorHash,
         String clientVersion,
         String selectedProtocolVersion,
         String serverCapabilitiesRevision,
@@ -18,6 +19,7 @@ public record ClientBinding(
         tenantId = required(tenantId, "tenantId");
         meguriUserId = required(meguriUserId, "meguriUserId");
         clientId = required(clientId, "clientId");
+        platformActorHash = optionalHash(platformActorHash);
         clientVersion = required(clientVersion, "clientVersion");
         selectedProtocolVersion = required(selectedProtocolVersion, "selectedProtocolVersion");
         serverCapabilitiesRevision = required(serverCapabilitiesRevision, "serverCapabilitiesRevision");
@@ -32,5 +34,15 @@ public record ClientBinding(
             throw new IllegalArgumentException(field + " must not be blank");
         }
         return value.trim();
+    }
+
+    private static String optionalHash(String value) {
+        if (value == null || value.isBlank()) return null;
+        String normalized = value.trim().toLowerCase();
+        if (!normalized.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException(
+                    "platformActorHash must be a SHA-256 hexadecimal value");
+        }
+        return normalized;
     }
 }

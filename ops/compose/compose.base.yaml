@@ -229,6 +229,49 @@ services:
         max-size: 20m
         max-file: "5"
 
+  file-mirror-worker:
+    image: ${MEGURI_CORE_IMAGE:?MEGURI_CORE_IMAGE is required}
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    environment:
+      MEGURI_ENV: ${MEGURI_ENV:?MEGURI_ENV is required}
+      MEGURI_TENANT_ID: ${MEGURI_TENANT_ID:?MEGURI_TENANT_ID is required}
+      MEGURI_DATABASE_URL_FILE: /run/secrets/database_url
+      MEGURI_MEMORY_MIRROR_ROOT: /var/lib/meguri/memory-mirror
+    secrets:
+      - database_url
+    volumes:
+      - memory-mirror:/var/lib/meguri/memory-mirror
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+        restart: true
+      migration:
+        condition: service_completed_successfully
+    command:
+      - python
+      - scripts/run_memory_file_mirror_worker.py
+      - --worker-id
+      - compose-file-mirror-worker
+      - --batch-size
+      - "20"
+      - --continuous
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "5"
+
 networks:
   edge:
     name: ${MEGURI_EDGE_NETWORK:?MEGURI_EDGE_NETWORK is required}
@@ -241,6 +284,7 @@ networks:
 volumes:
   postgres-data:
     name: ${MEGURI_POSTGRES_VOLUME:?MEGURI_POSTGRES_VOLUME is required}
+  memory-mirror:
 
 secrets:
   postgres_password:

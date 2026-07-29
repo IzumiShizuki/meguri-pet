@@ -3,6 +3,7 @@ package com.meguri.core.llm;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meguri.core.metrics.PromptCacheMetricsRecorder;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -75,10 +76,20 @@ public final class LlmProviderFactory {
             modelBuilder.customParameters(Map.of("thinking", Map.of("type", thinking)));
         }
         OpenAiChatModel modelClient = modelBuilder.build();
+        var streamingBuilder = OpenAiStreamingChatModel.builder()
+                .baseUrl(baseUrl)
+                .apiKey(effectiveKey)
+                .modelName(model)
+                .maxTokens(maxTokens)
+                .timeout(Duration.ofMillis((long) (timeout * 1000)));
+        if (!thinking.equals("auto")) {
+            streamingBuilder.customParameters(Map.of("thinking", Map.of("type", thinking)));
+        }
+        OpenAiStreamingChatModel streamingClient = streamingBuilder.build();
         String prompt = readPrompt();
         metrics.registerPrompt("openai-compatible/langchain4j", model, prompt);
         String tokenizerModel = env("MEGURI_LLM_TOKENIZER_MODEL", "gpt-4o-mini").trim();
-        return new LangChain4jLlmProvider(modelClient, mapper, prompt, format, maxConcurrency,
+        return new LangChain4jLlmProvider(modelClient, streamingClient, mapper, prompt, format, maxConcurrency,
                 releaseHeaders(), metrics, new OpenAiProviderTokenizer(tokenizerModel), promptTokenBudget);
     }
 

@@ -1,10 +1,14 @@
 import os
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.dialects import postgresql
 
+from services.meguri_core.memory_service.contracts import MemoryConflictError
 from services.meguri_core.memory_service.database import MemoryDatabaseSettings
-from services.meguri_core.memory_service.enums import CandidateStatus
+from services.meguri_core.memory_service.enums import CandidateStatus, OutboxStatus
 from services.meguri_core.memory_service.models import (
     MemoryCandidateCreate,
     MemorySearchQuery,
@@ -36,6 +40,14 @@ class CapturingSession:
 
     async def flush(self):
         return None
+
+
+class ScalarSession:
+    def __init__(self, row):
+        self.row = row
+
+    async def scalar(self, _statement):
+        return self.row
 
 
 def compiled(statement) -> str:
@@ -102,6 +114,62 @@ async def test_outbox_claim_uses_skip_locked():
 
 
 @pytest.mark.asyncio
+async def test_outbox_ack_requires_current_worker_and_claim_token():
+    old_claim = datetime.now(timezone.utc) - timedelta(minutes=10)
+    new_claim = datetime.now(timezone.utc)
+    row = SimpleNamespace(
+        status=OutboxStatus.PROCESSING.value,
+        locked_by="worker-1",
+        locked_at=new_claim,
+        completed_at=None,
+        last_error=None,
+    )
+    repository = SqlAlchemyMemoryRepository(ScalarSession(row))  # type: ignore[arg-type]
+
+    assert not await repository.complete_outbox(
+        uuid4(), worker_id="worker-1", claim_locked_at=old_claim
+    )
+    assert row.status == OutboxStatus.PROCESSING.value
+    assert row.locked_at == new_claim
+
+    assert not await repository.complete_outbox(
+        uuid4(), worker_id="worker-2", claim_locked_at=new_claim
+    )
+    assert await repository.complete_outbox(
+        uuid4(), worker_id="worker-1", claim_locked_at=new_claim
+    )
+    assert row.status == OutboxStatus.COMPLETED.value
+    assert row.locked_by is None
+
+
+@pytest.mark.asyncio
+async def test_outbox_retry_rejects_stale_claim_owner():
+    old_claim = datetime.now(timezone.utc) - timedelta(minutes=10)
+    new_claim = datetime.now(timezone.utc)
+    row = SimpleNamespace(
+        status=OutboxStatus.PROCESSING.value,
+        locked_by="new-worker",
+        locked_at=new_claim,
+        attempts=2,
+        available_at=new_claim,
+        last_error=None,
+    )
+    repository = SqlAlchemyMemoryRepository(ScalarSession(row))  # type: ignore[arg-type]
+
+    assert not await repository.fail_outbox(
+        uuid4(),
+        worker_id="old-worker",
+        claim_locked_at=old_claim,
+        error_code="TimeoutError",
+        max_attempts=5,
+        retry_delay_seconds=30,
+    )
+    assert row.status == OutboxStatus.PROCESSING.value
+    assert row.attempts == 2
+    assert row.locked_by == "new-worker"
+
+
+@pytest.mark.asyncio
 async def test_idempotency_uses_transaction_advisory_lock():
     session = CapturingSession()
     repository = SqlAlchemyMemoryRepository(session)  # type: ignore[arg-type]
@@ -139,6 +207,23 @@ async def test_repository_refuses_unredacted_rejected_candidate():
 
 
 @pytest.mark.asyncio
+async def test_repository_cannot_create_an_already_approved_candidate():
+    repository = SqlAlchemyMemoryRepository(CapturingSession())  # type: ignore[arg-type]
+    safe = MemoryCandidateCreate(
+        tenant_id="meguri-dev",
+        user_id="user-a",
+        memory_type="user_preference",
+        content_text="User likes tea",
+        confidence=0.9,
+        source_client_id="website",
+        source_session_id="session-web",
+        source_turn_id="turn-safe",
+    )
+    with pytest.raises(MemoryConflictError, match="cannot be created directly"):
+        await repository.create_candidate(safe, status=CandidateStatus.APPROVED)
+
+
+@pytest.mark.asyncio
 async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     session = CapturingSession()
     repository = SqlAlchemyMemoryRepository(session)  # type: ignore[arg-type]
@@ -157,6 +242,11 @@ async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     assert "MEMORY_ITEMS.USER_ID" in vector_sql
     assert "MEMORY_ITEMS.STATUS" in vector_sql
     assert "MEMORY_ITEMS.CURRENT_VERSION_ID" in vector_sql
+    assert "MEMORY_ITEMS.LAST_STABLE_VERSION_ID" in vector_sql
+    assert "CASE WHEN" in vector_sql
+    assert "MEMORY_VERSIONS.STATUS" in vector_sql
+    assert "MEMORY_ITEMS.EFFECTIVE_AT" in vector_sql
+    assert "MEMORY_CANDIDATES.ACCEPTED_MEMORY_ID" in vector_sql
 
     await repository.keyword_search(query)
     keyword_sql = compiled(session.statement).upper()
@@ -164,6 +254,10 @@ async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     assert "MEMORY_ITEMS.TENANT_ID" in keyword_sql
     assert "MEMORY_ITEMS.USER_ID" in keyword_sql
     assert "MEMORY_ITEMS.STATUS" in keyword_sql
+    assert "MEMORY_ITEMS.LAST_STABLE_VERSION_ID" in keyword_sql
+    assert "CASE WHEN" in keyword_sql
+    assert "MEMORY_VERSIONS.STATUS" in keyword_sql
+    assert "MEMORY_CANDIDATES.ACCEPTED_MEMORY_ID" in keyword_sql
 
     structured = query.model_copy(update={"canonical_key": "preference:drink"})
     await repository.structured_search(structured)
@@ -172,6 +266,8 @@ async def test_exact_vector_and_keyword_queries_apply_authority_filters():
     assert "MEMORY_ITEMS.TENANT_ID" in structured_sql
     assert "MEMORY_ITEMS.USER_ID" in structured_sql
     assert "MEMORY_ITEMS.CURRENT_VERSION_ID" in structured_sql
+    assert "MEMORY_ITEMS.LAST_STABLE_VERSION_ID" in structured_sql
+    assert "CASE WHEN" in structured_sql
 
 
 class RecordingTransaction:

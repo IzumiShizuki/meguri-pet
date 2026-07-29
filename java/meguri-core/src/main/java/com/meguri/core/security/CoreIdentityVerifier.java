@@ -34,6 +34,7 @@ public final class CoreIdentityVerifier implements WebFilter {
     private final String expectedToken;
     private final Set<String> formalMemoryUsers;
     private final Set<String> formalMemoryClients;
+    private final Set<String> capabilityScopes;
 
     @Autowired
     public CoreIdentityVerifier(
@@ -42,12 +43,14 @@ public final class CoreIdentityVerifier implements WebFilter {
             @Value("${meguri.security.shared-token-file:}") String tokenFile,
             @Value("${meguri.security.shared-token:}") String inlineToken,
             @Value("${meguri.security.formal-memory-allowed-users:}") String formalMemoryUsers,
-            @Value("${meguri.security.formal-memory-allowed-clients:}") String formalMemoryClients) {
+            @Value("${meguri.security.formal-memory-allowed-clients:}") String formalMemoryClients,
+            @Value("${meguri.security.capability-scopes:}") String capabilityScopes) {
         this.required = required;
         this.tenantId = tenantId == null || tenantId.isBlank() ? "meguri-local" : tenantId.trim();
         this.expectedToken = readToken(tokenFile, inlineToken);
         this.formalMemoryUsers = parseList(formalMemoryUsers);
         this.formalMemoryClients = parseList(formalMemoryClients);
+        this.capabilityScopes = parseList(capabilityScopes);
         if (required && expectedToken.isBlank()) {
             throw new IllegalStateException("Core auth is required but no shared token is configured");
         }
@@ -55,7 +58,14 @@ public final class CoreIdentityVerifier implements WebFilter {
 
     public CoreIdentityVerifier(
             boolean required, String tenantId, String tokenFile, String inlineToken) {
-        this(required, tenantId, tokenFile, inlineToken, "", "");
+        this(required, tenantId, tokenFile, inlineToken, "", "", "");
+    }
+
+    public CoreIdentityVerifier(
+            boolean required, String tenantId, String tokenFile, String inlineToken,
+            String formalMemoryUsers, String formalMemoryClients) {
+        this(required, tenantId, tokenFile, inlineToken,
+                formalMemoryUsers, formalMemoryClients, "");
     }
 
     public boolean required() {
@@ -82,13 +92,23 @@ public final class CoreIdentityVerifier implements WebFilter {
 
     /** Ensures body identity cannot override the authenticated adapter identity. */
     public TurnRequest verifyBody(ServerWebExchange exchange, TurnRequest request) {
-        if (!required) return request.withTenantId(tenantId);
+        if (!required) return bindCapabilityScopes(request.withTenantId(tenantId));
         Identity identity = verifyScope(
                 exchange, request.getUserId(), request.getClientId(), request.getSessionId());
         boolean requested = "true".equalsIgnoreCase(
                 header(exchange, "X-Meguri-Formal-Memory-Allowed"));
         boolean allowed = formalMemoryAllowed(identity.userId(), identity.clientId(), requested);
-        return request.withFormalMemoryAllowed(allowed).withTenantId(tenantId);
+        return bindCapabilityScopes(
+                request.withFormalMemoryAllowed(allowed).withTenantId(tenantId));
+    }
+
+    /** Capability scopes are server policy, never request-body authority. */
+    public TurnRequest bindCapabilityScopes(TurnRequest request) {
+        return request.withAuthorizedCapabilityScopes(capabilityScopes);
+    }
+
+    public Set<String> capabilityScopes() {
+        return capabilityScopes;
     }
 
     public boolean formalMemoryAllowed(String userId, String clientId, boolean requested) {

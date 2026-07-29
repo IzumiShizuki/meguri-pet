@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS client_binding (
     tenant_id VARCHAR(255) NOT NULL,
     meguri_user_id VARCHAR(255) NOT NULL,
     client_id VARCHAR(128) NOT NULL,
+    platform_actor_hash CHAR(64),
     client_version VARCHAR(128) NOT NULL,
     selected_protocol_version VARCHAR(32) NOT NULL,
     server_capabilities_revision VARCHAR(80) NOT NULL,
@@ -15,6 +16,9 @@ CREATE TABLE IF NOT EXISTS client_binding (
 ALTER TABLE client_binding
     ALTER COLUMN client_instance_id TYPE TEXT
     USING client_instance_id::text;
+
+ALTER TABLE client_binding
+    ADD COLUMN IF NOT EXISTS platform_actor_hash CHAR(64);
 
 CREATE INDEX IF NOT EXISTS ix_client_binding_identity
     ON client_binding (tenant_id, meguri_user_id, client_id);

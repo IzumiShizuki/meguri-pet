@@ -7,6 +7,7 @@ import com.meguri.core.adapter.domain.AdapterIdentityContext;
 import com.meguri.core.adapter.domain.AdapterProtocolCapabilities;
 import com.meguri.core.adapter.domain.AdapterProtocolHello;
 import com.meguri.core.adapter.domain.AdapterProtocolPermissions;
+import com.meguri.core.adapter.domain.PlatformActorMapper;
 import com.meguri.core.adapter.infrastructure.InMemoryClientBindingRepository;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +34,11 @@ class ClientHandshakeServiceTest {
         assertThat(response.grantedPermissions().microphone()).isTrue();
         assertThat(response.grantedPermissions().screenRead()).isFalse();
         assertThat(response.grantedPermissions().formalMemoryWrite()).isFalse();
-        assertThat(service.binding("instance-1")).isPresent();
+        assertThat(service.binding("instance-1"))
+                .get()
+                .extracting(binding -> binding.platformActorHash())
+                .isEqualTo(PlatformActorMapper.hash(
+                        "meguri.website", "account-1"));
     }
 
     @Test
@@ -73,16 +78,56 @@ class ClientHandshakeServiceTest {
                 .hasMessageContaining("another identity");
     }
 
+    @Test
+    void rejectsMeguriUserSpoofingAndPlatformActorRebinding() {
+        ClientHandshakeService service =
+                new ClientHandshakeService(new InMemoryClientBindingRepository());
+
+        assertThatThrownBy(() -> service.negotiate(
+                "tenant-1",
+                "authenticated-user",
+                hello("forged-user", "forged-instance",
+                        List.of("1.0"), List.of()),
+                ClientHandshakeService.ServerPermissionEnvelope.denyAll()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("authenticated user");
+
+        service.negotiate(
+                "tenant-1",
+                "user-1",
+                hello("user-1", "stable-actor-instance",
+                        List.of("1.0"), List.of(), "account-1"),
+                ClientHandshakeService.ServerPermissionEnvelope.denyAll());
+
+        assertThatThrownBy(() -> service.negotiate(
+                "tenant-1",
+                "user-1",
+                hello("user-1", "stable-actor-instance",
+                        List.of("1.0"), List.of(), "account-2"),
+                ClientHandshakeService.ServerPermissionEnvelope.denyAll()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("another identity");
+    }
+
     private static AdapterProtocolHello hello(
             String userId,
             String instanceId,
             List<String> versions,
             List<String> requiredExtensions) {
+        return hello(userId, instanceId, versions, requiredExtensions, "account-1");
+    }
+
+    private static AdapterProtocolHello hello(
+            String userId,
+            String instanceId,
+            List<String> versions,
+            List<String> requiredExtensions,
+            String actorId) {
         return new AdapterProtocolHello(
                 versions,
                 new AdapterIdentityContext(
                         new AdapterIdentityContext.MeguriUser(userId),
-                        new AdapterIdentityContext.PlatformActor("meguri.website", "account-1"),
+                        new AdapterIdentityContext.PlatformActor("meguri.website", actorId),
                         new AdapterIdentityContext.ClientInstance(instanceId, "website"),
                         new AdapterIdentityContext.Session("session-1")),
                 new AdapterProtocolCapabilities(

@@ -16,7 +16,8 @@ public final class InMemoryClientBindingRepository implements ClientBindingRepos
             if (current != null
                     && (!current.tenantId().equals(binding.tenantId())
                     || !current.meguriUserId().equals(binding.meguriUserId())
-                    || !current.clientId().equals(binding.clientId()))) {
+                    || !current.clientId().equals(binding.clientId())
+                    || actorBindingChanged(current, binding))) {
                 throw new IllegalStateException(
                         "client instance is already bound to another identity");
             }
@@ -28,5 +29,11 @@ public final class InMemoryClientBindingRepository implements ClientBindingRepos
     @Override
     public Optional<ClientBinding> find(String clientInstanceId) {
         return Optional.ofNullable(bindings.get(clientInstanceId));
+    }
+
+    private static boolean actorBindingChanged(
+            ClientBinding current, ClientBinding incoming) {
+        return current.platformActorHash() != null
+                && !current.platformActorHash().equals(incoming.platformActorHash());
     }
 }

@@ -16,6 +16,7 @@ L0_REJECTION_REASONS = frozenset(
         "credential_or_high_risk_identifier",
         "sensitive_candidate_requires_separate_workflow",
         "unconfirmed_sensitive_inference",
+        "raw_external_or_rag_content",
     }
 )
 SAFE_REDACTION_KEYS = frozenset(
@@ -112,6 +113,10 @@ class CandidateReviewPolicy:
         r"(?i)\b(?:screenshot ocr|raw screenshot|tool log|webpage dump|rag excerpt)\b"
         r"|截图原文|工具日志|网页原文|原作 RAG"
     )
+    _raw_provenance_key_pattern = re.compile(
+        r"(?i)(?:^|[_\- ])(?:raw|original|verbatim|full)(?:[_\- ])"
+        r"(?:text|content|excerpt|payload|output|response|document|source)(?:$|[_\- ])"
+    )
     _sensitive_inference_pattern = re.compile(
         r"(?i)\b(?:diagnos(?:is|ed)|political affiliation|religious belief)\b"
         r"|诊断为|政治倾向|宗教信仰"
@@ -146,6 +151,11 @@ class CandidateReviewPolicy:
             return PolicyEvaluation("reject", "sensitive_candidate_requires_separate_workflow")
         if self._sensitive_inference_pattern.search(text):
             return PolicyEvaluation("reject", "unconfirmed_sensitive_inference")
+        if any(
+            self._raw_provenance_key_pattern.search(str(key))
+            for key in candidate.provenance
+        ):
+            return PolicyEvaluation("reject", "raw_external_or_rag_content")
         if self._raw_source_pattern.search(text):
             return PolicyEvaluation("reject", "raw_external_or_rag_content")
         if self._transient_pattern.search(text):

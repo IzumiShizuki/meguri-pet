@@ -11,6 +11,7 @@ from adapters.astrbot.astrbot_plugin_meguri_gateway.turn_checkpoints import Turn
 from adapters.astrbot.astrbot_plugin_meguri_gateway.client import (
     CoreProtocolError,
     HttpMeguriCoreClient,
+    _expected_replay_policy,
 )
 from adapters.astrbot.astrbot_plugin_meguri_gateway.bridge import (
     MessageRoutePolicy,
@@ -315,6 +316,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         reply = await gateway.handle(platform_message())
         self.assertTrue(reply.degraded)
         self.assertIn("暂时不可用", reply.text)
+        self.assertEqual(reply.metadata["protocol_error"]["code"], "INTERNAL")
+        self.assertFalse(reply.metadata["protocol_error"]["retryable"])
         core.fail = False
         retried = await gateway.handle(platform_message())
         self.assertFalse(retried.ignored)
@@ -455,10 +458,12 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
                 "protocol_version": "1.0",
                 "event_id": event_id or f"event-{sequence}",
                 "required": required,
+                "replay_policy": _expected_replay_policy(kind, data),
                 "type": kind,
                 "turn_id": "turn-1",
                 "session_id": "session-1",
                 "sequence": sequence,
+                "created_at": "2026-07-28T00:00:00Z",
                 "data": data,
                 "metadata": {
                     "trace_id": "trace-1",
@@ -576,10 +581,12 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
                 "protocol_version": "1.0",
                 "event_id": f"persisted-event-{sequence}",
                 "required": required,
+                "replay_policy": _expected_replay_policy(kind, data),
                 "type": kind,
                 "turn_id": "turn-persisted",
                 "session_id": "session-persisted",
                 "sequence": sequence,
+                "created_at": "2026-07-28T00:00:00Z",
                 "data": data,
                 "metadata": {
                     "trace_id": "trace-persisted",

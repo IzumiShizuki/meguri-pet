@@ -47,7 +47,17 @@ public final class SessionContextStore {
             ReferenceType type,
             String sourceMessageId,
             String targetMessageId,
-            Instant createdAt) { }
+            Instant createdAt,
+            String quotedText,
+            Integer startOffset,
+            Integer endOffset,
+            String snapshotText) {
+        public ContextReference(String referenceId, ReferenceType type, String sourceMessageId,
+                                String targetMessageId, Instant createdAt) {
+            this(referenceId, type, sourceMessageId, targetMessageId, createdAt,
+                    null, null, null, null);
+        }
+    }
 
     public enum SummaryStatus { ACTIVE, STALE }
 
@@ -127,15 +137,35 @@ public final class SessionContextStore {
 
     public MessageNode appendNode(String userId, String clientId, String sessionId,
                                   String parentMessageId, Message message) {
+        return appendNode(userId, clientId, sessionId, newId("msg"), parentMessageId, message);
+    }
+
+    /**
+     * Appends an immutable node with a caller-owned idempotency key. Replaying the same
+     * payload returns the original node without changing the active branch or revision.
+     */
+    public MessageNode appendNode(String userId, String clientId, String sessionId,
+                                  String messageId, String parentMessageId, Message message) {
         Scope scope = key(userId, clientId, sessionId);
         GraphState graph = sessions.computeIfAbsent(scope, ignored -> new GraphState());
         synchronized (graph) {
+            String stableId = requiredId(messageId, "messageId");
+            MessageNode existing = graph.nodes.get(stableId);
+            if (existing != null) {
+                boolean sameParent = parentMessageId == null
+                        || Objects.equals(existing.parentMessageId(), parentMessageId);
+                if (!sameParent || !existing.role().equals(message.role())
+                        || !existing.content().equals(message.content())) {
+                    throw new IllegalStateException("message id already belongs to a different immutable payload");
+                }
+                return existing;
+            }
             String parent = parentMessageId == null ? graph.activeLeafMessageId : parentMessageId;
             if (parent != null && !graph.nodes.containsKey(parent)) {
                 throw new IllegalArgumentException("parent message does not exist in this session");
             }
             GraphState before = copyOf(graph);
-            MessageNode node = new MessageNode(newId("msg"), parent, message.role(), message.content(), Instant.now());
+            MessageNode node = new MessageNode(stableId, parent, message.role(), message.content(), Instant.now());
             graph.nodes.put(node.messageId(), node);
             graph.activeLeafMessageId = node.messageId();
             invalidateSummariesWithChangedSources(graph);
@@ -143,6 +173,17 @@ public final class SessionContextStore {
             persist(scope, graph, before);
             return node;
         }
+    }
+
+    private static String requiredId(String value, String field) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " must not be blank");
+        }
+        String normalized = value.trim();
+        if (normalized.length() > 255) {
+            throw new IllegalArgumentException(field + " is too long");
+        }
+        return normalized;
     }
 
     public List<Message> recent(String userId, String clientId, String sessionId) {
@@ -285,6 +326,43 @@ public final class SessionContextStore {
 
     public ContextReference link(String userId, String clientId, String sessionId,
                                  ReferenceType type, String sourceMessageId, String targetMessageId) {
+        return link(userId, clientId, sessionId, type, sourceMessageId, targetMessageId,
+                null, null, null, null);
+    }
+
+    public ContextReference quote(String userId, String clientId, String sessionId,
+                                  String sourceMessageId, String targetMessageId,
+                                  int startOffset, int endOffset) {
+        GraphSnapshot snapshot = graph(userId, clientId, sessionId);
+        MessageNode source = snapshot.allNodes().stream()
+                .filter(node -> node.messageId().equals(sourceMessageId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("quote source message does not exist"));
+        if (startOffset < 0 || endOffset < startOffset || endOffset > source.content().length()) {
+            throw new IllegalArgumentException("quote offsets are outside the source message");
+        }
+        String selected = source.content().substring(startOffset, endOffset);
+        return link(userId, clientId, sessionId, ReferenceType.QUOTE,
+                sourceMessageId, targetMessageId, selected, startOffset, endOffset, selected);
+    }
+
+    public ContextReference topicLink(String userId, String clientId, String sessionId,
+                                      String sourceMessageId, String targetMessageId) {
+        return link(userId, clientId, sessionId, ReferenceType.TOPIC_LINK,
+                sourceMessageId, targetMessageId, null, null, null, null);
+    }
+
+    /** Creates the first node of a real branch and selects it as the active leaf. */
+    public MessageNode resumeFrom(String userId, String clientId, String sessionId,
+                                  String sourceMessageId, Message firstMessage) {
+        MessageNode node = appendNode(userId, clientId, sessionId, sourceMessageId, firstMessage);
+        link(userId, clientId, sessionId, ReferenceType.RESUME_FROM,
+                sourceMessageId, node.messageId(), null, null, null, null);
+        return node;
+    }
+
+    private ContextReference link(String userId, String clientId, String sessionId,
+                                  ReferenceType type, String sourceMessageId, String targetMessageId,
+                                  String quotedText, Integer startOffset, Integer endOffset, String snapshotText) {
         Objects.requireNonNull(type, "type");
         Scope scope = key(userId, clientId, sessionId);
         GraphState graph = sessions.get(scope);
@@ -295,7 +373,8 @@ public final class SessionContextStore {
             }
             GraphState before = copyOf(graph);
             ContextReference reference = new ContextReference(
-                    newId("ref"), type, sourceMessageId, targetMessageId, Instant.now());
+                    newId("ref"), type, sourceMessageId, targetMessageId, Instant.now(),
+                    quotedText, startOffset, endOffset, snapshotText);
             graph.references.add(reference);
             graph.revision.incrementAndGet();
             persist(scope, graph, before);
@@ -320,6 +399,14 @@ public final class SessionContextStore {
                     graph.activeLeafMessageId, graph.revision.get(), List.copyOf(graph.nodes.values()), activePath(graph),
                     List.copyOf(graph.references), List.copyOf(graph.summaries));
         }
+    }
+
+    /** Reloads only one conversation from its authoritative persistence projection. */
+    public GraphSnapshot reloadGraph(String userId, String clientId, String sessionId) {
+        Scope scope = key(userId, clientId, sessionId);
+        persistence.load(scope.userId(), scope.clientId(), scope.sessionId())
+                .ifPresent(snapshot -> replace(scope, snapshot));
+        return graph(scope.userId(), scope.clientId(), scope.sessionId());
     }
 
     /** Immutable active-branch snapshots for the sleep-time summary job. */
@@ -348,23 +435,48 @@ public final class SessionContextStore {
         for (GraphSnapshot snapshot : snapshots) {
             if (snapshot == null) continue;
             Scope scope = key(snapshot.userId(), snapshot.clientId(), snapshot.sessionId());
-            GraphState graph = new GraphState();
-            for (MessageNode node : snapshot.allNodes()) {
-                if (node != null && graph.nodes.putIfAbsent(node.messageId(), node) != null) {
-                    throw new IllegalStateException("persisted context contains duplicate message IDs");
-                }
-            }
-            graph.references.addAll(snapshot.references());
-            graph.summaries.addAll(snapshot.summaries());
-            graph.revision.set(Math.max(0L, snapshot.revision()));
-            graph.activeLeafMessageId = snapshot.activeLeafMessageId();
-            if (graph.activeLeafMessageId != null && !graph.nodes.containsKey(graph.activeLeafMessageId)) {
-                throw new IllegalStateException("persisted active context leaf does not exist");
-            }
-            validateRestoredGraph(graph);
-            normalizeRestoredSummaries(graph);
-            sessions.put(scope, graph);
+            replace(scope, snapshot);
         }
+    }
+
+    private void replace(Scope scope, GraphSnapshot snapshot) {
+        if (!scope.equals(key(snapshot.userId(), snapshot.clientId(), snapshot.sessionId()))) {
+            throw new IllegalStateException("persisted context scope does not match requested conversation");
+        }
+        GraphState replacement = restoredState(snapshot);
+        sessions.compute(scope, (ignored, current) -> {
+            if (current == null) return replacement;
+            synchronized (current) {
+                current.nodes.clear();
+                current.nodes.putAll(replacement.nodes);
+                current.references.clear();
+                current.references.addAll(replacement.references);
+                current.summaries.clear();
+                current.summaries.addAll(replacement.summaries);
+                current.revision.set(replacement.revision.get());
+                current.activeLeafMessageId = replacement.activeLeafMessageId;
+                return current;
+            }
+        });
+    }
+
+    private static GraphState restoredState(GraphSnapshot snapshot) {
+        GraphState graph = new GraphState();
+        for (MessageNode node : snapshot.allNodes()) {
+            if (node != null && graph.nodes.putIfAbsent(node.messageId(), node) != null) {
+                throw new IllegalStateException("persisted context contains duplicate message IDs");
+            }
+        }
+        graph.references.addAll(snapshot.references());
+        graph.summaries.addAll(snapshot.summaries());
+        graph.revision.set(Math.max(0L, snapshot.revision()));
+        graph.activeLeafMessageId = snapshot.activeLeafMessageId();
+        if (graph.activeLeafMessageId != null && !graph.nodes.containsKey(graph.activeLeafMessageId)) {
+            throw new IllegalStateException("persisted active context leaf does not exist");
+        }
+        validateRestoredGraph(graph);
+        normalizeRestoredSummaries(graph);
+        return graph;
     }
 
     private void persist(Scope scope, GraphState graph, GraphState before) {

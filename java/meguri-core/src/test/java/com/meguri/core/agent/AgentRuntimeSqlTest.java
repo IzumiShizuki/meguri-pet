@@ -26,6 +26,7 @@ class AgentRuntimeSqlTest {
                 .contains("waiting_remote_agent")
                 .contains("waiting_external")
                 .contains("ix_agent_task_resumable")
+                .contains("where status in ('created', 'queued', 'running', 'waiting_external')")
                 .contains("ix_agent_task_parent_budget")
                 .contains("ix_agent_task_quota");
     }

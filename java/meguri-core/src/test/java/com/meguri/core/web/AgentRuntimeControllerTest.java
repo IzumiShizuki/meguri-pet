@@ -222,6 +222,84 @@ class AgentRuntimeControllerTest {
                 .expectBody().jsonPath("$.status").isEqualTo("CANCELLED");
     }
 
+    @Test
+    void childInvocationLoadsOwnedParentAndInheritsItsContextLimits() {
+        Map<?, ?> rootResponse = invoke("root-key", "root task")
+                .expectStatus().isAccepted()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        String rootTaskId = String.valueOf(rootResponse.get("task_id"));
+
+        Map<String, Object> expanded = request("turn-agent", "expanded child");
+        expanded.put("parent_task_id", rootTaskId);
+        expanded.put("budget", budget(600));
+        invokeRaw("expanded-child", expanded)
+                .expectStatus().isEqualTo(422)
+                .expectBody().jsonPath("$.error.code").isEqualTo("AGENT_POLICY_DENIED");
+
+        Map<String, Object> childRequest = request("turn-agent", "bounded child");
+        childRequest.put("parent_task_id", rootTaskId);
+        childRequest.put("budget", budget(200));
+        Map<?, ?> childResponse = invokeRaw("child-key", childRequest)
+                .expectStatus().isAccepted()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        AgentTaskContext child = assembly.store()
+                .findTask(String.valueOf(childResponse.get("task_id")))
+                .orElseThrow()
+                .context();
+
+        assertThat(child.parentTaskId()).isEqualTo(rootTaskId);
+        assertThat(child.depth()).isEqualTo(2);
+        assertThat(child.budget().maxTokens()).isEqualTo(200);
+        assertThat(child.idempotencyKey()).endsWith("/root-key/child-key");
+    }
+
+    @Test
+    void childInvocationRejectsForeignTurnIdentityAndTerminalParent() {
+        Map<?, ?> rootResponse = invoke("owned-root", "owned root")
+                .expectStatus().isAccepted()
+                .expectBody(Map.class)
+                .returnResult().getResponseBody();
+        String rootTaskId = String.valueOf(rootResponse.get("task_id"));
+
+        Map<String, Object> wrongTurn = request("another-turn", "wrong turn");
+        wrongTurn.put("parent_task_id", rootTaskId);
+        invokeRaw("wrong-turn-child", wrongTurn)
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.error.code").isEqualTo("AGENT_CAPABILITY_DENIED");
+
+        Map<String, Object> wrongIdentity = request("turn-agent", "wrong identity");
+        wrongIdentity.put("parent_task_id", rootTaskId);
+        wrongIdentity.put("identity", Map.of(
+                "user_id", "another-user",
+                "client_id", "website",
+                "session_id", "agent-session"));
+        invokeRaw("wrong-identity-child", wrongIdentity)
+                .expectStatus().isForbidden()
+                .expectBody().jsonPath("$.error.code").isEqualTo("AGENT_CAPABILITY_DENIED");
+
+        client.post().uri("/v1/agent/tasks/{id}/cancel", rootTaskId)
+                .exchange()
+                .expectStatus().isOk();
+        Map<String, Object> terminalParent = request("turn-agent", "late child");
+        terminalParent.put("parent_task_id", rootTaskId);
+        invokeRaw("late-child", terminalParent)
+                .expectStatus().isEqualTo(409)
+                .expectBody().jsonPath("$.error.code").isEqualTo("AGENT_STATE_CONFLICT");
+    }
+
+    @Test
+    void rootInvocationRequiresParentFieldToBeAbsentRatherThanBlank() {
+        Map<String, Object> blankParent = request("turn-agent", "ambiguous root");
+        blankParent.put("parent_task_id", "   ");
+
+        invokeRaw("blank-parent", blankParent)
+                .expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.error.code").isEqualTo("INVALID_AGENT_REQUEST");
+        assertThat(assembly.gateway().metrics().totalSubmits()).isZero();
+    }
+
     private WebTestClient.ResponseSpec invoke(String key, String taskBrief) {
         return invokeRaw(key, request("turn-agent", taskBrief));
     }
@@ -241,7 +319,6 @@ class AgentRuntimeControllerTest {
                 "client_id", "website",
                 "session_id", "agent-session"));
         body.put("turn_id", turnId);
-        body.put("parent_task_id", "root");
         body.put("task_brief", taskBrief);
         body.put("mode", "DURABLE_ASYNC");
         body.put("required", true);

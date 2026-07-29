@@ -59,4 +59,21 @@ class GlobalPromptBudgetTest {
                 .isInstanceOf(LlmProviderException.class)
                 .hasMessageContaining("mandatory prompt context");
     }
+
+    @Test
+    void trimsOnlyExplicitOptionalLanesAndKeepsCanonicalContextBlocksWhole() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        GlobalPromptBudget budget = new GlobalPromptBudget(
+                mapper, new OpenAiProviderTokenizer("gpt-4o-mini"), 256);
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("context_blocks", List.of(Map.of("content", "canonical context")));
+        context.put("provider_hint", "optional ".repeat(250));
+
+        GlobalPromptBudget.BudgetedPrompt fitted = budget.fit(
+                "system", context, List.of("provider_hint"));
+        Map<?, ?> decoded = mapper.readValue(fitted.json(), Map.class);
+
+        assertThat(decoded.containsKey("context_blocks")).isTrue();
+        assertThat(decoded.containsKey("provider_hint")).isFalse();
+    }
 }

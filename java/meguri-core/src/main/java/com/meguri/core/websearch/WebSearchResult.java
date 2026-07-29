@@ -1,7 +1,11 @@
 package com.meguri.core.websearch;
 
 /** One bounded, citation-friendly web search result. */
-public record WebSearchResult(String title, String url, String snippet) {
+public record WebSearchResult(String title, String url, String snippet,
+                              java.time.Instant publishedAt) {
+    public WebSearchResult(String title, String url, String snippet) {
+        this(title, url, snippet, null);
+    }
     public WebSearchResult {
         title = title == null ? "" : title.trim();
         url = url == null ? "" : url.trim();

@@ -1,6 +1,9 @@
 package com.meguri.core.retrieval;
 
 import java.time.Instant;
+import java.time.Duration;
+import java.util.EnumMap;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -42,6 +45,26 @@ public final class KnowledgeTurnRetrievalRuntime implements AutoCloseable {
         return runtime.retrieve(query, mode, new RetrievalContext(
                 principalId, aclScopes, snapshotId, revision,
                 validAt, deadline, traceId, tenantId));
+    }
+
+    /** Compatibility migration for callers that previously injected only the Knowledge lane. */
+    public UnifiedRetrievalFacade unifiedFacade(
+            com.meguri.core.rag.RagProvider lore,
+            com.meguri.core.memory.MemoryGateway memory,
+            com.meguri.core.websearch.WebSearchGateway web) {
+        EnumMap<SourceType, RetrievalProvider> providers = new EnumMap<>(SourceType.class);
+        providers.put(SourceType.LORE, new LoreRetrievalProviderAdapter(lore));
+        if (memory != null) providers.put(SourceType.MEMORY, new MemoryRetrievalProviderAdapter(memory));
+        if (web != null) providers.put(SourceType.WEB, new WebSearchRetrievalProviderAdapter(web));
+        KnowledgeGraphRetrievalService graph =
+                new KnowledgeGraphRetrievalService(bridge, bridge, bridge);
+        RetrievalRuntime unified = new RetrievalRuntime(
+                new DefaultRetrievalPlanner(), new RetrievalGate(), providers, bridge, graph,
+                new BundleAssembler(), runtime.traceRepository(),
+                java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(),
+                Duration.ofSeconds(2), Duration.ofMillis(500), true,
+                RetrievalAuthorizationPolicy.allowAll());
+        return new UnifiedRetrievalFacade(bridge, unified);
     }
 
     @Override

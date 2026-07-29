@@ -12,6 +12,7 @@ from services.meguri_core.memory_service.enums import (
     MemoryScope,
     MemoryStatus,
     MemoryType,
+    MergePolicy,
 )
 from services.meguri_core.memory_service.contracts import MemoryStateError
 from services.meguri_core.memory_service.models import (
@@ -168,6 +169,15 @@ async def test_candidate_creation_is_idempotent_and_never_implicitly_active():
     )
     assert rejected.status is CandidateStatus.REJECTED
     assert rejected.content_text == "[redacted unsafe memory candidate]"
+
+
+@pytest.mark.asyncio
+async def test_new_merge_contract_uses_needs_confirmation_state():
+    repository = FakeRepository()
+    service = MemoryService(FakeUowFactory(repository))  # type: ignore[arg-type]
+    proposed = candidate_create().model_copy(update={"merge_policy": MergePolicy.REPLACE})
+    created = await service.create_candidate(proposed, request_id="replace-1")
+    assert created.status is CandidateStatus.NEEDS_CONFIRMATION
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,10 @@ from services.meguri_core.memory_service.contracts import AuthoritativeMemoryPro
 from services.meguri_core.memory_service.enums import (
     CandidateStatus,
     MemoryStatus,
+    MemoryVersionStatus,
     candidate_transition_allowed,
     memory_transition_allowed,
+    version_transition_allowed,
 )
 from services.meguri_core.memory_service.models import (
     MemoryCandidateCreate,
@@ -72,6 +74,14 @@ def test_generic_memory_update_has_no_relationship_stage_escape_hatch():
             change_reason="user correction",
             relationship_stage="lover",
         )
+    with pytest.raises(ValidationError, match="protected field"):
+        MemoryUpdate(
+            tenant_id="meguri-dev",
+            user_id="user-a",
+            content_text="User prefers coffee",
+            content_json={"nested": {"relationshipStage": "lover"}},
+            change_reason="user correction",
+        )
 
 
 def test_search_requires_exact_embedding_dimension():
@@ -115,6 +125,12 @@ def test_state_machine_rejects_terminal_candidate_rewrites():
     assert memory_transition_allowed(MemoryStatus.ACTIVE, MemoryStatus.DELETED)
     assert memory_transition_allowed(MemoryStatus.DELETED, MemoryStatus.ACTIVE)
     assert not memory_transition_allowed(MemoryStatus.SUPERSEDED, MemoryStatus.ACTIVE)
+    assert version_transition_allowed(
+        MemoryVersionStatus.ACTIVE, MemoryVersionStatus.SUPERSEDED
+    )
+    assert not version_transition_allowed(
+        MemoryVersionStatus.SUPERSEDED, MemoryVersionStatus.ACTIVE
+    )
 
 
 def test_authoritative_contract_is_runtime_checkable():

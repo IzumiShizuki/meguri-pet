@@ -49,6 +49,13 @@ public final class DefaultRetrievalPlanner implements RetrievalPlanner {
         EnumSet<SourceType> sources = EnumSet.of(
                 SourceType.LORE, SourceType.MEMORY, SourceType.KNOWLEDGE);
         if (mode == RetrievalMode.SLOW) sources.add(SourceType.WEB);
+        EnumMap<SourceType, java.util.List<String>> sourceQueries =
+                new EnumMap<>(SourceType.class);
+        sources.forEach(source -> sourceQueries.put(source, java.util.List.of(query.trim())));
+        rewrite = new QueryRewriteResult(
+                rewrite.originalQuery(), rewrite.rewrittenQuery(), rewrite.entityMentions(),
+                rewrite.relationshipQuestion(), rewrite.relationType(), rewrite.graphIntent(),
+                sourceQueries);
         EnumMap<SourceType, Integer> budgets = new EnumMap<>(SourceType.class);
         EnumMap<SourceType, Integer> seats = new EnumMap<>(SourceType.class);
         for (SourceType source : sources) {

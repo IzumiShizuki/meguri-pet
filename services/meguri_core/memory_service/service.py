@@ -48,7 +48,7 @@ from .repository import (
     SqlAlchemyMemoryRepository,
     candidate_model,
 )
-from .retrieval import build_hit, rerank_and_budget
+from .retrieval import rerank_and_budget, weighted_rrf_hits
 from .rerank import DashScopeRerankProvider
 from .review_policy import CandidateReviewPolicy, redact_rejected_candidate
 from .metrics import MemoryMetrics, memory_metrics
@@ -143,10 +143,13 @@ class MemoryService:
             if cached:
                 return MemoryCandidate.model_validate(cached)
             evaluation = self.review_policy.evaluate(candidate)
-            status = (
-                CandidateStatus.REJECTED
-                if evaluation.rejected
-                else CandidateStatus.PENDING_REVIEW
+            status = CandidateStatus.REJECTED if evaluation.rejected else (
+                CandidateStatus.PENDING if evaluation.auto_approved else
+                CandidateStatus.PENDING_REVIEW
+                if candidate.merge_policy in {
+                    MergePolicy.REVIEW, MergePolicy.CREATE_ONLY, MergePolicy.SUPERSEDE
+                }
+                else CandidateStatus.NEEDS_CONFIRMATION
             )
             reason = evaluation.reason
             durable_candidate = (
@@ -160,6 +163,47 @@ class MemoryService:
                 review_reason=reason if evaluation.rejected else None,
             )
             actor = MemoryActor(actor_type=ActorType.SYSTEM, actor_id="memory-service")
+            if evaluation.auto_approved:
+                existing = await repository.list_active_items(
+                    tenant_id=candidate.tenant_id,
+                    user_id=candidate.user_id,
+                    memory_type=candidate.memory_type,
+                )
+                resolution = self.conflict_resolver.resolve(candidate, existing)
+                accepted = None
+                if resolution.action is ConflictAction.CREATE:
+                    accepted = await repository.create_item(
+                        candidate, canonical_key=canonical_key(candidate), actor=actor
+                    )
+                elif resolution.action is ConflictAction.DUPLICATE:
+                    accepted = next(
+                        item for item in existing if item.memory_id == resolution.existing_memory_id
+                    )
+                elif candidate.base_version_id is not None and candidate.merge_policy in {
+                    MergePolicy.REPLACE, MergePolicy.SET_UNION, MergePolicy.SET_REMOVE,
+                    MergePolicy.CONFIRM, MergePolicy.STATE_TRANSITION,
+                    MergePolicy.THREE_WAY_MERGE,
+                }:
+                    target = next(
+                        item for item in existing if item.memory_id == resolution.existing_memory_id
+                    )
+                    accepted = await repository.merge_candidate(
+                        target, candidate, actor=actor, reason="policy_auto_approved"
+                    )
+                row = await repository.get_candidate_for_update(created.candidate_id)
+                if row is None:
+                    raise RuntimeError("auto-approved candidate disappeared")
+                if accepted is None or accepted.status is MemoryStatus.CONFLICTED:
+                    created = await repository.finish_candidate(
+                        row, status=CandidateStatus.NEEDS_CONFIRMATION, actor=actor,
+                        reason="automatic merge is ambiguous",
+                    )
+                else:
+                    created = await repository.finish_candidate(
+                        row, status=CandidateStatus.APPROVED, actor=actor,
+                        reason="low-risk direct evidence auto-approved",
+                        accepted_memory_id=accepted.memory_id,
+                    )
             await repository.append_audit(
                 tenant_id=candidate.tenant_id,
                 request_id=request_id,
@@ -228,7 +272,11 @@ class MemoryService:
             if cached is not None:
                 payload = cached.get("item")
                 return MemoryItem.model_validate(payload) if payload else None
-            if row.status != decision.expected_status.value:
+            compatible_pending = (
+                decision.expected_status is CandidateStatus.PENDING_REVIEW
+                and row.status == CandidateStatus.NEEDS_CONFIRMATION.value
+            )
+            if row.status != decision.expected_status.value and not compatible_pending:
                 raise MemoryStateError(
                     f"candidate state is {row.status}, expected {decision.expected_status.value}"
                 )
@@ -316,6 +364,25 @@ class MemoryService:
                     existing,
                     semantic_scores=semantic_scores,
                 )
+                if (
+                    resolution.action is ConflictAction.CREATE
+                    and candidate_create.base_version_id is not None
+                    and hasattr(repository, "get_item_by_version")
+                ):
+                    target = await repository.get_item_by_version(
+                        candidate_create.base_version_id,
+                        tenant_id=row.tenant_id,
+                        user_id=row.user_id,
+                    )
+                    if target is not None:
+                        if all(item.memory_id != target.memory_id for item in existing):
+                            existing.append(target)
+                        resolution = ConflictResolution(
+                            action=ConflictAction.SUPERSEDE,
+                            reason="candidate_targets_existing_base_version",
+                            existing_memory_id=target.memory_id,
+                            existing_version_id=target.current_version_id,
+                        )
             if (
                 resolution.action is ConflictAction.SUPERSEDE
                 and candidate_create.merge_policy is MergePolicy.CREATE_ONLY
@@ -327,6 +394,9 @@ class MemoryService:
                 resolution.action is ConflictAction.SUPERSEDE
                 and candidate_create.base_version_id is not None
                 and candidate_create.base_version_id != resolution.existing_version_id
+                and candidate_create.merge_policy not in {
+                    MergePolicy.THREE_WAY_MERGE, MergePolicy.MANUAL
+                }
             ):
                 raise MemoryStateError("memory base version changed during candidate review")
             if resolution.action in {ConflictAction.SUPERSEDE, ConflictAction.REJECT}:
@@ -335,6 +405,26 @@ class MemoryService:
             if resolution.action is ConflictAction.DUPLICATE:
                 item = next(
                     entry for entry in existing if entry.memory_id == resolution.existing_memory_id
+                )
+            elif (
+                resolution.action is ConflictAction.SUPERSEDE
+                and candidate_create.merge_policy
+                in {
+                    MergePolicy.REPLACE, MergePolicy.SET_UNION, MergePolicy.SET_REMOVE,
+                    MergePolicy.CONFIRM, MergePolicy.STATE_TRANSITION,
+                    MergePolicy.THREE_WAY_MERGE, MergePolicy.MANUAL,
+                }
+            ):
+                current = next(
+                    entry for entry in existing if entry.memory_id == resolution.existing_memory_id
+                )
+                item = await repository.merge_candidate(
+                    current, candidate_create, actor=actor, reason=decision.reason
+                )
+                action = (
+                    AuditAction.CONFLICT
+                    if item.status is MemoryStatus.CONFLICTED
+                    else AuditAction.SUPERSEDE
                 )
             elif resolution.action is ConflictAction.SUPERSEDE:
                 current = next(
@@ -429,15 +519,11 @@ class MemoryService:
             )
             entry["semantic"] = max(entry["semantic"], result.semantic)
             entry["keyword"] = max(entry["keyword"], result.keyword)
-        hits = [
-            build_hit(
-                entry["item"],
-                semantic=entry["semantic"],
-                keyword=entry["keyword"],
-                now=query.now,
-            )
-            for entry in combined.values()
-        ]
+        hits = weighted_rrf_hits(
+            [(entry["item"], entry["semantic"], entry["keyword"])
+             for entry in combined.values()],
+            now=query.now,
+        )
         # First preserve the deterministic hybrid scorer as a bounded recall
         # stage.  A managed reranker may then reorder only those candidates; it
         # never broadens tenant/user scope or bypasses the token budget.
@@ -652,7 +738,12 @@ class MemoryService:
                 raise MemoryStateError("only deleted memory can be restored")
             if target is MemoryStatus.DELETED and current.status is MemoryStatus.DELETED:
                 raise MemoryStateError("memory is already deleted")
-            updated = await repository.set_item_status(current, target)
+            if target is MemoryStatus.DELETED and hasattr(repository, "tombstone_item"):
+                updated = await repository.tombstone_item(current, actor=actor, reason=reason)
+            elif target is MemoryStatus.ACTIVE and hasattr(repository, "restore_item"):
+                updated = await repository.restore_item(current, actor=actor, reason=reason)
+            else:
+                updated = await repository.set_item_status(current, target)
             action = AuditAction.RESTORE if target is MemoryStatus.ACTIVE else AuditAction.DELETE
             await repository.append_audit(
                 tenant_id=tenant_id,

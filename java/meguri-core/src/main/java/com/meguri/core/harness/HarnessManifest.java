@@ -13,6 +13,13 @@ public record HarnessManifest(
         List<String> grantedCapabilities,
         String knowledgeSnapshotId,
         long knowledgeRevision,
+        String relationshipRevision,
+        String sceneRevision,
+        String policyRevision,
+        String personaResolutionTraceId,
+        String retrievalTraceId,
+        String providerName,
+        String modelId,
         Instant frozenAt) {
     public HarnessManifest(
             String protocolVersion,
@@ -24,7 +31,28 @@ public record HarnessManifest(
             Instant frozenAt) {
         this(protocolVersion, buildId, contextRevision, personaRevision,
                 capabilitySnapshotVersion, grantedCapabilities,
-                "knowledge:none", 0L, frozenAt);
+                "knowledge:none", 0L,
+                "relationship:legacy", "scene:legacy", "policy:legacy",
+                "persona-trace:legacy", "retrieval-trace:legacy",
+                "provider:legacy", "model:legacy", frozenAt);
+    }
+
+    public HarnessManifest(
+            String protocolVersion,
+            String buildId,
+            String contextRevision,
+            String personaRevision,
+            String capabilitySnapshotVersion,
+            List<String> grantedCapabilities,
+            String knowledgeSnapshotId,
+            long knowledgeRevision,
+            Instant frozenAt) {
+        this(protocolVersion, buildId, contextRevision, personaRevision,
+                capabilitySnapshotVersion, grantedCapabilities,
+                knowledgeSnapshotId, knowledgeRevision,
+                "relationship:legacy", "scene:legacy", "policy:legacy",
+                "persona-trace:legacy", "retrieval-trace:legacy",
+                "provider:legacy", "model:legacy", frozenAt);
     }
 
     public HarnessManifest {
@@ -39,7 +67,18 @@ public record HarnessManifest(
         if (knowledgeRevision < 0) {
             throw new IllegalArgumentException("knowledge_revision must be non-negative");
         }
+        relationshipRevision = defaulted(relationshipRevision, "relationship:legacy");
+        sceneRevision = defaulted(sceneRevision, "scene:legacy");
+        policyRevision = defaulted(policyRevision, "policy:legacy");
+        personaResolutionTraceId = defaulted(personaResolutionTraceId, "persona-trace:legacy");
+        retrievalTraceId = defaulted(retrievalTraceId, "retrieval-trace:legacy");
+        providerName = defaulted(providerName, "provider:legacy");
+        modelId = defaulted(modelId, "model:legacy");
         frozenAt = frozenAt == null ? Instant.now() : frozenAt;
+    }
+
+    private static String defaulted(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
     }
 
     private static String required(String value, String field) {

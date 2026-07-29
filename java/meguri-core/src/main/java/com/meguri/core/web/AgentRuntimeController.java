@@ -109,23 +109,24 @@ public final class AgentRuntimeController {
                     }
                     durableReferences.put("_client_id", identity.clientId());
                     durableReferences.put("_session_id", identity.sessionId());
-                    String parentTaskId = scopedParentId(
-                            identity, required(request.parentTaskId(), "parent_task_id"));
+                    String turnId = required(request.turnId(), "turn_id");
+                    AgentTask parentTask = resolveParentTask(
+                            request.parentTaskId(), identity, turnId);
                     java.util.function.Function<
                             TurnOrchestrator.AgentExecutionScope,
                             Mono<com.meguri.core.agent.AgentInvocation>> operation =
                             scope -> invokeWithinScope(
                                     identity, request, safeKey, deadline, budget, scopes,
-                                    durableReferences, parentTaskId, scope);
+                                    durableReferences, parentTask, turnId, scope);
                     Mono<com.meguri.core.agent.AgentInvocation> invocation =
                             orchestrator == null
                                     ? operation.apply(new TurnOrchestrator.AgentExecutionScope(
                                             maximumDeadline,
-                                            "trace-" + required(request.turnId(), "turn_id"),
+                                            "trace-" + turnId,
                                             "capability:test",
                                             new com.meguri.core.agent.CancellationToken()))
                                     : orchestrator.executeAgentCapability(
-                                            request.turnId(),
+                                             turnId,
                                             identity.tenantId(),
                                             identity.userId(),
                                             identity.clientId(),
@@ -139,6 +140,7 @@ public final class AgentRuntimeController {
                                                     "max_tokens", budget.maxTokens(),
                                                     "allowed_capabilities", scopes,
                                                     "idempotency_key", safeKey),
+                                            com.meguri.core.agent.AgentInvocation.class,
                                             operation);
                     return invocation
                             .map(result -> ResponseEntity
@@ -157,32 +159,44 @@ public final class AgentRuntimeController {
             AgentTaskContext.Budget budget,
             Set<String> scopes,
             Map<String, String> durableReferences,
-            String parentTaskId,
+            AgentTask parentTask,
+            String turnId,
             TurnOrchestrator.AgentExecutionScope scope) {
         Instant effectiveDeadline = requestedDeadline.isAfter(scope.deadlineAt())
                 ? scope.deadlineAt() : requestedDeadline;
-        AgentTaskContext parent = new AgentTaskContext(
-                identity.tenantId(),
-                identity.userId(),
-                null,
-                scope.traceId(),
-                "span-" + request.turnId().trim(),
-                "http-agent/" + request.turnId().trim() + "/" + idempotencyKey,
-                scope.deadlineAt(),
-                scope.capabilitySnapshotVersion(),
-                scope.cancellation(),
-                policy.maximumBudget(),
-                0,
-                policy.allowedCapabilities(),
-                request.taskBrief(),
-                Map.of());
+        AgentTaskContext parent;
+        String parentTaskId;
+        if (parentTask == null) {
+            parentTaskId = rootGroupId(identity, turnId);
+            parent = new AgentTaskContext(
+                    identity.tenantId(),
+                    identity.userId(),
+                    null,
+                    scope.traceId(),
+                    "span-" + turnId,
+                    "http-agent/" + turnId,
+                    scope.deadlineAt(),
+                    scope.capabilitySnapshotVersion(),
+                    scope.cancellation(),
+                    policy.maximumBudget(),
+                    0,
+                    policy.allowedCapabilities(),
+                    request.taskBrief(),
+                    Map.of());
+        } else {
+            parentTaskId = parentTask.taskId();
+            parent = parentTask.context();
+            if (!parent.capabilitySnapshotVersion().equals(scope.capabilitySnapshotVersion())) {
+                throw new SecurityException("parent task capability snapshot does not own the turn");
+            }
+        }
         InvokeAgentProposal proposal = new InvokeAgentProposal(
                 assembly.config().agentId(),
                 request.taskBrief(),
                 durableReferences,
                 request.mode(),
                 request.required(),
-                "invoke",
+                idempotencyKey,
                 effectiveDeadline,
                 budget,
                 scopes,
@@ -191,7 +205,37 @@ public final class AgentRuntimeController {
                 assembly.config().pollInterval(),
                 assembly.config().maxPollAttempts());
         return assembly.runtime().invokeAgent(
-                request.turnId().trim(), parentTaskId, parent, proposal);
+                turnId, parentTaskId, parent, proposal);
+    }
+
+    private AgentTask resolveParentTask(
+            String requestedParentTaskId,
+            RequestIdentity identity,
+            String turnId) {
+        if (requestedParentTaskId == null) return null;
+        String parentTaskId = required(requestedParentTaskId, "parent_task_id");
+        AgentTask parent = assembly.store().findTask(parentTaskId)
+                .orElseThrow(() -> new AgentUnavailableException("parent agent task was not found"));
+        if (!identity.tenantId().equals(parent.tenantId())
+                || !identity.userId().equals(parent.userId())
+                || !identity.clientId().equals(parent.context().references().get("_client_id"))
+                || !identity.sessionId().equals(parent.context().references().get("_session_id"))) {
+            throw new SecurityException("parent agent task is not owned by the request identity");
+        }
+        String parentTurnId = assembly.store().findSkill(parent.executionId())
+                .map(com.meguri.core.agent.SkillExecution::turnId)
+                .orElseThrow(() -> new IllegalStateException("parent skill execution is missing"));
+        if (!turnId.equals(parentTurnId)) {
+            throw new SecurityException("parent agent task does not belong to the requested turn");
+        }
+        if (AgentRuntimeState.terminal(parent.status())
+                || parent.context().cancellation().isCancelled()) {
+            throw new IllegalStateException("parent agent task cannot derive children");
+        }
+        if (!clock.instant().isBefore(parent.context().deadline())) {
+            throw new AgentDeadlineExceededException("parent agent task deadline exceeded");
+        }
+        return parent;
     }
 
     @GetMapping("/{taskId}")
@@ -319,8 +363,8 @@ public final class AgentRuntimeController {
         return assembly.usesInMemoryGateway() ? "IN_MEMORY_FALLBACK" : "EXTERNAL_GATEWAY";
     }
 
-    private static String scopedParentId(RequestIdentity identity, String parentTaskId) {
-        return "http/" + identity.tenantId() + "/" + identity.userId() + "/" + parentTaskId;
+    private static String rootGroupId(RequestIdentity identity, String turnId) {
+        return "http-root/" + identity.tenantId() + "/" + identity.userId() + "/" + turnId;
     }
 
     private static String required(String value, String field) {

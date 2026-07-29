@@ -16,9 +16,11 @@ class AgentRuntimeSpringConfigurationTest {
         contextRunner.run(context -> {
             assertThat(context).hasSingleBean(AgentRuntimeAssembly.class);
             assertThat(context).hasSingleBean(AgentRuntime.class);
+            assertThat(context).hasSingleBean(AgentDurableRecoveryLifecycle.class);
             assertThat(context).hasSingleBean(AgentExecutionStores.RuntimeStore.class);
             assertThat(context).hasSingleBean(RemoteAgentGateway.class);
             AgentRuntimeAssembly assembly = context.getBean(AgentRuntimeAssembly.class);
+            assertThat(context.getBean(AgentDurableRecoveryLifecycle.class).isRunning()).isTrue();
             assertThat(assembly.usesInMemoryGateway()).isFalse();
             assertThat(context).doesNotHaveBean(InMemoryRemoteAgentGateway.class);
             assertThatThrownBy(() -> assembly.remoteGateway()
@@ -48,6 +50,20 @@ class AgentRuntimeSpringConfigurationTest {
                     AgentRuntimeAssembly assembly = context.getBean(AgentRuntimeAssembly.class);
                     assertThat(assembly.usesInMemoryGateway()).isFalse();
                     assertThat(assembly.remoteGateway()).isInstanceOf(StubGateway.class);
+                });
+    }
+
+    @Test
+    void httpModeBuildsRealGatewayWhileDefaultRemainsFailClosed() {
+        contextRunner.withPropertyValues(
+                        "meguri.agent.gateway-mode=http",
+                        "meguri.agent.remote.endpoint=http://127.0.0.1:9876/a2a/",
+                        "meguri.agent.remote.allow-insecure-localhost=true")
+                .run(context -> {
+                    assertThat(context).hasSingleBean(RemoteAgentGateway.class);
+                    assertThat(context.getBean(RemoteAgentGateway.class))
+                            .isInstanceOf(HttpRemoteAgentGateway.class);
+                    assertThat(context).doesNotHaveBean(InMemoryRemoteAgentGateway.class);
                 });
     }
 

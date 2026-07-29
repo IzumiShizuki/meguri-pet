@@ -36,18 +36,22 @@ public final class JdbcClientBindingRepository implements ClientBindingRepositor
         current.ifPresent(existing -> {
             if (!existing.tenantId().equals(binding.tenantId())
                     || !existing.meguriUserId().equals(binding.meguriUserId())
-                    || !existing.clientId().equals(binding.clientId())) {
+                    || !existing.clientId().equals(binding.clientId())
+                    || actorBindingChanged(existing, binding)) {
                 throw new IllegalStateException(
                         "client instance is already bound to another identity");
             }
         });
         jdbc.update("""
                 INSERT INTO client_binding (
-                    client_instance_id, tenant_id, meguri_user_id, client_id, client_version,
+                    client_instance_id, tenant_id, meguri_user_id, client_id,
+                    platform_actor_hash, client_version,
                     selected_protocol_version, server_capabilities_revision,
                     capabilities, permissions, last_seen_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), CAST(? AS jsonb), ?)
                 ON CONFLICT (client_instance_id) DO UPDATE SET
+                    platform_actor_hash = COALESCE(
+                        client_binding.platform_actor_hash, EXCLUDED.platform_actor_hash),
                     client_version = EXCLUDED.client_version,
                     selected_protocol_version = EXCLUDED.selected_protocol_version,
                     server_capabilities_revision = EXCLUDED.server_capabilities_revision,
@@ -56,7 +60,8 @@ public final class JdbcClientBindingRepository implements ClientBindingRepositor
                     last_seen_at = EXCLUDED.last_seen_at
                 """,
                 binding.clientInstanceId(), binding.tenantId(), binding.meguriUserId(),
-                binding.clientId(), binding.clientVersion(), binding.selectedProtocolVersion(),
+                binding.clientId(), binding.platformActorHash(), binding.clientVersion(),
+                binding.selectedProtocolVersion(),
                 binding.serverCapabilitiesRevision(), write(binding.capabilities()),
                 write(binding.permissions()), Timestamp.from(binding.lastSeenAt()));
         return binding;
@@ -66,6 +71,7 @@ public final class JdbcClientBindingRepository implements ClientBindingRepositor
     public Optional<ClientBinding> find(String clientInstanceId) {
         List<ClientBinding> rows = jdbc.query("""
                         SELECT client_instance_id, tenant_id, meguri_user_id, client_id,
+                               platform_actor_hash,
                                client_version, selected_protocol_version,
                                server_capabilities_revision, capabilities, permissions,
                                last_seen_at
@@ -77,6 +83,7 @@ public final class JdbcClientBindingRepository implements ClientBindingRepositor
                         rs.getString("tenant_id"),
                         rs.getString("meguri_user_id"),
                         rs.getString("client_id"),
+                        rs.getString("platform_actor_hash"),
                         rs.getString("client_version"),
                         rs.getString("selected_protocol_version"),
                         rs.getString("server_capabilities_revision"),
@@ -85,6 +92,12 @@ public final class JdbcClientBindingRepository implements ClientBindingRepositor
                         rs.getTimestamp("last_seen_at").toInstant()),
                 clientInstanceId);
         return rows.stream().findFirst();
+    }
+
+    private static boolean actorBindingChanged(
+            ClientBinding current, ClientBinding incoming) {
+        return current.platformActorHash() != null
+                && !current.platformActorHash().equals(incoming.platformActorHash());
     }
 
     private String write(Object value) {

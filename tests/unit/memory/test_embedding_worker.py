@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -66,11 +67,13 @@ class WorkerRepository:
             outbox_id=uuid4(),
             payload={"version_id": str(uuid4())},
             attempts=0,
+            locked_at=datetime.now(timezone.utc),
         )
         self.claimed = False
         self.completed = []
         self.failed = []
         self.saved = []
+        self.deleted = []
 
     async def claim_outbox(self, **_):
         if self.claimed:
@@ -84,11 +87,16 @@ class WorkerRepository:
     async def save_embedding(self, **kwargs):
         self.saved.append(kwargs)
 
-    async def complete_outbox(self, outbox_id):
-        self.completed.append(outbox_id)
+    async def complete_outbox(self, outbox_id, **kwargs):
+        self.completed.append((outbox_id, kwargs))
+        return True
+
+    async def delete_embedding_projection(self, version_id):
+        self.deleted.append(version_id)
 
     async def fail_outbox(self, outbox_id, **kwargs):
         self.failed.append((outbox_id, kwargs))
+        return True
 
 
 class WorkerUow:
@@ -123,7 +131,10 @@ async def test_embedding_worker_completes_or_schedules_retry():
     )
     assert await worker.run_once() == {"claimed": 1, "completed": 1, "failed": 0}
     assert repository.saved[0]["content_sha256"] == content_sha256("User prefers tea")
-    assert repository.completed == [repository.task.outbox_id]
+    assert repository.completed[0] == (
+        repository.task.outbox_id,
+        {"worker_id": "worker-1", "claim_locked_at": repository.task.locked_at},
+    )
 
     failed_repository = WorkerRepository()
 
@@ -144,3 +155,23 @@ async def test_embedding_worker_completes_or_schedules_retry():
         "failed": 1,
     }
     assert failed_repository.failed[0][1]["error_code"] == "ConnectionError"
+
+
+@pytest.mark.asyncio
+async def test_embedding_worker_processes_tombstone_deletion_without_embedding():
+    repository = WorkerRepository()
+    deleted_version_id = uuid4()
+    repository.task.event_type = "embedding.deleted"
+    repository.task.payload["deleted_version_id"] = str(deleted_version_id)
+    provider = BgeM3EmbeddingProvider(
+        revision="0123456789abcdef",
+        embed_callable=lambda _: pytest.fail("delete projection must not embed content"),
+    )
+    worker = EmbeddingWorker(
+        WorkerUowFactory(repository),  # type: ignore[arg-type]
+        provider,
+        worker_id="worker-delete",
+    )
+    assert await worker.run_once() == {"claimed": 1, "completed": 1, "failed": 0}
+    assert repository.deleted == [deleted_version_id]
+    assert repository.saved == []

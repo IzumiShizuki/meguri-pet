@@ -1,169 +1,155 @@
-# Notion 20.x 实现状态合并审计（2026-07-29）
+# Notion 20.x 本地实现合并记录（2026-07-29）
 
-## 1. 结论
+## 1. 状态结论
 
-截至提交 `a594069f6abecd8d2118a789ee89fed9730981df`（meguri-pet）与
-`ab80ed8e756e10f0ec416409cdf46752532c3543`（airi-meguri），不能把
-Notion 20.0-20.7 整体标记为“已实现”。逐页复核后，20.1-20.7 均仍有真实
-代码缺口，而不只是缺少生产环境证据。
+截至 2026-07-29，20.0-20.7 本地代码与自动化契约已实现。20.x 可以作为“本地已实现”能力基线，不再沿用此前“仍有 P0/P1 代码缺口”的判断。
 
-2026-07-29 实施计划页中的“本地代码实现、自动化验收与提交全部完成”只适用于
-该计划明确圈定的范围：20.3 的 Knowledge Base/Knowledge Graph、20.6 的
-Capability/受限子 Agent 主干，以及 20.5/20.7 的协议集成。该句不能外推为整个
-20.x 已完成。
+这里的“已实现”严格限定为：
 
-当前准确口径是：
+- 20.1-20.7 的领域对象、持久化适配器、主链装配、故障降级和自动化测试均已落地。
+- 20.0 的唯一同步主链已经接通，不再由旧 Lore、Memory、Web、Knowledge 或双层 Capability 编排并行决定正文。
+- AIRI、AstrBot、Website 已使用同一 Adapter Protocol v1 fixture 验证协议语义。
+- 真实 PostgreSQL/pgvector、外部 MCP Server、Remote Agent、模型 Provider、生产身份授权和真实三端进程仍属于环境验收，不能写成“生产已完成”。
 
-- **20.x 总体：部分实现。**
-- **本轮新增重点：Knowledge/Graph 与 Capability/Agent 主干已实现并通过本地自动化。**
-- **生产状态：未验收。** 真实 PostgreSQL/pgvector、MCP Server、Remote Agent、
-  Provider、生产授权与跨端 E2E 尚无完整证据。
+因此，统一口径为：
 
-## 2. 规范基线
+| 范围 | 状态 |
+| --- | --- |
+| 20.0-20.7 本地代码 | 已实现 |
+| 自动化契约与离线验收 | 已完成 |
+| 真实外部环境 E2E | 待验 |
+| 生产发布与运维验收 | 未执行 |
 
-本次重新读取并核对以下 Notion 页面：
+## 2. 唯一端到端主链
 
-| 页面 | Page ID | 最后更新时间 |
+当前 Turn 正文只有以下一条权威调用顺序：
+
+```text
+Client Adapter
+-> Turn 接受、身份、幂等、deadline、Client Capability
+-> 当前 user message 以稳定 message ID 写入 Session DAG
+-> 冻结 Persona / Relationship / Scene / Policy
+-> 冻结 Knowledge Snapshot 与 Capability Snapshot
+-> Unified Retrieval（Lore / Memory / Knowledge / 条件 Graph / SLOW Web）
+-> RetrievalBundle
+-> ContextBuilder（分支 / Topic / Summary / Reference / Rehydration）
+-> ContextBundle + 可回放 Context Trace
+-> PromptPolicyComposer
+-> 可选 Agent Planning（只在 SLOW 或服务端显式入口）
+-> 服务端 Agent allowlist / Policy / Schema / Approval / Budget / Capacity 复核
+-> Remote Agent 结果作为不可信外部块回注 Context
+-> 最终 typed ProviderRequest + Provider 原生流
+-> text.delta 先持久化再由 Adapter 消费
+-> PresentationResolver
+-> turn.completed
+-> 异步 Post-Reply Memory Job
+```
+
+关键不变量：
+
+- 当前用户输入在 Retrieval 和 Context 构建前进入消息 DAG，助手消息使用稳定 ID 并绑定正确父节点。
+- Persona、Knowledge、Context、Capability、Provider 和事件共享同一 Turn trace 与绝对 deadline。
+- `ProviderRequest` 显式携带 `knowledgeSnapshotId`、`retrievalTraceId`、`contextTraceId` 和 `capabilitySnapshotId`。
+- RAG、Web、Tool、MCP 和 Remote Agent 输出只能作为不可信数据，不能覆盖 Persona 或 System Policy。
+- `turn.completed` 先成为不可变终态，再入队 Memory Job；后台失败不能反向把回复改成失败。
+
+## 3. 逐页实现矩阵
+
+| 页面 | 本地状态 | 已实现闭环 |
 | --- | --- | --- |
-| 20.0 总规范 | `3aaa3636-5963-81a3-ab30-ebe83c75e3e9` | `2026-07-28T13:54:00Z` |
-| 20.1 Harness/Context | `3a8a3636-5963-812f-9e84-f4e355c13b83` | `2026-07-28T13:55:00Z` |
-| 20.2 长期记忆 | `3a8a3636-5963-81dd-bd54-c18814c8fc65` | `2026-07-28T13:55:00Z` |
-| 20.3 Retrieval/Knowledge Graph | `3aaa3636-5963-8131-81aa-dcd3a36ada36` | `2026-07-28T13:56:00Z` |
-| 20.4 Persona Runtime | `3a8a3636-5963-811a-862f-fb84f073ff4e` | `2026-07-27T07:39:00Z` |
-| 20.5 Turn Runtime | `3a8a3636-5963-8144-aad4-eecda46c7c1d` | `2026-07-28T13:57:00Z` |
-| 20.6 Capability Runtime | `3a8a3636-5963-81f0-9291-f82e3d2cc47e` | `2026-07-28T13:57:00Z` |
-| 20.7 Adapter Protocol | `3a8a3636-5963-81be-ae29-f17d288fb552` | `2026-07-28T13:58:00Z` |
+| 20.1 Harness / Context | 已实现 | 不可变消息 DAG、分支与 active leaf、Topic、Summary、typed reference、局部 rehydration、来源预算、`ContextBundle`、可持久 build trace、后台预压缩任务 |
+| 20.2 长期记忆 | 已实现 | Candidate 风险分层、审批、不可变版本、三方 merge、冲突分支与 last stable、TOMBSTONE、Embedding Outbox、Dead Letter、本地镜像与 repair |
+| 20.3 Retrieval / Knowledge Graph | 已实现 | 统一 Planner/Gate、Query Rewrite、Lore/Memory/Knowledge/Graph/Web 多路召回、Weighted RRF、父子 Chunk、typed citation、1-3 hop graph evidence、ACTIVE 版本原子发布与 Hybrid fallback |
+| 20.4 Persona Runtime | 已实现 | Profile、Relationship、Scene、Interaction、override 权威模型与仓储，Reducer、TTL/cooldown/hysteresis、`EffectivePersonaState`、`PromptPolicyComposer`、Presentation 边界与注入隔离 |
+| 20.5 Turn Runtime | 已实现 | Turn/Event 持久化、owner lease/heartbeat/CAS、绝对 deadline、原生流、取消、重试与 `retry_of`、SSE replay、Snapshot、Outbox claim/ack/retry/dead-letter、后台 Worker 生命周期 |
+| 20.6 Capability / Sub-agent | 已实现 | 五类 Capability、Catalog/Registry/Exposure/Policy/Approval/Executor/Audit、冻结 Snapshot、MCP `2025-11-25` 与 `list_changed`、Prompt/Resource 显式选择、Prompt Skill Context、Legacy Gateway adapter、真实 HTTP Remote Agent、Execution Resource Registry、Skill/Step/AgentTask 持久状态与预算递减 |
+| 20.7 Adapter Protocol | 已实现 | Client Hello、身份与能力协商、平台 actor 不可逆映射与绑定防漂移、稳定幂等键、required/optional 与 STATE/ONCE/ALWAYS、CURSOR_EXPIRED + Snapshot、AIRI/AstrBot/Website durable checkpoint、统一 fixture |
 
-判定以各页“规范性基线、唯一推荐实施架构、不可省略验收条件/实现完成判定”为准。
-测试替身、内存实现和 SQL 字符串契约不能替代规范明确要求的生产执行闭环。
+## 4. 本轮主链收口
 
-## 3. 逐页状态矩阵
+### 4.1 Provider 输入冻结
 
-| 页面 | 当前状态 | 已实现的主要能力 | 阻止整页完成的真实代码缺口 |
-| --- | --- | --- | --- |
-| 20.0 | 部分实现 | Turn、Persona 快照、Retrieval、Capability 和 Adapter 已有可运行主干 | 20.1-20.7 尚未全部闭环，端到端调用顺序仍混用旧链路 |
-| 20.1 | 部分实现 | 消息 DAG、active leaf、typed reference、摘要失效、PostgreSQL 图快照、全局 token budget | 无类型化 `ContextBundle` 和完整构建流水线；在线 Prompt 未使用持久摘要；无可复现 build trace、引用局部恢复和后台预压缩任务 |
-| 20.2 | 部分实现 | Candidate 审批、L0 脱敏、不可变版本、Embedding Outbox/重试/Dead Letter、正式写入防旁路 | 缺完整状态枚举和 merge policy、三方合并、冲突分支/last stable、TOMBSTONE 删除投影、本地文件镜像与 repair queue |
-| 20.3 | 部分实现 | 版本化 Knowledge、父子 Chunk、Notion 增量同步、pgvector/全文投影、Graph evidence、Weighted RRF、typed trace | 新 Retrieval Runtime 只统一 Knowledge；Lore/Memory/Web 仍走旧 Lane；Memory 仍线性融合；Web 缺 Search/Extract/过滤/rerank/typed citation 全流程 |
-| 20.4 | 部分实现 | 确定性 temporal、override TTL、昼夜不改变关系、Persona revision/provenance、表现映射 | 缺 Profile/Relationship/Scene/Interaction 权威仓储、三阶段 Reducer、Scene 状态机、`EffectivePersonaState`、`PromptPolicyComposer` 和 Persona eval |
-| 20.5 | 部分实现 | Turn/Event/Outbox Schema、事务追加、幂等、deadline、并发 lane、SSE replay、cursor snapshot | 主链仍等待完整 `LlmResponse` 后一次性发送 `native=false` 全文；无 Turn Outbox dispatcher；重启 failure code/retry_of 不完整；默认仍是内存 journal |
-| 20.6 | 部分实现 | Catalog/Registry/Exposure/Policy/Approval/Executor/Audit、冻结 Snapshot、MCP 管理、持久幂等、Agent 状态与预算 | Prompt Skill 未进入 Context 主链；无真实 Remote Agent/A2A 网关；旧 Gateway 未全部归一；真实 MCP 认证/变更/恶意输出闭环待补 |
-| 20.7 | 部分实现 | Hello、版本协商、ReplayPolicy、Snapshot/CURSOR_EXPIRED、三端 checkpoint 和恢复主链 | 共享 TypeScript 事件目录缺 Tool/Approval/Agent required 事件；AIRI/Website 幂等键重试不稳定；三端未真正运行同一 fixture 和真实跨端 E2E |
+- `CanonicalTurnPipeline` 是 Persona、Retrieval、Context、Prompt 和 typed Provider 的唯一同步准备入口。
+- Knowledge Snapshot 在 Turn 接受时只冻结一次；可由自描述 snapshot ID 恢复，失败时只降级为空快照，不扩大权限。
+- `HarnessManifest` 记录 Relationship、Scene、Policy、Persona、Retrieval、Provider 和 Model trace。
+- `LangChain4jLlmProvider` 只把可信 Persona/Policy 放入 System Prompt；外部块保持 `UNTRUSTED USER_DATA`。
 
-## 4. 已实现范围与代码证据
+### 4.2 Capability 单一权威
 
-### 20.1 Context 基线
+- Turn 正文中的 Weather 和显式 Agent 调用只经过 `CapabilityRuntimeFacade`。
+- 旧 Harness `CapabilityExecutor` 已退出正文执行路径，不再出现双重 Policy、双重 Schema 或双重审计。
+- `effectReceipts()` 仅保留为 Capability Audit 的只读兼容投影，不参与授权和执行。
+- `ExistingGatewayAdapter` 保证旧 Gateway Publisher 只订阅一次；`LegacyGatewayCapabilityPack` 提供受控迁移入口。
+- Capability 回调受冻结 Snapshot、父 Turn 剩余 deadline、审批上下文和审计约束，审计摘要来自真实结果而不是占位值。
+- `SLOW` 只允许主模型提出 Agent proposal，不等于用户审批；proposal 必须重新经过服务端 allowlist、Policy、Schema、Approval、预算和容量检查。
+- 公共 Turn JSON 不能自报 `agent_proposal` 或 Capability scope；显式 Agent 入口只接受服务端已认证上下文。
+- MCP 支持截至 `2025-11-25` 的协议协商、Session/JSON/SSE、分页和 `list_changed`；Prompt 与 Resource 只在 Turn 显式选择后读取，并始终按不可信外部内容处理。
 
-- `SessionContextStore` 已实现不可变消息 DAG、active leaf、分支路径、三类引用和摘要
-  revision/digest/STALE 过滤。
-- `PostgresSessionContextPersistence` 可用 revision 乐观锁持久化完整图快照。
-- `GlobalPromptBudget` 与 `OpenAiProviderTokenizer` 已实现真实 tokenizer 和整块预算裁剪。
+### 4.3 持久事件与后台任务
 
-### 20.2 Memory 安全基线
+- PostgreSQL Journal 在同一事务中追加 Turn 状态、事件与 Outbox；执行 owner 通过 lease/heartbeat/CAS 防止僵尸 Worker 继续写入。
+- Outbox 只有存在真实 `TurnOutboxDispatcher.Delivery` 时才启动。没有消费者时不会使用 noop 错误 ack。
+- Post-Reply Memory Job 在正文完成后独立 claim、heartbeat、retry 和 dead-letter，候选抽取也不占正文关键路径。
+- Spring 生命周期使用有界轮询，单次任务异常不会杀死 Worker，关闭时会释放自有资源。
 
-- Runtime、兼容 supersede 与 bridge 均先创建 candidate，不能直接改正式记忆。
-- L0 原文在第一次 repository 写入前被替换为指纹和无原文拒绝原因。
-- 正式版本与 Embedding Outbox 同事务写入，Worker 支持重试与 Dead Letter。
-- 普通记忆候选不能修改 `relationship_stage` 等受保护领域字段。
+### 4.4 Adapter 快照健壮性
 
-### 20.3 Knowledge 与 Graph 主干
+- `AdapterSessionSnapshotResponse` 会过滤 expression 事件中的可选 null 字段，再冻结不可变 Map。
+- AIRI、AstrBot、Website 均在触发 ONCE 副作用前持久 checkpoint，重连不会重复 TTS、动画、通知或工具副作用。
+- 三端的事件目录、终态、能力与权限均从同一 canonical fixture 对齐。
+- `meguri_user_id`、`platform_actor_id`、`client_instance_id` 和 `session_id` 保持独立语义；平台原始 actor ID 只停留在 Adapter 边界，Core 只接收并绑定不可逆映射值。
+- Client Binding 会拒绝 actor 换绑或从已绑定状态降级，客户端请求体不能覆盖已认证用户和服务端 Capability scope。
 
-- `knowledge_document/version/chunk/entity/relation`、BUILDING 到 ACTIVE 原子发布、
-  失败保留上一 ACTIVE 和 tombstone 已实现。
-- CHILD keyword/vector 独立检索、父块恢复、ACL/版本/有效期过滤和 Weighted RRF 已实现。
-- Graph 限制 1-3 hop，每条边验证同版本可见 evidence chunk，失败确定性回退 Hybrid。
-- Notion allowlist 增量同步、凭据指纹变更重建和敏感信息入库前检测已实现。
+## 5. 自动化证据
 
-### 20.4 Persona 基线
-
-- `RuntimeStateMachine` 保证 temporal 与 relationship 正交，并提供 debounce/cooldown。
-- Turn 冻结 Persona revision 与基础 provenance；ExpressionResolver 确定性映射语义 cue。
-
-### 20.5 Turn 与恢复基线
-
-- `PostgresTurnJournal` 已实现 Turn、Event、幂等、sequence 和 Outbox 的事务路径。
-- 事件先经 journal 持久化再被客户端轮询/回放；终态竞争和 bounded subscriber buffer 已测试。
-- Session Snapshot、ReplayPolicy 与 cursor 过期恢复接口已接入协议层。
-
-### 20.6 Capability 与子 Agent 主干
-
-- Capability Catalog、Exposure Planner、Policy、Approval、Executor、Normalizer 与 Audit 已分层。
-- Snapshot 热更新不改变在途 Turn；WRITE 绑定 approval、operation、input digest 和持久幂等。
-- SkillExecution、StepExecution、AgentTask 与 Execution Resource Registry 已拆分。
-- 子 Agent 的权限、deadline、token/tool/cost/depth/child/concurrency 预算只能递减。
-- 漏配真实 Remote Agent 时默认 fail closed，内存替身必须显式启用。
-
-### 20.7 Adapter 主链
-
-- Java、TypeScript、Python 已有 Adapter Protocol v1 Schema 与协商实现。
-- AIRI、AstrBot、Website 已实现 checkpoint、sequence/event_id 去重和 ONCE 副作用前持久化。
-- 同步聊天入口包装同一异步 Turn，而不是维护第二套业务编排。
-
-## 5. 当前 P0/P1 代码缺口
-
-### P0
-
-1. 20.5 主链必须消费 Provider 原生 `Flux<String>`，不能继续等待完整结构化响应后发送一个全文 delta。
-2. 20.7 共享事件目录必须加入 Tool、Approval、Skill 和 Agent 生命周期事件，并在三端执行同一 fixture。
-3. 20.4 需要落地权威 Persona/Relationship/Scene 模型与 Prompt Policy，不能只包装旧 `RuntimeStateMachine`。
-
-### P1
-
-1. 20.1 需要 `ContextBundle`、在线摘要选择/rehydration、来源级预算和可持久构建 trace。
-2. 20.2 需要三方合并、冲突分支、last stable、TOMBSTONE 投影和本地文件镜像闭环。
-3. 20.3 需要把 Lore、Memory、Knowledge、Graph、Web 全部接入同一 Planner/Bundle/Trace，Memory 改用 RRF，Web 补齐安全提取链。
-4. 20.5 需要 Turn Outbox dispatcher、稳定重启 failure code、retry_of 和 PostgreSQL 故障恢复测试。
-5. 20.6 需要 Prompt Skill 主链、真实 Remote Agent 传输和全部旧 Gateway 的 Capability 归一。
-6. 20.7 需要稳定可复用的客户端幂等键、生成式跨语言 DTO 和跨端身份/记忆 E2E。
-
-## 6. 自动化证据
-
-最近一次完整记录：
+本轮最终验收记录：
 
 | 范围 | 结果 |
 | --- | --- |
-| Java Maven 全量 | `287` tests，`0` failures，`0` errors，`1` skipped |
-| Python 全量 | `342 passed`，`8 skipped` |
-| 根 TypeScript | `42/42 passed` |
-| AIRI Meguri Adapter | `22/22 passed` |
+| Java 21 Maven 全量 | `404` tests，`0` failures，`0` errors，`1` skipped |
+| Python 全量 | `376 passed`，`8 skipped` |
+| 本次变更 Python Ruff | passed |
+| Python compileall | passed |
+| Alembic heads | 单一 head：`20260729_0007` |
+| Alembic 离线升降级 | `0001 -> 0007 -> base` passed |
+| 根 TypeScript | `48/48 passed` |
+| 跨端 Adapter fixture | Website/协议 `21/21`、Python Adapter/AstrBot passed、AIRI `31/31` |
+| AIRI Adapter 包级 Vitest | `31/31 passed` |
 | AIRI Adapter 严格 TypeScript | passed |
 | AIRI 指定 ESLint | passed |
-| AIRI Stage | `405` tests passed；4 项既有 Windows/上游环境失败 |
-| AstrBot 插件打包 | passed |
-| 两仓库 `git diff --check` | passed |
+| AstrBot 插件 ZIP | passed |
 
-本轮复核额外运行了 20.1/20.2 定向 `67` 项和 20.3/20.4 定向 `94` 项，均通过。
-这些测试证明已存在能力没有明显回归，但不能证明上表列出的缺失组件已经实现。
+补充边界：
 
-## 7. 外部环境待验
+- 全仓 Ruff 仍报告 41 个历史问题，位于本轮未触碰的旧插件、脚本和既有桥接模块；本次所有新增/修改 Python 文件均通过 Ruff。
+- 从 AIRI 仓库根启动 Vitest 会因上游配置引用不存在的 `apps/server` 而在测试发现前失败；从 `packages/meguri-airi-adapter` 包目录运行的完整测试为 `31/31`。
+- Java 唯一 skipped 项和 Python 8 个 skipped 项依赖本机未提供的真实外部/数据库环境。
 
-- 真实 PostgreSQL + pgvector：迁移、GIN/HNSW 查询计划、锁、并发、事务失败、重启和恢复。
-- 真实 Notion：分页、限流、删除、ACL 外部映射变化、定时同步与凭据轮换。
-- 真实 MCP/Remote Agent：认证、断连、重复投递、恶意输出、跨进程恢复和隔离。
-- 真实 Provider：原生流式、TTFT、取消、超时、部分文本与稳定 failure code。
-- AIRI/AstrBot/Website：同一 Core、同一 fixture、真实身份、断线重连、过期 token、重复副作用与跨端正式记忆。
-- 生产运维：授权、secret 扫描、备份恢复、监控告警、容量、回滚和故障演练。
+## 6. 外部环境待验
 
-## 8. 文档权威关系
+以下事项不再是本地代码缺口，但仍是上线前不可省略的验收：
 
-- **本文件是 2026-07-29 起唯一最新的 20.x 实现状态文档。**
-- `docs/notion-20-audit-2026-07-28.md` 是提交 `a594069` 之前的历史差距快照。
-- `docs/harness-runtime-20.md` 记录接口与实现边界，不单独决定逐页完成状态。
-- `docs/requirements-to-confirm-2026-07-27.md` 记录产品取舍与生产验收门槛。
-- `docs/open-items-2026-07-27.md` 只维护剩余工作索引，详细证据以本文件为准。
+1. 真实 PostgreSQL + pgvector：迁移、GIN/HNSW 查询计划、锁竞争、事务失败、进程重启和恢复。
+2. 真实 Notion：分页、限流、删除、ACL 变化、定时同步和凭据轮换。
+3. 真实 MCP Server：认证、`list_changed`、断连、恶意输出、版本 drain 和最小权限。
+4. 真实 Remote Agent：跨进程 callback/polling、长任务、重复投递、取消和网络故障。
+5. 真实 Provider：原生流 TTFT、流中断、部分文本、取消、超时和稳定 failure code。
+6. AIRI、AstrBot、Website：真实身份、同一 Core、断线重连、过期 token、跨端正式记忆与 session 隔离。
+7. 生产运维：secret 扫描、备份恢复、容量、监控告警、灰度、回滚和故障演练。
 
-## 9. 写入 Notion 的准确口径
+## 7. 文档权威关系
 
-在上述 P0/P1 代码缺口关闭前，Notion 20.0 顶部“尚未完整实现”的状态应继续保留。
-可以写入“20.3 Knowledge/Graph 子系统和 20.6 Capability/Agent 核心框架已完成本地实现”，
-但不能写成“20.0-20.7 全部已实现”或“生产验收完成”。
+- 本文件是 2026-07-29 起唯一最新的 20.x 本地实现状态文档。
+- `docs/notion-20-audit-2026-07-28.md` 仅保留为实现前历史差距快照。
+- `docs/harness-runtime-20.md` 记录 Turn/Harness 接口与运行时边界。
+- Notion 20.0-20.7 继续作为规范来源；本文件记录代码实现和自动化证据，不覆盖原规范。
 
-## 10. Notion 同步记录
+## 8. Notion 同步口径
 
-2026-07-29 已把本次全量复核结论追加到以下页面，保留原规范和图片：
+应写入：
 
-- 20.0 总规范：`3aaa3636-5963-81a3-ab30-ebe83c75e3e9`
-- 20.x 实施与验收计划：`3aba3636-5963-8171-a373-ff8209a6c781`
+> 20.0-20.7 本地代码与自动化契约已实现。唯一 Turn 主链已接通；真实 PostgreSQL/pgvector、MCP、Remote Agent、Provider、生产授权和真实三端 E2E 待验。
 
-同步内容明确区分“实施计划圈定范围已完成”和“20.x 全量仍部分实现”，未写入
-“20.0-20.7 全部完成”或“生产验收完成”的错误状态。
+不得写入：
+
+> 20.x 已完成生产验收或已经可以直接发布生产。

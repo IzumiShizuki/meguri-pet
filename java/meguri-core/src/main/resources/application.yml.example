@@ -16,6 +16,15 @@ server:
   shutdown: graceful
 
 meguri:
+  agent:
+    gateway-mode: ${MEGURI_AGENT_GATEWAY_MODE:unavailable}
+    remote:
+      endpoint: ${MEGURI_AGENT_REMOTE_ENDPOINT:https://127.0.0.1/}
+      authorization-environment: ${MEGURI_AGENT_REMOTE_AUTHORIZATION_ENVIRONMENT:}
+      connect-timeout-ms: ${MEGURI_AGENT_REMOTE_CONNECT_TIMEOUT_MS:3000}
+      request-timeout-ms: ${MEGURI_AGENT_REMOTE_REQUEST_TIMEOUT_MS:10000}
+      maximum-response-characters: ${MEGURI_AGENT_REMOTE_MAXIMUM_RESPONSE_CHARACTERS:262144}
+      allow-insecure-localhost: ${MEGURI_AGENT_REMOTE_ALLOW_INSECURE_LOCALHOST:false}
   build-id: ${MEGURI_BUILD_ID:}
   public-origin: ${MEGURI_CORE_PUBLIC_ORIGIN:http://127.0.0.1:18080}
   data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
@@ -41,6 +50,7 @@ meguri:
     shared-token-file: ${MEGURI_CORE_SHARED_TOKEN_FILE:}
     formal-memory-allowed-users: ${MEGURI_FORMAL_MEMORY_ALLOWED_USERS:}
     formal-memory-allowed-clients: ${MEGURI_FORMAL_MEMORY_ALLOWED_CLIENTS:}
+    capability-scopes: ${MEGURI_CAPABILITY_SCOPES:}
   llm:
     provider: ${MEGURI_LLM_PROVIDER:mock}
     base-url: ${MEGURI_LLM_BASE_URL:}

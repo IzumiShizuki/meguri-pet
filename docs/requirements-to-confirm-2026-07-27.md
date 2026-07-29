@@ -1,6 +1,6 @@
 # Meguri 20.x 大致需求确认稿
 
-更新时间：2026-07-28
+更新时间：2026-07-29
 
 这份文档用于恢复丢失的 AI 会话上下文，并作为产品和技术需求讨论底稿。它描述的是“最终希望做成什么”，不是完成证明，也不是提交清单。
 
@@ -12,7 +12,7 @@
 - **本地已验证**：相关自动化测试在本机通过。
 - **生产已证明**：已在真实数据库、真实鉴权、真实客户端和故障场景中验证。
 
-只有三层都满足，才可以宣称对应生产能力完成。本轮已经补齐多项本地正确性与恢复能力，但真实 PostgreSQL、跨端鉴权 E2E、Effect Ledger 和生产隔离证据仍缺失，因此 20.0～20.7 不能整体标记为完成。
+只有三层都满足，才可以宣称对应生产能力完成。当前 20.0-20.7 已达到“代码已实现”和“本地已验证”；真实 PostgreSQL/pgvector、MCP、Remote Agent、Provider、跨端鉴权 E2E 与生产隔离仍缺环境证据，因此只能标记为“本地已实现”，不能标记为“生产已完成”。
 
 ## 二、产品目标
 
@@ -118,8 +118,11 @@ AIRI 桌面端 / AstrBot / Website
 - 写操作审批绑定 approval ID、规范化输入 hash、审批人、有效期和目标身份，不能只传布尔值。
 - Effect Ledger 使用 PostgreSQL 持久化，跨 Turn 幂等，终态单向转换，并支持查询、恢复和必要的补偿语义。
 - MCP 需实现真实连接与调用，以及 initialize、能力刷新、`list_changed`、OAuth/授权和 fail-closed。
+- MCP 协商需覆盖 `2025-11-25`；Prompt、Resource 和 Tool 保持不同语义，Prompt/Resource 只能显式选择并作为不可信外部内容进入 Context。
 - Skills 需要 manifest 校验、签名或可信来源、健康状态和安全热更新入口。
 - Remote Agent 需要真实执行器，并受进程、文件、网络、时间、成本和并发预算约束。
+- Agent 顺序固定为 Retrieval/Context/Policy、主模型 proposal、服务端重新校验、审批与预算/容量检查、Agent 执行、不可信结果回注、最终 Provider；选择 SLOW 本身不等于审批。
+- 公共客户端不得自报 Agent proposal、Capability scope 或审批结果，显式调用只能进入服务端认证入口。
 - 策略预算不等于 sandbox；生产 Remote Agent 必须使用 OS 或容器级隔离。
 
 ### 20.7 三端协议与接入
@@ -159,6 +162,7 @@ AIRI 桌面端 / AstrBot / Website
 ### 安全、鉴权与运维
 
 - 用户、tenant、平台身份、客户端、session、正式记忆权限和远程操作权限由服务端 principal 决定。
+- `meguri_user_id`、`platform_actor_id`、`client_instance_id` 与 `session_id` 必须保持不同语义；原始平台 actor 仅在 Adapter 边界转换，Core 只保存不可逆映射和绑定结果。
 - 客户端 header 只能表达请求意图，不能自行授予正式记忆或写操作权限。
 - loopback 之外强制 HTTPS；token 不进入 renderer、日志、事件正文或前端持久化。
 - staging 需要备份恢复、监控告警、日志脱敏、审计、容量和回滚演练。
@@ -187,34 +191,32 @@ AIRI 桌面端 / AstrBot / Website
 
 ## 五、当前实现快照
 
-- Java 21 全量：139 项通过，1 项 Everything 实机测试因环境条件跳过；包含 Lore lane 异常不阻断正文的回归测试。
-- Python 全量：341 项通过，8 项真实 PostgreSQL 测试因缺少 `MEGURI_TEST_DATABASE_URL` 跳过。
-- TypeScript 协议、AIRI Adapter 和 Website：25 项通过。
-- AstrBot 用例已包含在 Python 全量中，覆盖 durable checkpoint、身份边界、幂等恢复、远程命令和渲染降级。
-- Desktop Node：13 项通过，1 项跳过。
-- AIRI：Meguri Adapter 12 项、Stage Tamagotchi 54 项、Stage UI Node 15 项、Stage UI 浏览器 4 项通过；相关 ESLint 与 `core-agent` typecheck 通过。
-- AIRI `stage-tamagotchi` 全量 typecheck 仍失败；本次附件联合类型问题已修复，剩余错误集中在仓库缺失 `apps/server` / `@proj-airi/server-runtime/server` 及其连带类型，不能宣称 AIRI 全仓类型检查通过。
-- AIRI 全量 Stage Tamagotchi 测试还存在 Windows symlink 权限、路径分隔符断言和未构建 workspace package 入口等仓库基线失败；Meguri 改动相关的 85 项 Node 测试和 4 项 Edge 浏览器测试均通过。
-- 本机没有 Docker 和本地 PostgreSQL，因此当前没有真实 PostgreSQL、多实例恢复或生产故障测试证据。
+- Java 21 Maven 全量：404 tests，0 failures，0 errors，1 skipped。
+- Python 全量：376 passed，8 skipped；本次变更文件 Ruff 与 compileall 通过。
+- Alembic：单一 head `20260729_0007`，离线 `0001 -> 0007 -> base` 全链升降级通过。
+- 根 TypeScript：48/48 passed。
+- AIRI Meguri Adapter：31/31 passed，严格 TypeScript 与指定 ESLint 通过。
+- Website、AstrBot、AIRI 已通过同一 canonical fixture 验证协议、终态、能力、权限与重放语义。
+- AIRI 从仓库根运行 Vitest 仍会因上游配置引用不存在的 `apps/server` 在测试发现前失败；包级完整测试不受影响。
+- 本机没有可用于本轮验收的真实 PostgreSQL/pgvector、MCP、Remote Agent 和生产客户端环境，因此没有生产故障与跨端鉴权证明。
 
-当前总体判断：大量模块已有本地实现和测试，但 20.x 仍是“部分完成”，不能整体提交为生产完成。
+当前总体判断：20.0-20.7 本地代码与自动化契约已实现，可以作为本地实现基线提交；真实 PostgreSQL/pgvector、MCP、Remote Agent、Provider、生产授权和真实三端 E2E 待验。
 
-逐章实现证据与未完成硬缺口见 `docs/notion-20-audit-2026-07-28.md`。
+逐章最新实现证据见 `docs/notion-20-implementation-plan-2026-07-28.md`；`docs/notion-20-audit-2026-07-28.md` 仅为实现前历史快照。
 
-## 六、请确认的产品取舍
+## 六、已落地默认值与仍需确认的产品取舍
 
-1. **首个交付标准**：先交付阶段 A，还是必须完成阶段 B 才算第一个可接受版本？建议先稳定并提交阶段 A，再单独推进阶段 B。
-2. **跨端状态边界**：建议用户级 Relationship 和正式 Memory 三端共享；服装、窗口、气泡和临时表现按客户端独立。是否同意？
-3. **正式记忆审批**：是否坚持默认只生成候选、用户批准后写入？是否允许用户主动开启低风险自动合并？
-4. **Memory 权威源**：是否确定 PostgreSQL 为唯一权威源，文件仅做单向镜像/导出？
-5. **Retrieval 模式**：是否接受 `NONE`/`FAST`/`SLOW`，并规定 FAST 绝不调用 Web 或 Remote Agent？
-6. **AIRI 渲染**：PNG-first 是否可以作为阶段 A 方案？如果不可以，原生 Live2D 应提升为当前主路径。
-7. **Remote Agent 范围**：真实 MCP、Skills 热更新和 OS/容器 sandbox 是否属于当前版本，还是明确放到后续里程碑？
-8. **远程操作**：是否继续默认关闭，并强制设备/操作员绑定、二次确认、输入 hash 和持久 Effect Ledger？
-9. **提交策略**：建议按核心 Runtime、Context/Persona、Memory/RAG、AIRI、AstrBot、协议与运维拆分提交；只提交边界清楚且本地验证通过的批次。
+1. **交付口径**：阶段 A 的本地代码和自动化契约已完成；阶段 B/C 必须等真实环境证据齐备后再标记完成。
+2. **跨端状态边界**：代码按用户级 Relationship 和正式 Memory 三端共享、Session 与客户端表现隔离实现；如产品希望 Scene 或服装跨端同步，需要另行定义权威与冲突规则。
+3. **正式记忆审批**：当前支持风险分层、审批与低风险策略；仍需确认生产是否允许用户主动开启低风险自动合并。
+4. **Memory 权威源**：当前实现以 PostgreSQL 为唯一权威源，向量和文件均为可修复投影。
+5. **Retrieval 模式**：当前实现固定为 `NONE`/`FAST`/`SLOW`，FAST 在编排与 Capability Policy 两层禁止 Web 和 Remote Agent。
+6. **AIRI 渲染**：PNG-first 是否继续作为阶段方案、何时切换原生 Live2D，仍需结合真实模型包和视觉验收决定。
+7. **Remote Agent 隔离**：HTTP 传输、预算、权限、取消和持久状态已本地实现；生产是否采用容器或独立主机隔离仍需部署决策。
+8. **远程操作**：当前默认关闭，并要求操作员绑定、预览、二次确认、输入 hash 和持久审计；生产权限矩阵仍需验收。
 
-## 七、建议优先级
+## 七、后续优先级
 
-- **P0 正确性与安全**：解除昼夜与关系阶段耦合；封死正式 Memory 写入旁路；禁止 L0 原文持久化；建立服务端权威身份；补摘要失效和 FAST 禁用 Web/Agent。
-- **P1 可恢复性**：真实 PostgreSQL 验证、多实例 lease、Outbox dispatcher、持久 Effect Ledger、durable checkpoint、`CURSOR_EXPIRED + Snapshot`。
-- **P2 完整体验**：可复现 Context/Retrieval trace、真实 Knowledge Base、原生流式、AIRI Live2D、真实 MCP/Skills/Remote Agent sandbox。
+- **P0 环境证据与安全**：真实 PostgreSQL/pgvector、MCP、Remote Agent、Provider 和三端鉴权 E2E；同时完成 secret、日志和权限扫描。
+- **P1 故障恢复与运维**：多实例、慢消费者、数据库故障、重复投递、断连、备份恢复、告警、灰度与回滚演练。
+- **P2 产品体验**：AIRI 原生 Live2D、真实 TTS/动作资产、低风险记忆自动合并开关和跨端 Scene/表现策略。

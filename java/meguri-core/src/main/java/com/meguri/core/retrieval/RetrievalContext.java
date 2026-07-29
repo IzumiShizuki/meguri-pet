@@ -12,7 +12,9 @@ public record RetrievalContext(
         Instant validAt,
         Instant deadline,
         String traceId,
-        String tenantId) {
+        String tenantId,
+        com.meguri.core.dto.RuntimeState runtimeState,
+        com.meguri.core.dto.TurnRequest turnRequest) {
     public RetrievalContext(
             String principalId,
             Set<String> aclScopes,
@@ -22,7 +24,14 @@ public record RetrievalContext(
             Instant deadline,
             String traceId) {
         this(principalId, aclScopes, snapshotId, revision, validAt, deadline,
-                traceId, "meguri-local");
+                traceId, "meguri-local", null, null);
+    }
+
+    public RetrievalContext(
+            String principalId, Set<String> aclScopes, String snapshotId, long revision,
+            Instant validAt, Instant deadline, String traceId, String tenantId) {
+        this(principalId, aclScopes, snapshotId, revision, validAt, deadline,
+                traceId, tenantId, null, null);
     }
 
     public RetrievalContext {

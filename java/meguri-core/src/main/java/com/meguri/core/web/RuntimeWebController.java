@@ -471,7 +471,8 @@ public final class RuntimeWebController {
                                 Map.of("client_instance_id",
                                         adapterRequest.identity().clientInstance().id()),
                                 null));
-                return adapterRequest.toCoreRequest(binding);
+                return identityVerifier.bindCapabilityScopes(
+                        adapterRequest.toCoreRequest(binding));
             }
             TurnRequest legacy = objectMapper.treeToValue(payload, TurnRequest.class);
             return identityVerifier.verifyBody(exchange, legacy);

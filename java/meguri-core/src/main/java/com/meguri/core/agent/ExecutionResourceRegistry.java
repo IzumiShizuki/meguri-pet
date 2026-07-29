@@ -125,6 +125,14 @@ public final class ExecutionResourceRegistry {
         return restored;
     }
 
+    public Mono<SubmitLease> acquireSubmit(
+            String resourceId, Instant deadline, CancellationToken cancellation) {
+        Entry entry = requireEntry(resourceId);
+        Objects.requireNonNull(deadline, "deadline");
+        Objects.requireNonNull(cancellation, "cancellation");
+        return retrySubmit(entry, deadline, cancellation);
+    }
+
     private Mono<CapacityLease> retry(Entry entry, AdmissionRequest request) {
         return Mono.defer(() -> {
             if (request.cancellation().isCancelled()) {
@@ -144,6 +152,35 @@ public final class ExecutionResourceRegistry {
                 return Mono.error(new AgentDeadlineExceededException("agent admission deadline exceeded"));
             }
             return Mono.delay(delay).then(retry(entry, request));
+        });
+    }
+
+    private Mono<SubmitLease> retrySubmit(
+            Entry entry, Instant deadline, CancellationToken cancellation) {
+        return Mono.defer(() -> {
+            if (cancellation.isCancelled()) {
+                return Mono.error(new AgentCancelledException("agent submission cancelled"));
+            }
+            if (!clock.instant().isBefore(deadline)) {
+                return Mono.error(new AgentDeadlineExceededException(
+                        "agent submission deadline exceeded"));
+            }
+            if (entry.health != Health.HEALTHY) {
+                return Mono.error(new AgentUnavailableException(
+                        "resource became unhealthy"));
+            }
+            SubmitLease lease = entry.tryAcquireSubmit();
+            if (lease != null) return Mono.just(lease);
+            Duration remaining = Duration.between(clock.instant(), deadline);
+            Duration delay = remaining.compareTo(retryInterval) < 0
+                    ? remaining
+                    : retryInterval;
+            if (delay.isNegative() || delay.isZero()) {
+                return Mono.error(new AgentDeadlineExceededException(
+                        "agent submission deadline exceeded"));
+            }
+            return Mono.delay(delay)
+                    .then(retrySubmit(entry, deadline, cancellation));
         });
     }
 
@@ -234,6 +271,20 @@ public final class ExecutionResourceRegistry {
         }
     }
 
+    public static final class SubmitLease implements AutoCloseable {
+        private final Entry owner;
+        private final AtomicBoolean released = new AtomicBoolean();
+
+        private SubmitLease(Entry owner) {
+            this.owner = owner;
+        }
+
+        @Override
+        public void close() {
+            if (released.compareAndSet(false, true)) owner.submit.release();
+        }
+    }
+
     private static final class Entry {
         private final ResourceDescriptor descriptor;
         private final Semaphore submit;
@@ -284,6 +335,10 @@ public final class ExecutionResourceRegistry {
             CapacityLease lease = new CapacityLease(this, tenantId, userKey);
             lease.submitReleased.set(true);
             return lease;
+        }
+
+        private SubmitLease tryAcquireSubmit() {
+            return submit.tryAcquire() ? new SubmitLease(this) : null;
         }
 
         private synchronized void decrementQuota(String tenantId, String userKey) {

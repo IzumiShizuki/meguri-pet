@@ -9,14 +9,20 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import java.util.Objects;
 import java.util.Optional;
 
-/** PostgreSQL authority for immutable, content-bearing retrieval traces. */
+/** PostgreSQL authority for immutable, content-free retrieval trace projections. */
 public final class PostgresRetrievalTraceRepository implements RetrievalTraceRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
 
     public PostgresRetrievalTraceRepository(JdbcTemplate jdbc, ObjectMapper mapper) {
+        this(jdbc, mapper, true);
+    }
+
+    PostgresRetrievalTraceRepository(
+            JdbcTemplate jdbc, ObjectMapper mapper, boolean initializeSchema) {
         this.jdbc = Objects.requireNonNull(jdbc, "jdbc");
         this.mapper = Objects.requireNonNull(mapper, "mapper");
+        if (!initializeSchema) return;
         ResourceDatabasePopulator schema = new ResourceDatabasePopulator(
                 new ClassPathResource("db/retrieval-runtime.sql"));
         schema.setContinueOnError(false);
@@ -30,8 +36,8 @@ public final class PostgresRetrievalTraceRepository implements RetrievalTraceRep
         jdbc.update("""
                 INSERT INTO meguri_retrieval_trace (
                     trace_id, snapshot_id, knowledge_revision, valid_at,
-                    algorithm_revision, completed_at, trace_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb)
+                    algorithm_revision, completed_at, projection_version, trace_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb)
                 ON CONFLICT (trace_id) DO NOTHING
                 """,
                 trace.traceId(),
@@ -40,11 +46,18 @@ public final class PostgresRetrievalTraceRepository implements RetrievalTraceRep
                 java.sql.Timestamp.from(trace.validAt()),
                 trace.algorithmRevision(),
                 java.sql.Timestamp.from(trace.completedAt()),
-                write(trace));
+                RetrievalTraceProjection.VERSION,
+                write(RetrievalTraceProjection.capture(trace)));
     }
 
     @Override
     public Optional<RetrievalTrace> find(String traceId) {
+        if (traceId == null || traceId.isBlank()) return Optional.empty();
+        return findProjection(traceId).map(RetrievalTraceProjection::toRedactedTrace);
+    }
+
+    @Override
+    public Optional<RetrievalTraceProjection> findProjection(String traceId) {
         if (traceId == null || traceId.isBlank()) return Optional.empty();
         return jdbc.query("""
                         SELECT trace_json::text
@@ -57,7 +70,7 @@ public final class PostgresRetrievalTraceRepository implements RetrievalTraceRep
                 traceId.trim());
     }
 
-    private String write(RetrievalTrace trace) {
+    private String write(RetrievalTraceProjection trace) {
         try {
             return mapper.writeValueAsString(trace);
         } catch (JsonProcessingException error) {
@@ -65,9 +78,9 @@ public final class PostgresRetrievalTraceRepository implements RetrievalTraceRep
         }
     }
 
-    private RetrievalTrace read(String value) {
+    private RetrievalTraceProjection read(String value) {
         try {
-            return mapper.readValue(value, RetrievalTrace.class);
+            return mapper.readValue(value, RetrievalTraceProjection.class);
         } catch (JsonProcessingException error) {
             throw new IllegalStateException("failed to deserialize retrieval trace", error);
         }

@@ -11,6 +11,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,6 +34,7 @@ class TurnAgentCapabilityGateTest {
         TurnRequest request = new TurnRequest(
                 "user", "website", "session", "delegate this", RetrievalMode.SLOW);
         TurnRecord turn = orchestrator.start(request);
+        AtomicInteger calls = new AtomicInteger();
 
         String result = orchestrator.executeAgentCapability(
                         turn.getTurnId(),
@@ -40,11 +42,34 @@ class TurnAgentCapabilityGateTest {
                         request.getUserId(),
                         request.getClientId(),
                         request.getSessionId(),
-                        Map.of("agent_id", "research", "task_brief", "bounded task"),
-                        () -> Mono.just("accepted"))
+                        Map.of(
+                                "agent_id", "research",
+                                "task_brief", "bounded task",
+                                "idempotency_key", "same-agent-call"),
+                        () -> {
+                            calls.incrementAndGet();
+                            return Mono.just("accepted");
+                        })
+                .block(Duration.ofSeconds(2));
+        String replay = orchestrator.executeAgentCapability(
+                        turn.getTurnId(),
+                        request.tenantId(),
+                        request.getUserId(),
+                        request.getClientId(),
+                        request.getSessionId(),
+                        Map.of(
+                                "agent_id", "research",
+                                "task_brief", "bounded task",
+                                "idempotency_key", "same-agent-call"),
+                        () -> {
+                            calls.incrementAndGet();
+                            return Mono.just("duplicate");
+                        })
                 .block(Duration.ofSeconds(2));
 
         assertThat(result).isEqualTo("accepted");
+        assertThat(replay).isEqualTo("accepted");
+        assertThat(calls).hasValue(1);
         assertThat(orchestrator.capabilityAuditEvents())
                 .filteredOn(event -> event.capabilityId().equals("agent.invoke"))
                 .anySatisfy(event -> {

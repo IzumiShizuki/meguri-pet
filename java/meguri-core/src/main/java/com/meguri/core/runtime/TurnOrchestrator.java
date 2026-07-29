@@ -12,13 +12,19 @@ import com.meguri.core.dto.ResolvedExpression;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.agent.AgentLifecycleEvent;
+import com.meguri.core.agent.AgentInvocation;
+import com.meguri.core.agent.AgentResult;
+import com.meguri.core.agent.AgentRuntime;
+import com.meguri.core.agent.AgentRuntimeFactory;
+import com.meguri.core.agent.AgentTaskContext;
 import com.meguri.core.agent.CancellationToken;
+import com.meguri.core.agent.InvokeAgentProposal;
 import com.meguri.core.capability.ApprovalService;
 import com.meguri.core.capability.CapabilityDescriptor;
-import com.meguri.core.capability.CapabilityImplementation;
 import com.meguri.core.capability.CapabilityResult;
 import com.meguri.core.capability.CapabilityRuntimeFacade;
 import com.meguri.core.capability.ExposurePlanner;
+import com.meguri.core.capability.McpContentResolver;
 import com.meguri.core.capability.ToolProposal;
 import com.meguri.core.harness.EventCursor;
 import com.meguri.core.harness.HarnessControlPlane;
@@ -28,37 +34,42 @@ import com.meguri.core.harness.SessionSnapshot;
 import com.meguri.core.harness.TurnCommand;
 import com.meguri.core.harness.TurnRuntime;
 import com.meguri.core.harness.TurnSnapshot;
-import com.meguri.core.harness.capability.CapabilityRegistry;
-import com.meguri.core.harness.capability.CapabilityExecutor;
-import com.meguri.core.harness.capability.CapabilityInputSchema;
-import com.meguri.core.harness.capability.CapabilityPolicy;
-import com.meguri.core.harness.capability.DefaultCapabilityPolicy;
 import com.meguri.core.harness.capability.EffectLedger;
-import com.meguri.core.harness.capability.InMemoryEffectLedger;
 import com.meguri.core.harness.persona.DeterministicPersonaRuntime;
 import com.meguri.core.harness.persona.PersonaRuntime;
-import com.meguri.core.harness.retrieval.RetrievalBundle;
-import com.meguri.core.harness.retrieval.RetrievalBundle.Lane;
-import com.meguri.core.harness.retrieval.RetrievalBundle.LaneResult;
 import com.meguri.core.harness.retrieval.RetrievalMode;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
+import com.meguri.core.llm.NativeTextDeltaAggregator;
+import com.meguri.core.llm.AgentPlanningRequest;
+import com.meguri.core.llm.ProviderRequest;
+import com.meguri.core.context.CompanionContextRuntime;
+import com.meguri.core.context.ContextBuildRequest;
+import com.meguri.core.context.ContextBundle;
+import com.meguri.core.context.ContextProfile;
+import com.meguri.core.context.ContextRuntimePersistence;
+import com.meguri.core.context.InMemoryContextRuntimePersistence;
+import com.meguri.core.memory.job.InMemoryPostReplyMemoryJobStore;
+import com.meguri.core.memory.job.PostReplyMemoryJob;
+import com.meguri.core.memory.job.PostReplyMemoryJobEnqueuer;
+import com.meguri.core.persona.PersonaRuntimeDefaults;
+import com.meguri.core.persona.PersonaRuntimeFacade;
+import com.meguri.core.persona.presentation.PresentationIntent;
+import com.meguri.core.persona.presentation.PresentationResolver;
+import com.meguri.core.persona.prompt.PromptPolicyComposer;
+import com.meguri.core.persona.runtime.EffectivePersonaState;
+import com.meguri.core.retrieval.FrozenKnowledgeSnapshot;
+import com.meguri.core.retrieval.UnifiedRetrievalFacade;
 import com.meguri.core.rag.CanonicalRagRetriever;
 import com.meguri.core.rag.MockRagProvider;
 import com.meguri.core.rag.RagProvider;
 import com.meguri.core.resources.LocalResourcePromptContext;
 import com.meguri.core.memory.MemoryGateway;
-import com.meguri.core.memory.MemoryRecall;
-import com.meguri.core.memory.MemoryWriteResult;
 import com.meguri.core.retrieval.KnowledgeTurnRetrievalRuntime;
-import com.meguri.core.retrieval.RetrievalLaneResult;
-import com.meguri.core.retrieval.SourceType;
 import com.meguri.core.training.TrainingFeedbackRequest;
 import com.meguri.core.training.TrainingFeedbackService;
 import com.meguri.core.websearch.NoopWebSearchGateway;
 import com.meguri.core.websearch.WebSearchGateway;
-import com.meguri.core.websearch.WebSearchPolicy;
-import com.meguri.core.websearch.WebSearchRecall;
 import com.meguri.core.weather.WeatherConversationService;
 import com.meguri.core.weather.WeatherConversationService.TurnWeatherContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -72,8 +83,9 @@ import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.Clock;
+import java.math.BigDecimal;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -81,13 +93,12 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -104,7 +115,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private final ExpressionResolver expressionResolver;
     private final RagProvider rag;
     private final LlmProvider llm;
-    private final SessionContextStore sessions;
+    private volatile SessionContextStore sessions;
     private final ObjectMapper objectMapper;
     private final String buildId;
     private final Duration streamInterval;
@@ -114,10 +125,14 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private final WeatherConversationService weatherConversation;
     private final TurnJournal journal;
     private final PersonaRuntime personaRuntime;
-    private final CapabilityRegistry capabilities;
-    private final CapabilityExecutor capabilityExecutor;
     private final CapabilityRuntimeFacade capabilityRuntime;
-    private volatile KnowledgeTurnRetrievalRuntime knowledgeRetrieval;
+    private volatile AgentRuntime agentRuntime;
+    private volatile AgentRuntimeFactory.Config agentRuntimeConfig;
+    private volatile CanonicalTurnPipeline canonicalPipeline;
+    private volatile PresentationResolver presentationResolver;
+    private volatile PostReplyMemoryJobEnqueuer postReplyMemoryJobs;
+    private final String executionOwnerId = "meguri-core-" + UUID.randomUUID();
+    private static final Duration EXECUTION_LEASE = Duration.ofSeconds(30);
 
     private final Map<String, Disposable> running = new ConcurrentHashMap<>();
 
@@ -258,16 +273,68 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 ? WeatherConversationService.disabled() : weatherConversation;
         this.journal = journal == null ? new InMemoryTurnJournal(this.objectMapper) : journal;
         this.personaRuntime = new DeterministicPersonaRuntime(this.stateMachine, this.objectMapper);
-        this.capabilities = defaultCapabilities();
-        this.capabilityExecutor = defaultCapabilityExecutor();
         this.capabilityRuntime = capabilityRuntime == null
                 ? new CapabilityRuntimeFacade(32) : capabilityRuntime;
         registerRuntimeCapabilities();
+        ContextRuntimePersistence contextRuntimePersistence =
+                contextPersistence instanceof ContextRuntimePersistence durable
+                        ? durable : new InMemoryContextRuntimePersistence();
+        this.canonicalPipeline = new CanonicalTurnPipeline(
+                PersonaRuntimeDefaults.facade(Clock.systemUTC()),
+                UnifiedRetrievalFacade.compatibility(this.rag, this.memory, this.webSearch),
+                new CompanionContextRuntime(this.sessions, contextRuntimePersistence, this.llm.tokenizer()),
+                new PromptPolicyComposer(), defaultContextProfile(this.llm),
+                this.capabilityRuntime);
+        this.presentationResolver = new PresentationResolver();
+        this.postReplyMemoryJobs = new PostReplyMemoryJobEnqueuer(
+                new InMemoryPostReplyMemoryJobStore(), this.objectMapper, Clock.systemUTC());
     }
 
     @Autowired(required = false)
+    public void configureCanonicalPipeline(
+            SessionContextStore sessionContextStore,
+            PersonaRuntimeFacade personaRuntimeFacade,
+            UnifiedRetrievalFacade retrievalFacade,
+            CompanionContextRuntime contextRuntime,
+            PromptPolicyComposer promptPolicyComposer,
+            ContextProfile contextProfile,
+            PresentationResolver presentation,
+            PostReplyMemoryJobEnqueuer memoryJobEnqueuer) {
+        this.sessions = Objects.requireNonNull(sessionContextStore, "sessionContextStore");
+        this.canonicalPipeline = new CanonicalTurnPipeline(
+                personaRuntimeFacade, retrievalFacade, contextRuntime,
+                promptPolicyComposer, contextProfile, capabilityRuntime);
+        this.presentationResolver = Objects.requireNonNull(presentation, "presentation");
+        this.postReplyMemoryJobs = Objects.requireNonNull(memoryJobEnqueuer, "memoryJobEnqueuer");
+    }
+
+    /**
+     * Explicit compatibility hook for tests and embedders that only provide the
+     * legacy Knowledge runtime. Spring uses the canonical UnifiedRetrievalFacade
+     * injected by {@link #configureCanonicalPipeline} so authorization cannot be
+     * replaced by a second, order-dependent autowiring pass.
+     */
     public void configureKnowledgeRetrieval(KnowledgeTurnRetrievalRuntime runtime) {
-        this.knowledgeRetrieval = runtime;
+        configureUnifiedRetrieval(Objects.requireNonNull(runtime, "runtime")
+                .unifiedFacade(rag, memory, webSearch));
+    }
+
+    public void configureUnifiedRetrieval(UnifiedRetrievalFacade runtime) {
+        this.canonicalPipeline = canonicalPipeline.withRetrieval(
+                Objects.requireNonNull(runtime, "runtime"));
+    }
+
+    @Autowired(required = false)
+    public void configureMcpContentResolver(McpContentResolver resolver) {
+        this.canonicalPipeline = canonicalPipeline.withMcpContentResolver(
+                Objects.requireNonNull(resolver, "resolver"));
+    }
+
+    @Autowired(required = false)
+    public void configureAgentRuntime(
+            AgentRuntime runtime, AgentRuntimeFactory.Config config) {
+        this.agentRuntime = Objects.requireNonNull(runtime, "runtime");
+        this.agentRuntimeConfig = Objects.requireNonNull(config, "config");
     }
 
     public RuntimeStateMachine stateMachine() {
@@ -343,7 +410,52 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     public List<EffectLedger.Receipt> effectReceipts(String turnId) {
-        return capabilityExecutor.ledger().receipts(turnId);
+        return capabilityRuntime.auditEvents().stream()
+                .filter(event -> Objects.equals(turnId, event.turnId()))
+                .filter(event -> Set.of("COMPLETED", "IDEMPOTENT_REPLAY", "CANCELLED")
+                        .contains(event.phase()))
+                .filter(this::hasObservableEffect)
+                .map(this::compatibilityReceipt)
+                .sorted(java.util.Comparator.comparing(EffectLedger.Receipt::startedAt))
+                .toList();
+    }
+
+    private boolean hasObservableEffect(
+            com.meguri.core.capability.CapabilityAudit.Event event) {
+        return capabilityRuntime.availableDescriptors().stream()
+                .filter(candidate -> candidate.id().equals(event.capabilityId()))
+                .filter(candidate -> event.capabilityVersion() == null
+                        || candidate.version().equals(event.capabilityVersion()))
+                .anyMatch(candidate -> candidate.sideEffect()
+                        != CapabilityDescriptor.SideEffect.NONE);
+    }
+
+    private EffectLedger.Receipt compatibilityReceipt(
+            com.meguri.core.capability.CapabilityAudit.Event event) {
+        CapabilityDescriptor descriptor = capabilityRuntime.availableDescriptors().stream()
+                .filter(candidate -> candidate.id().equals(event.capabilityId()))
+                .filter(candidate -> event.capabilityVersion() == null
+                        || candidate.version().equals(event.capabilityVersion()))
+                .findFirst()
+                .orElse(null);
+        com.meguri.core.harness.capability.CapabilityRegistry.Effect effect = descriptor == null
+                ? com.meguri.core.harness.capability.CapabilityRegistry.Effect.EXTERNAL
+                : switch (descriptor.sideEffect()) {
+                    case NONE, READ -> com.meguri.core.harness.capability.CapabilityRegistry.Effect.READ;
+                    case WRITE -> com.meguri.core.harness.capability.CapabilityRegistry.Effect.WRITE;
+                    case EXTERNAL -> com.meguri.core.harness.capability.CapabilityRegistry.Effect.EXTERNAL;
+                };
+        EffectLedger.Status status = "SUCCESS".equals(event.status())
+                ? EffectLedger.Status.COMPLETED : EffectLedger.Status.FAILED;
+        Instant finishedAt = event.occurredAt();
+        Instant startedAt = finishedAt.minusMillis(Math.max(0L, event.durationMs()));
+        return new EffectLedger.Receipt(
+                event.eventId(), event.turnId(), event.userId(), event.capabilityId(),
+                event.capabilityVersion() == null ? "unknown" : event.capabilityVersion(),
+                event.idempotencyKey(), effect,
+                event.approvalDecision() == ApprovalService.Decision.ACCEPT,
+                event.requestDigest(), event.resultDigest(), status, event.errorCode(),
+                startedAt, finishedAt);
     }
 
     public List<com.meguri.core.capability.CapabilityAudit.Event> capabilityAuditEvents() {
@@ -368,8 +480,9 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             Map<String, Object> input,
             Supplier<Mono<T>> operation) {
         Objects.requireNonNull(operation, "operation");
-        return executeAgentCapability(
+        return executeAgentCapabilityInternal(
                 turnId, tenantId, userId, clientId, sessionId, input,
+                true, this::decodeScalarCapabilityReplay,
                 ignored -> operation.get());
     }
 
@@ -382,6 +495,41 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             Map<String, Object> input,
             Function<AgentExecutionScope, Mono<T>> operation) {
         Objects.requireNonNull(operation, "operation");
+        return executeAgentCapabilityInternal(
+                turnId, tenantId, userId, clientId, sessionId,
+                input, true, this::decodeScalarCapabilityReplay, operation);
+    }
+
+    public <T> Mono<T> executeAgentCapability(
+            String turnId,
+            String tenantId,
+            String userId,
+            String clientId,
+            String sessionId,
+            Map<String, Object> input,
+            Class<T> resultType,
+            Function<AgentExecutionScope, Mono<T>> operation) {
+        Objects.requireNonNull(resultType, "resultType");
+        Objects.requireNonNull(operation, "operation");
+        return executeAgentCapabilityInternal(
+                turnId, tenantId, userId, clientId, sessionId,
+                input, true,
+                result -> objectMapper.convertValue(result.data(), resultType),
+                operation);
+    }
+
+    private <T> Mono<T> executeAgentCapabilityInternal(
+            String turnId,
+            String tenantId,
+            String userId,
+            String clientId,
+            String sessionId,
+            Map<String, Object> input,
+            boolean approvalGranted,
+            Function<CapabilityResult, T> replayDecoder,
+            Function<AgentExecutionScope, Mono<T>> operation) {
+        Objects.requireNonNull(operation, "operation");
+        Objects.requireNonNull(replayDecoder, "replayDecoder");
         return Mono.defer(() -> {
             TurnRecord record = journal.turn(required(turnId, "turnId"));
             if (record == null) {
@@ -412,7 +560,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                     frozen.snapshotId(),
                     record.agentCancellation().child());
             return executeCapability(
-                    record, "agent.invoke", Map.copyOf(input), true,
+                    record, "agent.invoke", Map.copyOf(input), approvalGranted,
+                    replayDecoder,
                     () -> operation.apply(scope));
         });
     }
@@ -524,6 +673,25 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         return start(request, null);
     }
 
+    /** Creates a new Turn for a failed/interrupted predecessor; the old Turn is immutable. */
+    public synchronized TurnRecord retry(TurnRequest request, String idempotencyKey,
+                                         String retryOfTurnId) {
+        Objects.requireNonNull(request, "request");
+        TurnRecord predecessor = journal.turn(retryOfTurnId);
+        if (predecessor == null || !predecessor.isTerminal()
+                || predecessor.getStatus() != TurnStatus.FAILED) {
+            throw new IllegalArgumentException("retry_of_turn_id must reference a failed Turn");
+        }
+        TurnJournal.Acceptance acceptance = journal.acceptRetry(
+                request, idempotencyKey, Instant.now().plus(TurnCommand.DEFAULT_DEADLINE),
+                predecessor.getTurnId());
+        if (acceptance.created()) {
+            prepareRecord(acceptance.record());
+            schedule(acceptance.record());
+        }
+        return acceptance.record();
+    }
+
     public Mono<TurnRecord> startAsync(TurnRequest request, String idempotencyKey) {
         return Mono.fromSupplier(() -> start(request, idempotencyKey));
     }
@@ -546,10 +714,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         TurnRecord record = journal.turn(turnId);
         if (record == null) return null;
         if (!record.isTerminal()) {
-            record.requestCancel();
+            journal.requestCancellation(record);
             Disposable active = running.remove(turnId);
-            if (active != null) active.dispose();
-            cancelRecord(record, "client_requested");
+            if (active != null) {
+                cancelRecord(record, "client_requested");
+                active.dispose();
+            }
         }
         return record;
     }
@@ -746,23 +916,29 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (record.getManifest() != null) return;
         TurnRequest request = record.getRequest();
         Instant frozenAt = Instant.now();
-        PersonaRuntime.PersonaSnapshot persona = personaRuntime.reduce(request);
-        CapabilityRegistry.Snapshot capabilitySnapshot = capabilities.freeze();
+        sessions.appendNode(
+                request.getUserId(), request.getClientId(), request.getSessionId(),
+                userMessageId(record), null,
+                new SessionContextStore.Message("user", request.getMessage()));
+        RuntimeState temporalState = stateMachine.stateFor(request);
+        EffectivePersonaState effectivePersona = canonicalPipeline.resolvePersona(
+                record, temporalState);
+        RuntimeState state = canonicalPipeline.applyPersona(temporalState, effectivePersona);
+        PersonaRuntime.PersonaSnapshot persona = personaSnapshot(state, effectivePersona);
         CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities =
                 capabilityRuntime.freeze(exposureContext(record));
-        KnowledgeTurnRetrievalRuntime.Snapshot knowledgeSnapshot = null;
-        if (knowledgeRetrieval != null) {
-            try {
-                knowledgeSnapshot = knowledgeRetrieval.freeze(
-                        request.tenantId(), frozenAt);
-            } catch (RuntimeException ignored) {
-                // Knowledge is optional for the companion response, but a failed
-                // authority read must never expose a partially loaded snapshot.
-            }
+        FrozenKnowledgeSnapshot knowledgeSnapshot;
+        try {
+            knowledgeSnapshot = canonicalPipeline.freezeKnowledge(request, frozenAt);
+        } catch (RuntimeException unavailable) {
+            knowledgeSnapshot = FrozenKnowledgeSnapshot.empty(frozenAt);
         }
         record.freezePersonaSnapshot(persona);
-        record.freezeCapabilitySnapshot(capabilitySnapshot);
+        record.freezeEffectivePersonaState(effectivePersona);
         record.freezeRuntimeCapabilities(runtimeCapabilities);
+        long knowledgeRevision = knowledgeSnapshot.versions().stream()
+                .map(FrozenKnowledgeSnapshot.VersionRef::publishedAt)
+                .mapToLong(Instant::toEpochMilli).max().orElse(0L);
         record.freezeManifest(new HarnessManifest(
                 EventEnvelope.CURRENT_PROTOCOL_VERSION,
                 buildId,
@@ -772,9 +948,16 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 runtimeCapabilities.exposed().stream()
                         .map(CapabilityRuntimeFacade.CapabilityRef::id)
                         .toList(),
-                knowledgeSnapshot == null
-                        ? "knowledge:unavailable" : knowledgeSnapshot.id(),
-                knowledgeSnapshot == null ? 0L : knowledgeSnapshot.revision(),
+                knowledgeSnapshot.snapshotId(),
+                knowledgeRevision,
+                Long.toString(effectivePersona.relationship().version()),
+                effectivePersona.scene() == null
+                        ? "scene:none" : Long.toString(effectivePersona.scene().version()),
+                effectivePersona.policyRevision(),
+                effectivePersona.resolutionTraceId(),
+                record.getTraceId(),
+                llm.providerName(),
+                llm.modelId(),
                 frozenAt));
         journal.persist(record);
     }
@@ -798,17 +981,35 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     private Mono<Void> runWithDeadline(TurnRecord record) {
-        return runRecord(record)
+        if (!journal.claimExecution(record, executionOwnerId, EXECUTION_LEASE)) {
+            return Mono.error(new IllegalStateException("turn execution lease is owned by another runtime"));
+        }
+        Mono<Void> execution = runRecord(record)
                 .timeout(record.remaining())
                 .onErrorResume(TimeoutException.class,
-                        error -> fail(record, new IllegalStateException("turn deadline exceeded")));
+                        error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"));
+        Mono<Void> cancellation = Flux.interval(Duration.ofMillis(250))
+                .filter(ignored -> journal.refreshCancellation(record))
+                .next()
+                .flatMap(ignored -> cancelRecord(record, "client_requested"));
+        Mono<Void> leaseGuard = Flux.interval(Duration.ofSeconds(10))
+                .concatMap(ignored -> Mono.fromCallable(() -> journal.heartbeatExecution(
+                        record, executionOwnerId, EXECUTION_LEASE)))
+                .filter(owned -> !owned)
+                .next()
+                .flatMap(ignored -> journal.refreshCancellation(record)
+                        ? cancelRecord(record, "client_requested")
+                        : Mono.error(new IllegalStateException("turn execution lease was lost")));
+        return Mono.firstWithSignal(execution, cancellation, leaseGuard)
+                .doFinally(ignored -> {
+                    journal.releaseExecution(record, executionOwnerId);
+                });
     }
 
     private Mono<Void> runRecord(TurnRecord record) {
         TurnRequest request = record.getRequest();
         record.setStatus(TurnStatus.RUNNING);
         record.transitionTo(TurnStage.PLANNING);
-        journal.persist(record);
         RuntimeState state;
         try {
             state = record.getPersonaSnapshot().state();
@@ -822,125 +1023,396 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         }
 
         transition(record, TurnStage.RETRIEVING);
-        List<String> recent = recentContext(request);
-        List<String> promptRecent = appendContext(recent,
-                LocalResourcePromptContext.from(request.attachments()));
-        RetrievalMode retrievalMode = request.retrievalMode();
-
-        Mono<LaneResult> lore = retrievalMode.permitsLocalRetrieval()
-                ? executeCapability(
-                        record,
-                        "lore.read",
-                        Map.of("query", request.getMessage()),
-                        false,
-                        () -> Mono.fromCallable(() -> {
-                                    List<String> found = rag.search(request.getMessage(), state, 3);
-                                    return found == null ? List.<String>of() : List.copyOf(found);
-                                })
-                                .subscribeOn(Schedulers.boundedElastic()))
-                        .timeout(laneTimeout(record,
-                                capabilityTimeout(record, "lore.read", Duration.ofSeconds(8))))
-                        .map(items -> new LaneResult(
-                                Lane.LORE,
-                                items.isEmpty() ? "empty" : "ok",
-                                ragProviderName(),
-                                items))
-                        .onErrorReturn(new LaneResult(
-                                Lane.LORE,
-                                "unavailable",
-                                ragProviderName(),
-                                List.of()))
-                : Mono.just(new LaneResult(
-                        Lane.LORE,
-                        "disabled",
-                        ragProviderName(),
-                        List.of()));
-        Mono<MemoryRecall> recalledMemory = retrievalMode.permitsLocalRetrieval()
-                ? executeCapability(
-                        record,
-                        "memory.read",
-                        Map.of("query", request.getMessage()),
-                        false,
-                        () -> memory.recall(request))
-                        .timeout(laneTimeout(record,
-                                capabilityTimeout(record, "memory.read", Duration.ofSeconds(5))))
-                        .onErrorReturn(MemoryRecall.unavailable())
-                : Mono.just(MemoryRecall.unavailable());
-        Mono<TurnWeatherContext> weather = retrievalMode.permitsOpenRetrieval()
-                ? executeCapability(
-                        record,
-                        "weather.read",
-                        Map.of("message", request.getMessage()),
-                        false,
-                        () -> retrieveWeather(record, request))
-                        .timeout(laneTimeout(record,
-                                capabilityTimeout(record, "weather.read", Duration.ofSeconds(5))))
-                        .onErrorResume(error -> weatherConversation.contextFor(""))
-                : weatherConversation.contextFor("");
-        Mono<WebSearchRecall> web = retrievalMode.permitsOpenRetrieval()
-                ? executeCapability(
-                        record,
-                        "web.read",
-                        Map.of("message", request.getMessage()),
-                        false,
-                        () -> retrieveWeb(record, request))
-                        .timeout(laneTimeout(record,
-                                capabilityTimeout(record, "web.read", Duration.ofSeconds(8))))
-                        .onErrorReturn(WebSearchRecall.unavailable(webSearch.providerName()))
-                : Mono.just(WebSearchRecall.disabled());
-        Mono<KnowledgeRecall> knowledge = retrieveKnowledge(
-                record, request, retrievalMode);
-
-        return Mono.zip(lore, recalledMemory, weather, web, knowledge)
-                .flatMap(retrieval -> {
-                    RetrievalBundle bundle = new RetrievalBundle(
-                            record.getTraceId(),
-                            Instant.now(),
-                            List.of(
-                                    retrieval.getT1(),
-                                    new LaneResult(
-                                            Lane.MEMORY,
-                                            retrievalMode == RetrievalMode.NONE
-                                                    ? "disabled"
-                                                    : retrieval.getT2().available() ? "ok" : "unavailable",
-                                            memoryProviderName(),
-                                            retrieval.getT2().memories()),
-                                    new LaneResult(
-                                            Lane.KNOWLEDGE_BASE,
-                                            retrieval.getT5().status(),
-                                            retrieval.getT5().provider(),
-                                            retrieval.getT5().contextLines()),
-                                    new LaneResult(
-                                            Lane.WEB,
-                                            retrieval.getT4().status(),
-                                            retrieval.getT4().provider(),
-                                            retrieval.getT4().contextLines())));
-                    Map<String, Object> retrievalTrace = new LinkedHashMap<>(bundle.traceData());
-                    retrievalTrace.put("retrieval_mode", retrievalMode.wireValue());
-                    if (retrieval.getT5().typedBundle() != null) {
-                        retrievalTrace.put(
-                                "knowledge_trace",
-                                beanMap(retrieval.getT5().typedBundle()));
-                    }
+        return Mono.fromCallable(() -> canonicalPipeline.prepare(
+                        record, state, record.getEffectivePersonaState(),
+                        record.getRuntimeCapabilities(), attachmentContext(request)))
+                .subscribeOn(Schedulers.boundedElastic())
+                .flatMap(initial -> canonicalAgentContext(record, initial)
+                        .flatMap(agentBlocks -> Mono.fromCallable(() -> {
+                            CanonicalTurnPipeline.Prepared prepared =
+                                    agentBlocks.isEmpty()
+                                            ? initial
+                                            : canonicalPipeline.augment(
+                                                    record, state,
+                                                    record.getEffectivePersonaState(),
+                                                    record.getRuntimeCapabilities(),
+                                                    initial, agentBlocks);
+                            canonicalPipeline.freeze(record, prepared);
+                            return prepared;
+                        }).subscribeOn(Schedulers.boundedElastic())))
+                .flatMap(prepared -> {
+                    Map<String, Object> retrievalTrace = new LinkedHashMap<>();
+                    retrievalTrace.put("trace_id", prepared.retrieval().traceId());
+                    retrievalTrace.put("retrieval_mode", request.retrievalMode().wireValue());
+                    retrievalTrace.put("lanes", prepared.retrieval().lanes().entrySet().stream()
+                            .sorted(Map.Entry.comparingByKey())
+                            .map(entry -> Map.<String, Object>of(
+                                    "lane", entry.getKey().name().toLowerCase(java.util.Locale.ROOT),
+                                    "status", entry.getValue().status().name().toLowerCase(java.util.Locale.ROOT),
+                                    "provider", entry.getValue().provider(),
+                                    "result_count", entry.getValue().items().size(),
+                                    "degradations", entry.getValue().degradations()))
+                            .toList());
+                    retrievalTrace.put("degradations", prepared.retrieval().degradations());
+                    retrievalTrace.put("graph_enabled", prepared.retrieval().plan().graphEnabled());
+                    retrievalTrace.put("knowledge_trace", Map.of(
+                            "trace_id", prepared.retrieval().traceId(),
+                            "snapshot_id", record.getManifest().knowledgeSnapshotId(),
+                            "revision", record.getManifest().knowledgeRevision(),
+                            "result_count", prepared.retrieval().items().stream()
+                                    .filter(item -> item.sourceType()
+                                            == com.meguri.core.retrieval.SourceType.KNOWLEDGE)
+                                    .count()));
+                    retrievalTrace.put("context_trace_id", prepared.context().traceId());
+                    retrievalTrace.put("context_build_revision",
+                            prepared.context().bundle().buildRevision());
+                    retrievalTrace.put("provider_prompt_digest",
+                            prepared.providerRequest().canonicalPromptDigest());
+                    retrievalTrace.put("context_budget",
+                            beanMap(prepared.context().bundle().budget()));
+                    retrievalTrace.put("mcp_content", prepared.mcpContent().stream()
+                            .map(item -> Map.<String, Object>of(
+                                    "kind", item.kind().name().toLowerCase(
+                                            java.util.Locale.ROOT),
+                                    "source_id", item.sourceId(),
+                                    "identifier", item.identifier(),
+                                    "status", item.succeeded() ? "succeeded" : "failed",
+                                    "item_count", item.itemCount(),
+                                    "failure_code", item.failureCode() == null
+                                            ? "" : item.failureCode()))
+                            .toList());
                     emit(record, "retrieval.completed", Map.copyOf(retrievalTrace));
+                    for (CanonicalTurnPipeline.PromptSkillExecution skill
+                            : prepared.promptSkills()) {
+                        LinkedHashMap<String, Object> skillEvent = new LinkedHashMap<>();
+                        skillEvent.put("capability_id", skill.capabilityId());
+                        skillEvent.put("capability_version", skill.capabilityVersion());
+                        skillEvent.put("token_estimate", skill.tokenEstimate());
+                        putIfPresent(skillEvent, "failure_code", skill.failureCode());
+                        emit(record, skill.succeeded() ? "skill.completed" : "skill.failed",
+                                Map.copyOf(skillEvent));
+                    }
+
+                    Mono<TurnWeatherContext> weather = request.retrievalMode().permitsOpenRetrieval()
+                            ? executeCapability(
+                                    record,
+                                    "weather.read",
+                                    Map.of("message", request.getMessage()),
+                                    false,
+                                    result -> objectMapper.convertValue(
+                                            result.data(), TurnWeatherContext.class),
+                                    () -> retrieveWeather(record, request))
+                                    .timeout(laneTimeout(record,
+                                            capabilityTimeout(record, "weather.read", Duration.ofSeconds(5))))
+                                    .onErrorResume(error -> weatherConversation.contextFor(""))
+                            : weatherConversation.contextFor("");
                     transition(record, TurnStage.GENERATING);
-                    List<String> contextualRecent = appendContext(promptRecent, retrieval.getT3().promptContext());
-                    List<String> canon = appendContext(
-                            bundle.items(Lane.LORE),
-                            bundle.items(Lane.KNOWLEDGE_BASE));
-                    return llm.respond(request, state, canon, bundle.items(Lane.MEMORY),
-                                    contextualRecent, bundle.items(Lane.WEB))
-                            .map(retrieval.getT3()::augment)
-                            .flatMap(first -> sampleAlternative(record, request, state, canon,
-                                    bundle.items(Lane.MEMORY), contextualRecent,
-                                    bundle.items(Lane.WEB), first, retrieval.getT3(), recent));
+                    return weather.flatMap(weatherContext ->
+                            generatePrimary(record, prepared.providerRequest())
+                                    .map(generated -> new GeneratedResponse(
+                                            weatherContext.augment(generated.response()),
+                                            generated.nativeStream()))
+                                    .flatMap(generated -> sampleAlternative(
+                                            record, prepared.providerRequest(), generated.response(),
+                                            weatherContext,
+                                            prepared.providerRequest().legacyRecentContext())
+                                            .map(response -> new GeneratedResponse(
+                                                    response, generated.nativeStream()))));
                 })
                 .switchIfEmpty(Mono.error(new IllegalStateException("LLM provider returned no response")))
-                .flatMap(response -> {
+                .flatMap(generated -> {
                     transition(record, TurnStage.FINALIZING);
-                    return completeSemantic(record, state, response);
+                    return completeSemantic(record, state, generated.response(), generated.nativeStream());
                 })
                 .onErrorResume(error -> fail(record, error));
+    }
+
+    private Mono<List<ContextBuildRequest.ExternalBlock>> canonicalAgentContext(
+            TurnRecord record,
+            CanonicalTurnPipeline.Prepared planningContext) {
+        TurnRequest request = record.getRequest();
+        TurnRequest.AgentProposal requested = request.agentProposal();
+        if (requested != null) {
+            return invokeAgentContext(
+                    record, planningContext, requested, true);
+        }
+        if (request.retrievalMode() != RetrievalMode.SLOW) {
+            return Mono.just(List.of());
+        }
+        AgentRuntime runtime = agentRuntime;
+        AgentRuntimeFactory.Config config = agentRuntimeConfig;
+        CapabilityRuntimeFacade.TurnCapabilities frozen =
+                record.getRuntimeCapabilities();
+        if (runtime == null || config == null || frozen == null
+                || !frozen.exposes("agent.invoke")) {
+            return Mono.just(List.of());
+        }
+
+        AgentPlanningRequest planningRequest = new AgentPlanningRequest(
+                planningContext.providerRequest(),
+                List.of(new AgentPlanningRequest.AgentCandidate(
+                        config.agentId(), config.allowedCapabilities(),
+                        config.resultSchemaId())),
+                request.retrievalMode().wireValue());
+        return llm.planAgent(planningRequest)
+                .timeout(laneTimeout(record, Duration.ofSeconds(5)))
+                .onErrorResume(error -> {
+                    emitAgentOutcome(record, "agent.failed", null, false,
+                            "AGENT_PLANNER_UNAVAILABLE");
+                    return Mono.empty();
+                })
+                .flatMap(decision -> invokeAgentContext(
+                        record, planningContext,
+                        new TurnRequest.AgentProposal(
+                                decision.agentId(), decision.taskBrief(), false,
+                                decision.executionPreference().name(),
+                                "planner-" + decision.agentId()),
+                        false))
+                .switchIfEmpty(Mono.just(List.of()));
+    }
+
+    private Mono<List<ContextBuildRequest.ExternalBlock>> invokeAgentContext(
+            TurnRecord record,
+            CanonicalTurnPipeline.Prepared planningContext,
+            TurnRequest.AgentProposal requested,
+            boolean approvalGranted) {
+        boolean required = requested.required();
+        AgentRuntime runtime = agentRuntime;
+        AgentRuntimeFactory.Config config = agentRuntimeConfig;
+        if (runtime == null || config == null) {
+            emitAgentOutcome(record, "agent.failed", null, required,
+                    "AGENT_RUNTIME_UNAVAILABLE");
+            return required
+                    ? Mono.error(new IllegalStateException(
+                            "AGENT_RUNTIME_UNAVAILABLE"))
+                    : Mono.just(List.of());
+        }
+        if (!config.agentId().equals(requested.agentId())) {
+            emitAgentOutcome(record, "agent.failed", null, required,
+                    "AGENT_NOT_ALLOWED");
+            return required
+                    ? Mono.error(new SecurityException("AGENT_NOT_ALLOWED"))
+                    : Mono.just(List.of());
+        }
+
+        InvokeAgentProposal proposal = canonicalAgentProposal(
+                record, planningContext, config, requested, required);
+        Map<String, Object> capabilityInput = Map.of(
+                "agent_id", proposal.agentId(),
+                "task_brief", proposal.taskBrief(),
+                "required", proposal.required(),
+                "idempotency_key", proposal.idempotencySuffix());
+        TurnRequest request = record.getRequest();
+        return executeAgentCapabilityInternal(
+                        record.getTurnId(), request.tenantId(), request.getUserId(),
+                        request.getClientId(), request.getSessionId(), capabilityInput,
+                        approvalGranted,
+                        result -> objectMapper.convertValue(
+                                result.data(), AgentInvocation.class),
+                        scope -> runtime.invokeAgent(
+                                record.getTurnId(), "turn:" + record.getTurnId(),
+                                canonicalAgentParent(
+                                        record, planningContext, config, scope),
+                                proposal))
+                .flatMap(invocation -> {
+                    if (invocation.status() != AgentInvocation.Status.SUCCEEDED
+                            && invocation.status()
+                            != AgentInvocation.Status.ACCEPTED_DURABLE) {
+                        String code = "AGENT_" + invocation.status().name();
+                        emitAgentOutcome(record, "agent.failed", invocation,
+                                required, code);
+                        return required
+                                ? Mono.error(new IllegalStateException(code))
+                                : Mono.just(List.<ContextBuildRequest.ExternalBlock>of());
+                    }
+                    ContextBuildRequest.ExternalBlock block =
+                            agentContextBlock(record, proposal, invocation);
+                    emitAgentOutcome(record,
+                            invocation.status() == AgentInvocation.Status.ACCEPTED_DURABLE
+                                    ? "agent.waiting" : "agent.completed",
+                            invocation,
+                            required, null);
+                    return Mono.just(List.of(block));
+                })
+                .onErrorResume(error -> {
+                    emitAgentOutcome(record, "agent.failed", null, required,
+                            agentFailureCode(error));
+                    return required ? Mono.error(error) : Mono.just(List.of());
+                });
+    }
+
+    private InvokeAgentProposal canonicalAgentProposal(
+            TurnRecord record,
+            CanonicalTurnPipeline.Prepared planningContext,
+            AgentRuntimeFactory.Config config,
+            TurnRequest.AgentProposal requested,
+            boolean required) {
+        AgentTaskContext.Budget budget = new AgentTaskContext.Budget(
+                2_048, 4, BigDecimal.ZERO, 1, 1);
+        return new InvokeAgentProposal(
+                requested.agentId(),
+                requested.taskBrief(),
+                Map.of(
+                        "turn_id", record.getTurnId(),
+                        "trace_id", record.getTraceId(),
+                        "retrieval_trace_id", planningContext.retrieval().traceId(),
+                        "context_trace_id", planningContext.context().traceId(),
+                        "knowledge_snapshot_id",
+                        record.getManifest().knowledgeSnapshotId()),
+                "DURABLE_ASYNC".equals(requested.mode())
+                        ? InvokeAgentProposal.InvocationMode.DURABLE_ASYNC
+                        : InvokeAgentProposal.InvocationMode.AWAIT,
+                required,
+                requested.idempotencySuffix(),
+                record.getDeadlineAt(),
+                budget,
+                config.allowedCapabilities(),
+                new InvokeAgentProposal.ResultSchema(
+                        config.resultSchemaId(),
+                        Map.of("summary", InvokeAgentProposal.ValueType.STRING)),
+                false,
+                config.pollInterval(),
+                config.maxPollAttempts());
+    }
+
+    private AgentTaskContext canonicalAgentParent(
+            TurnRecord record,
+            CanonicalTurnPipeline.Prepared planningContext,
+            AgentRuntimeFactory.Config config,
+            AgentExecutionScope scope) {
+        AgentTaskContext.Budget budget = new AgentTaskContext.Budget(
+                2_048, 4, BigDecimal.ZERO, 1, 1);
+        return new AgentTaskContext(
+                record.getRequest().tenantId(), record.getRequest().getUserId(),
+                null, scope.traceId(), "turn:" + record.getTurnId(),
+                "turn:" + record.getTurnId(), scope.deadlineAt(),
+                scope.capabilitySnapshotVersion(), scope.cancellation(), budget, 0,
+                config.allowedCapabilities(), record.getRequest().getMessage(),
+                Map.of(
+                        "turn_id", record.getTurnId(),
+                        "retrieval_trace_id", planningContext.retrieval().traceId(),
+                        "context_trace_id", planningContext.context().traceId(),
+                        "knowledge_snapshot_id",
+                        record.getManifest().knowledgeSnapshotId(),
+                        "context_items", boundedAgentContextItems(
+                                planningContext.context().bundle())));
+    }
+
+    private String boundedAgentContextItems(ContextBundle bundle) {
+        List<Map<String, Object>> items = bundle.blocks().stream()
+                .filter(block -> block.blockType() == ContextBundle.BlockType.RETRIEVAL
+                        || block.blockType() == ContextBundle.BlockType.TOOL_RESULT)
+                .limit(8)
+                .map(block -> Map.<String, Object>of(
+                        "block_type", block.blockType().name(),
+                        "source_ids", block.sourceIds().stream().limit(8).toList(),
+                        "trust", block.trust().name(),
+                        "content", block.content().length() <= 500
+                                ? block.content()
+                                : block.content().substring(0, 500)))
+                .toList();
+        try {
+            return objectMapper.writeValueAsString(items);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+            throw new IllegalStateException(
+                    "failed to serialize bounded Agent context", error);
+        }
+    }
+
+    private ContextBuildRequest.ExternalBlock agentContextBlock(
+            TurnRecord record,
+            InvokeAgentProposal proposal,
+            AgentInvocation invocation) {
+        LinkedHashMap<String, Object> content = new LinkedHashMap<>();
+        content.put("status", invocation.status().name());
+        content.put("source_agent_id", proposal.agentId());
+        if (invocation.result() != null) {
+            AgentResult result = invocation.result().asUntrusted();
+            content.put("schema_id", result.schemaId());
+            content.put("payload", result.payload());
+            content.put("trust", result.trustLabel().name());
+        } else {
+            content.put("durable_reference", Map.of(
+                    "task_id", invocation.taskId(),
+                    "remote_task_id", invocation.remoteTaskId() == null
+                            ? "" : invocation.remoteTaskId()));
+        }
+        List<String> sources = new java.util.ArrayList<>(List.of(
+                "REMOTE_AGENT", "agent:" + proposal.agentId(),
+                "trace:" + record.getTraceId(),
+                "execution:" + invocation.executionId(),
+                "task:" + invocation.taskId()));
+        if (invocation.remoteTaskId() != null) {
+            sources.add("remote-task:" + invocation.remoteTaskId());
+        }
+        try {
+            return new ContextBuildRequest.ExternalBlock(
+                    ContextBundle.BlockType.TOOL_RESULT, List.copyOf(sources),
+                    ContextBundle.Trust.UNTRUSTED_EXTERNAL,
+                    objectMapper.writeValueAsString(content), proposal.required());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+            throw new IllegalStateException("failed to serialize remote agent result", error);
+        }
+    }
+
+    private void emitAgentOutcome(
+            TurnRecord record,
+            String type,
+            AgentInvocation invocation,
+            boolean required,
+            String errorCode) {
+        LinkedHashMap<String, Object> data = new LinkedHashMap<>();
+        data.put("required", required);
+        data.put("trust", ContextBundle.Trust.UNTRUSTED_EXTERNAL.name());
+        if (invocation != null) {
+            putIfPresent(data, "execution_id", invocation.executionId());
+            putIfPresent(data, "task_id", invocation.taskId());
+            putIfPresent(data, "remote_task_id", invocation.remoteTaskId());
+            data.put("status", invocation.status().name().toLowerCase(
+                    java.util.Locale.ROOT));
+        }
+        putIfPresent(data, "error_code", errorCode);
+        emit(record, type, Map.copyOf(data));
+    }
+
+    private static String agentFailureCode(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current instanceof SecurityException
+                ? "AGENT_CAPABILITY_NOT_AUTHORIZED"
+                : current.getClass().getSimpleName();
+    }
+
+    private Mono<GeneratedResponse> generatePrimary(
+            TurnRecord record, ProviderRequest request) {
+        if (!llm.supportsNativeStreaming()) {
+            return llm.respond(request)
+                    .map(response -> new GeneratedResponse(response, false));
+        }
+        AtomicLong index = new AtomicLong();
+        StringBuilder reply = new StringBuilder();
+        return NativeTextDeltaAggregator.aggregate(
+                        llm.stream(request))
+                .doOnNext(delta -> {
+                    if (record.isCancelRequested()) {
+                        throw new java.util.concurrent.CancellationException("turn cancelled during provider stream");
+                    }
+                    emit(record, "text.delta", Map.of(
+                            "delta", delta,
+                            "index", index.incrementAndGet(),
+                            "native", true));
+                    reply.append(delta);
+                })
+                .then(Mono.defer(() -> {
+                    if (reply.isEmpty()) {
+                        return Mono.error(new IllegalStateException("LLM provider returned an empty stream"));
+                    }
+                    return llm.finalizeStream(reply.toString(), request)
+                            .onErrorReturn(new LlmResponse(reply.toString()))
+                            .map(response -> new GeneratedResponse(response, true));
+                }));
     }
 
     private Duration laneTimeout(TurnRecord record, Duration maximum) {
@@ -949,32 +1421,33 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     private Duration capabilityTimeout(TurnRecord record, String capabilityId, Duration fallback) {
-        CapabilityRegistry.Snapshot snapshot = record.getCapabilitySnapshot();
+        CapabilityRuntimeFacade.TurnCapabilities snapshot = record.getRuntimeCapabilities();
         if (snapshot == null) return fallback;
-        return snapshot.grants().stream()
+        return capabilityRuntime.exposedDescriptors(snapshot).stream()
                 .filter(descriptor -> capabilityId.equals(descriptor.id()))
-                .map(CapabilityRegistry.Descriptor::timeout)
+                .map(CapabilityDescriptor::timeout)
                 .findFirst()
                 .orElse(fallback);
     }
 
     private void transition(TurnRecord record, TurnStage stage) {
+        LifecycleState before = LifecycleState.capture(record);
         record.transitionTo(stage);
-        journal.persist(record);
-        emit(record, "turn.stage.changed", Map.of("stage", stage.wireValue()));
+        try {
+            emit(record, "turn.stage.changed", Map.of("stage", stage.wireValue()));
+        } catch (Throwable persistenceError) {
+            before.restore(record);
+            throw persistenceError;
+        }
     }
 
     private Mono<LlmResponse> sampleAlternative(
             TurnRecord record,
-            TurnRequest request,
-            RuntimeState state,
-            List<String> canon,
-            List<String> memories,
-            List<String> recent,
-            List<String> webResults,
+            ProviderRequest providerRequest,
             LlmResponse first,
             TurnWeatherContext weather,
             List<String> durableRecent) {
+        TurnRequest request = providerRequest.turn();
         if (!trainingFeedback.shouldCompare(request.trainingMode())) {
             if (request.trainingMode()) {
                 trainingFeedback.registerSingle(record.getTurnId(), request, durableRecent, first,
@@ -982,7 +1455,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             }
             return Mono.just(first);
         }
-        return llm.respondAlternative(request, state, canon, memories, recent, webResults)
+        return llm.respondAlternative(providerRequest)
                 .map(weather::augment)
                 .doOnNext(second -> {
                     Optional<Map<String, Object>> event = trainingFeedback.registerComparison(
@@ -1004,55 +1477,78 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 });
     }
 
-    private List<String> recentContext(TurnRequest request) {
-        java.util.stream.Stream<SessionContextStore.Message> parent = request.parentSessionId() == null
-                ? java.util.stream.Stream.empty()
-                : sessions.recent(request.getUserId(), request.getClientId(), request.parentSessionId()).stream();
-        return java.util.stream.Stream.concat(parent,
-                        sessions.recent(request.getUserId(), request.getClientId(), request.getSessionId()).stream())
-                .map(item -> item.role() + ": " + item.content()).toList();
+    private static String userMessageId(TurnRecord record) {
+        return "turn:" + record.getTurnId() + ":user";
     }
 
-    private Mono<KnowledgeRecall> retrieveKnowledge(
-            TurnRecord record, TurnRequest request, RetrievalMode mode) {
-        if (mode == RetrievalMode.NONE) {
-            return Mono.just(KnowledgeRecall.disabled());
-        }
-        KnowledgeTurnRetrievalRuntime runtime = knowledgeRetrieval;
-        if (runtime == null) {
-            return Mono.just(KnowledgeRecall.notConfigured());
-        }
-        HarnessManifest manifest = record.getManifest();
-        if (manifest == null
-                || !manifest.knowledgeSnapshotId().startsWith("ks1.")) {
-            return Mono.just(KnowledgeRecall.unavailable());
-        }
-        com.meguri.core.retrieval.RetrievalMode typedMode = switch (mode) {
-            case NONE -> com.meguri.core.retrieval.RetrievalMode.NONE;
-            case FAST -> com.meguri.core.retrieval.RetrievalMode.FAST;
-            case SLOW -> com.meguri.core.retrieval.RetrievalMode.SLOW;
+    private static String assistantMessageId(TurnRecord record) {
+        return "turn:" + record.getTurnId() + ":assistant";
+    }
+
+    private static PersonaRuntime.PersonaSnapshot personaSnapshot(
+            RuntimeState state, EffectivePersonaState effective) {
+        Map<String, PersonaRuntime.Provenance> provenance = new LinkedHashMap<>();
+        provenance.put("persona", new PersonaRuntime.Provenance(
+                "persona_profile:" + effective.persona().revision(), "user", 100));
+        provenance.put("relationship", new PersonaRuntime.Provenance(
+                "relationship_state:" + effective.relationship().version(), "user", 100));
+        provenance.put("scene", new PersonaRuntime.Provenance(
+                effective.scene() == null ? "scene:none"
+                        : "scene_state:" + effective.scene().version(), "session", 80));
+        provenance.put("policy", new PersonaRuntime.Provenance(
+                effective.policyRevision(), "turn", 100));
+        String revision = effective.persona().revision()
+                + ":r" + effective.relationship().version()
+                + ":s" + (effective.scene() == null ? "none" : effective.scene().version())
+                + ":" + effective.policyRevision();
+        return new PersonaRuntime.PersonaSnapshot(state, revision, provenance);
+    }
+
+    private static List<ContextBuildRequest.ExternalBlock> attachmentContext(
+            TurnRequest request) {
+        List<String> accepted = LocalResourcePromptContext.from(request.attachments());
+        return java.util.stream.IntStream.range(0, accepted.size())
+                .mapToObj(index -> new ContextBuildRequest.ExternalBlock(
+                        ContextBundle.BlockType.TOOL_RESULT,
+                        List.of("ATTACHMENT", "attachment:" + index),
+                        ContextBundle.Trust.USER,
+                        accepted.get(index), true))
+                .toList();
+    }
+
+    private static ContextProfile defaultContextProfile(LlmProvider provider) {
+        java.util.EnumMap<ContextBundle.BlockType, ContextProfile.SourceBudget> budgets =
+                new java.util.EnumMap<>(ContextBundle.BlockType.class);
+        budgets.put(ContextBundle.BlockType.RECENT_RAW,
+                new ContextProfile.SourceBudget(1_200, 7_000));
+        budgets.put(ContextBundle.BlockType.SUMMARY,
+                new ContextProfile.SourceBudget(256, 2_500));
+        budgets.put(ContextBundle.BlockType.REHYDRATED,
+                new ContextProfile.SourceBudget(256, 2_000));
+        budgets.put(ContextBundle.BlockType.MEMORY,
+                new ContextProfile.SourceBudget(256, 2_000));
+        budgets.put(ContextBundle.BlockType.RETRIEVAL,
+                new ContextProfile.SourceBudget(512, 3_500));
+        budgets.put(ContextBundle.BlockType.TOOL_RESULT,
+                new ContextProfile.SourceBudget(0, 1_500));
+        return new ContextProfile(
+                provider.modelId(), 16_000, 1_600, 700,
+                0.70, 0.90, budgets);
+    }
+
+    private boolean shouldEnqueuePostReplyMemory(
+            TurnRecord record, TurnRequest request) {
+        return request.formalMemoryAllowed()
+                && !trainingFeedback.hasComparison(record.getTurnId())
+                && !LocalResourcePromptContext.hasAcceptedReference(request.attachments());
+    }
+
+    private static double intensityScore(Intensity intensity) {
+        return switch (intensity) {
+            case LOW -> 0.25;
+            case MEDIUM -> 0.60;
+            case HIGH -> 0.90;
         };
-        return executeCapability(
-                record,
-                "knowledge.read",
-                Map.of("query", request.getMessage()),
-                false,
-                () -> Mono.fromCallable(() -> runtime.retrieve(
-                                request.getMessage(),
-                                typedMode,
-                                request.tenantId(),
-                                request.getUserId(),
-                                Set.of(),
-                                manifest.knowledgeSnapshotId(),
-                                manifest.knowledgeRevision(),
-                                manifest.frozenAt(),
-                                record.getDeadlineAt(),
-                                record.getTraceId()))
-                        .subscribeOn(Schedulers.boundedElastic()))
-                .timeout(laneTimeout(record,
-                        capabilityTimeout(record, "knowledge.read", Duration.ofSeconds(5))))
-                .map(KnowledgeRecall::from)
-                .onErrorReturn(KnowledgeRecall.unavailable());
     }
 
     private Mono<TurnWeatherContext> retrieveWeather(TurnRecord record, TurnRequest request) {
@@ -1068,14 +1564,6 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         "tool_name", "weather",
                         "intent", intent.name().toLowerCase(),
                         "status", context.available() ? "ok" : "unavailable")));
-    }
-
-    private static List<String> appendContext(List<String> recent, List<String> additional) {
-        if (additional == null || additional.isEmpty()) return recent;
-        List<String> combined = new ArrayList<>(recent.size() + additional.size());
-        combined.addAll(recent);
-        combined.addAll(additional);
-        return List.copyOf(combined);
     }
 
     private static String agentEventType(AgentLifecycleEvent event) {
@@ -1118,94 +1606,37 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         return value.trim();
     }
 
-    private record KnowledgeRecall(
-            String status,
-            String provider,
-            List<String> contextLines,
-            com.meguri.core.retrieval.RetrievalBundle typedBundle) {
-        private KnowledgeRecall {
-            status = status == null || status.isBlank() ? "unavailable" : status;
-            provider = provider == null || provider.isBlank() ? "none" : provider;
-            contextLines = contextLines == null ? List.of() : List.copyOf(contextLines);
-        }
-
-        private static KnowledgeRecall from(
-                com.meguri.core.retrieval.RetrievalBundle bundle) {
-            RetrievalLaneResult lane = bundle.lanes().get(SourceType.KNOWLEDGE);
-            String status = lane == null
-                    ? "unavailable"
-                    : lane.status() == RetrievalLaneResult.Status.OK
-                            && lane.items().isEmpty()
-                                    ? "empty"
-                                    : lane.status().name().toLowerCase(java.util.Locale.ROOT);
-            String provider = lane == null ? "none" : lane.provider();
-            List<String> context = bundle.items().stream()
-                    .filter(item -> item.sourceType() == SourceType.KNOWLEDGE)
-                    .map(item -> item.citation().isEmpty()
-                            ? item.content()
-                            : item.content() + "\n[Knowledge source: "
-                                    + item.citation().displayReferences() + "]")
-                    .toList();
-            return new KnowledgeRecall(status, provider, context, bundle);
-        }
-
-        private static KnowledgeRecall disabled() {
-            return new KnowledgeRecall("disabled", "none", List.of(), null);
-        }
-
-        private static KnowledgeRecall notConfigured() {
-            return new KnowledgeRecall("not_configured", "none", List.of(), null);
-        }
-
-        private static KnowledgeRecall unavailable() {
-            return new KnowledgeRecall("unavailable", "none", List.of(), null);
-        }
-    }
-
-    private Mono<WebSearchRecall> retrieveWeb(TurnRecord record, TurnRequest request) {
-        if (!request.retrievalMode().permitsOpenRetrieval()) {
-            return Mono.just(WebSearchRecall.disabled());
-        }
-        boolean shouldSearch;
-        try {
-            shouldSearch = webSearch.shouldSearch(request.getMessage());
-        } catch (RuntimeException ignored) {
-            shouldSearch = false;
-        }
-        if (!shouldSearch) return Mono.just(WebSearchRecall.disabled());
-
-        String query = WebSearchPolicy.queryFor(request.getMessage());
-        emit(record, "tool.started", Map.of(
-                "tool_name", "web_search",
-                "provider", webSearch.providerName(),
-                "query_length", query.length()));
-        return webSearch.search(query, 5)
-                .onErrorReturn(WebSearchRecall.unavailable(webSearch.providerName()))
-                .doOnNext(recall -> emit(record, "tool.completed", Map.of(
-                        "tool_name", "web_search",
-                        "provider", recall.provider(),
-                        "status", recall.status(),
-                        "result_count", recall.results().size())));
-    }
-
-    private Mono<Void> completeSemantic(TurnRecord record, RuntimeState state, LlmResponse response) {
+    private Mono<Void> completeSemantic(TurnRecord record, RuntimeState state,
+                                        LlmResponse response, boolean nativeStream) {
         TurnRequest request = record.getRequest();
         if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
-        sessions.append(request.getUserId(), request.getClientId(), request.getSessionId(),
-                new SessionContextStore.Message("user", request.getMessage()));
         ResolvedExpression expression;
+        PresentationResolver.ResolvedPresentation presentation;
         try {
-            expression = expressionResolver.resolve(response, state);
+            presentation = presentationResolver.resolve(
+                    new PresentationIntent(
+                            response.getExpressionTag().value(),
+                            response.getVoiceStyle().value(),
+                            "none",
+                            intensityScore(response.getExpressionIntensity())),
+                    record.getEffectivePersonaState());
+            expression = new ResolvedExpression(
+                    ExpressionTag.fromValue(presentation.expressionTag()),
+                    response.getExpressionIntensity(), state.getOutfitCode());
         } catch (Throwable ignored) {
+            presentation = new PresentationResolver.ResolvedPresentation(
+                    "neutral", null, null, 0.25);
             expression = new ResolvedExpression(ExpressionTag.NEUTRAL, Intensity.LOW, state.getOutfitCode());
         }
         Map<String, Object> semantic = new LinkedHashMap<>(beanMap(response));
-        // The semantic event carries both the LLM decision and the deterministic
-        // renderer cue so an AIRI adapter does not have to recreate Meguri rules.
         semantic.putAll(beanMap(expression));
+        semantic.put("presentation", beanMap(presentation));
         emit(record, "semantic.completed", semantic);
         ResolvedExpression finalExpression = expression;
-        return Mono.delay(streamInterval)
+        PresentationResolver.ResolvedPresentation finalPresentation = presentation;
+        Mono<Void> textDelivery = nativeStream
+                ? Mono.empty()
+                : Mono.delay(streamInterval)
                 .then(Mono.defer(() -> {
                     if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
                     // Structured-only providers emit one complete delta. They must
@@ -1215,67 +1646,45 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                             "index", 1,
                             "native", false));
                     return Mono.<Void>empty();
-                }))
-                .then(Mono.defer(() -> {
+                }));
+        return textDelivery.then(Mono.defer(() -> {
                     if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
                     emit(record, "text.completed", Map.of("text", response.getReply()));
                     if (request.getClientCapabilities().isVoice()) {
                         emit(record, "tts.requested", Map.of(
                                 "text", response.getReply(),
-                                "voice_style", response.getVoiceStyle().value(),
+                                "voice_style", finalPresentation.voiceStyle() == null
+                                        ? "neutral" : finalPresentation.voiceStyle(),
                                 "expression_intensity", response.getExpressionIntensity().value()));
                     }
-                    sessions.append(request.getUserId(), request.getClientId(), request.getSessionId(),
+                    sessions.appendNode(
+                            request.getUserId(), request.getClientId(), request.getSessionId(),
+                            assistantMessageId(record), userMessageId(record),
                             new SessionContextStore.Message("assistant", response.getReply()));
                     emit(record, "expression.cue", beanMap(finalExpression));
                     emit(record, "sprite.resolved", beanMap(finalExpression));
-                    Mono<MemoryWriteResult> memoryWrite = !request.formalMemoryAllowed()
-                            || trainingFeedback.hasComparison(record.getTurnId())
-                            || LocalResourcePromptContext.hasAcceptedReference(request.attachments())
-                            ? Mono.just(MemoryWriteResult.unavailable())
-                            : materializeMemoryCandidates(request, response)
-                                    .flatMap(candidates -> {
-                                        LlmResponse writeResponse = withMemoryCandidates(response, candidates);
-                                        return executeCapability(
-                                                record,
-                                                "memory.write",
-                                                memoryWriteInput(request, record.getTurnId(), candidates),
-                                                request.formalMemoryAllowed(),
-                                                () -> memory.write(
-                                                        request, writeResponse,
-                                                        record.getTurnId(), record.getTraceId()));
-                                    })
-                                    .timeout(laneTimeout(record,
-                                            capabilityTimeout(record, "memory.write", Duration.ofSeconds(5))));
-                    return memoryWrite
-                            .onErrorReturn(MemoryWriteResult.unavailable())
-                            .flatMap(write -> {
-                                for (Object event : write.events()) {
-                                    emit(record, "memory.candidate.created", asObjectMap(event));
-                                }
-                                emit(record, "memory.write.completed", Map.of(
-                                        "status", write.status(),
-                                        "written_ids", write.writtenIds(),
-                                        "candidate_ids", write.candidateIds(),
-                                        "decisions", write.decisions()));
-                                MemoryStatus status = switch (write.status()) {
-                                    case "written" -> MemoryStatus.WRITTEN;
-                                    case "pending" -> MemoryStatus.PENDING;
-                                    default -> MemoryStatus.UNAVAILABLE;
-                                };
-                                if (record.isCancelRequested()) {
-                                    return cancelRecord(record, "client_requested");
-                                }
-                                ChatResponse result = new ChatResponse(record.getTurnId(), request.getSessionId(), response,
-                                        state, finalExpression, status, buildId);
-                                if (!appendTerminal(record, () -> record.tryComplete(result),
-                                        "turn.completed", Map.of("reply", response.getReply()))) {
-                                    return record.isCancelRequested()
-                                            ? cancelRecord(record, "client_requested")
-                                            : Mono.empty();
-                                }
-                                return Mono.empty();
-                            });
+                    boolean enqueueMemory = shouldEnqueuePostReplyMemory(record, request);
+                    ChatResponse result = new ChatResponse(
+                            record.getTurnId(), request.getSessionId(), response,
+                            state, finalExpression,
+                            enqueueMemory ? MemoryStatus.PENDING : MemoryStatus.UNAVAILABLE,
+                            buildId);
+                    if (!appendTerminal(record, () -> record.tryComplete(result),
+                            "turn.completed", Map.of("reply", response.getReply()))) {
+                        return record.isCancelRequested()
+                                ? cancelRecord(record, "client_requested")
+                                : Mono.empty();
+                    }
+                    if (!enqueueMemory) return Mono.empty();
+                    try {
+                        postReplyMemoryJobs.enqueue(
+                                record.getTurnId(), request, response, record.getTraceId(),
+                                false,
+                                PostReplyMemoryJob.CancellationPolicy.PROCESS_COMPLETED_REPLY);
+                    } catch (RuntimeException ignored) {
+                        // The completed Turn is immutable; the queue has its own operational health boundary.
+                    }
+                    return Mono.empty();
                 }));
     }
 
@@ -1307,7 +1716,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private Mono<Void> fail(TurnRecord record, Throwable error) {
         if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
         String message = error == null || error.getMessage() == null ? "turn failed" : error.getMessage();
-        appendTerminal(record, () -> record.tryFail(message), "turn.failed", Map.of("error", message));
+        String failureCode = record.getStage() == TurnStage.GENERATING
+                ? "PROVIDER_STREAM_INTERRUPTED" : "TURN_EXECUTION_FAILED";
+        return fail(record, failureCode, message);
+    }
+
+    private Mono<Void> fail(TurnRecord record, String failureCode, String message) {
+        if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
+        appendTerminal(record, () -> record.tryFail(failureCode, message), "turn.failed",
+                Map.of("error", message, "failure_code", failureCode));
         return Mono.empty();
     }
 
@@ -1330,7 +1747,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (!TurnEventTypes.isSupported(type)) {
             throw new IllegalArgumentException("unsupported turn event type: " + type);
         }
-        return journal.append(record, type, data == null ? Map.of() : data,
+        return journal.appendExecution(record, executionOwnerId, type,
+                data == null ? Map.of() : data,
                 new EventMetadata(record.getTraceId(), "meguri-core", Instant.now(), buildId));
     }
 
@@ -1339,25 +1757,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             String capabilityId,
             Map<String, Object> input,
             boolean approvalGranted,
+            Function<CapabilityResult, T> replayDecoder,
             Supplier<Mono<T>> operation) {
-        return Mono.defer(() -> {
-            CompletableFuture<T> completion = new CompletableFuture<>();
-            AtomicBoolean abandoned = new AtomicBoolean();
-            Disposable task = Schedulers.boundedElastic().schedule(() -> {
-                try {
-                    T value = executeCapabilityBlocking(
-                            record, capabilityId, input, approvalGranted, operation);
-                    if (!abandoned.get()) completion.complete(value);
-                } catch (Throwable error) {
-                    if (!abandoned.get()) completion.completeExceptionally(error);
-                }
-            });
-            return Mono.fromFuture(completion, true)
-                    .doOnCancel(() -> {
-                        abandoned.set(true);
-                        task.dispose();
-                    });
-        });
+        return Mono.fromCallable(() -> executeCapabilityBlocking(
+                        record, capabilityId, input, approvalGranted,
+                        replayDecoder, operation))
+                .subscribeOn(Schedulers.boundedElastic());
     }
 
     private <T> T executeCapabilityBlocking(
@@ -1365,6 +1770,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             String capabilityId,
             Map<String, Object> input,
             boolean approvalGranted,
+            Function<CapabilityResult, T> replayDecoder,
             Supplier<Mono<T>> operation) {
         String idempotencyKey = capabilityIdempotencyKey(
                 record, capabilityId, input);
@@ -1385,55 +1791,38 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             requiredEvent.put("capability_id", capabilityId);
             putIfPresent(requiredEvent, "operation_id", operationId);
             emit(record, "approval.required", Map.copyOf(requiredEvent));
+            ApprovalService.Approval resolved;
             if (approvalGranted) {
-                ApprovalService.Approval resolved = capabilityRuntime.resolveApproval(
+                resolved = capabilityRuntime.resolveApproval(
                         approval.approvalId(),
                         ApprovalService.Decision.ACCEPT,
                         "agent.invoke".equals(capabilityId)
                                 ? "explicit_agent_request"
                                 : "adapter_permission");
-                LinkedHashMap<String, Object> resolvedEvent =
-                        new LinkedHashMap<>();
-                resolvedEvent.put("approval_id", resolved.approvalId());
-                resolvedEvent.put("capability_id", capabilityId);
-                putIfPresent(resolvedEvent, "operation_id", operationId);
-                resolvedEvent.put(
-                        "decision",
-                        resolved.decision().name().toLowerCase());
-                emit(record, "approval.resolved", Map.copyOf(resolvedEvent));
+            } else {
+                resolved = awaitApproval(record, approval);
             }
+            emitApprovalResolved(record, resolved);
             proposal = toolProposal(
                     record, capabilityId, input, operationId, idempotencyKey,
                     approval.approvalId());
         }
 
-        CapabilityPolicy.ExecutionRequest legacyExecution =
-                new CapabilityPolicy.ExecutionRequest(
-                        record.getTurnId(),
-                        record.getRequest().getUserId(),
-                        record.getTurnId() + ":" + capabilityId,
-                        approvalGranted,
-                        input,
-                        legacySandbox(record, capabilityId),
-                        record.getRequest().retrievalMode());
         AtomicReference<T> output = new AtomicReference<>();
         ToolProposal frozenProposal = proposal;
         CapabilityResult result = capabilityRuntime.execute(
                 record.getRuntimeCapabilities(),
                 frozenProposal,
                 (ignoredInput, ignoredContext) -> {
-                    T value = capabilityExecutor.execute(
-                                    record.getCapabilitySnapshot(),
-                                    capabilityId,
-                                    legacyExecution,
-                                    operation)
-                            .block();
+                    Mono<T> publisher = Objects.requireNonNull(
+                            operation.get(), "capability operation returned null");
+                    T value = publisher.block(record.remaining());
                     if (value == null) {
                         throw new IllegalStateException(
                                 "capability operation completed without a value");
                     }
                     output.set(value);
-                    return Map.of("executed", true);
+                    return asObjectMap(value);
                 });
         if (result.status() != CapabilityResult.Status.SUCCESS) {
             throw new IllegalStateException(
@@ -1441,10 +1830,80 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         }
         T value = output.get();
         if (value == null) {
-            throw new IllegalStateException(
-                    "capability completed without an operation result");
+            try {
+                value = replayDecoder.apply(result);
+            } catch (RuntimeException invalidReplay) {
+                throw new IllegalStateException(
+                        "capability replay result could not be decoded",
+                        invalidReplay);
+            }
+        }
+        if (value == null) {
+            throw new IllegalStateException("capability replay result is empty");
         }
         return value;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T decodeScalarCapabilityReplay(CapabilityResult result) {
+        if (result.data().size() == 1 && result.data().containsKey("value")) {
+            return (T) result.data().get("value");
+        }
+        throw new IllegalStateException(
+                "a typed replay decoder is required for structured capability results");
+    }
+
+    private ApprovalService.Approval awaitApproval(
+            TurnRecord record,
+            ApprovalService.Approval requested) {
+        while (true) {
+            ApprovalService.Approval current = capabilityRuntime
+                    .findApproval(requested.approvalId())
+                    .orElseThrow(() -> new IllegalStateException(
+                            "approval disappeared while Turn was waiting"));
+            if (current.decision() != ApprovalService.Decision.PENDING) {
+                return current;
+            }
+            if (record.isCancelRequested() || record.remaining().isZero()
+                    || record.remaining().isNegative()) {
+                try {
+                    return capabilityRuntime.resolveApproval(
+                            requested.approvalId(),
+                            ApprovalService.Decision.CANCEL,
+                            record.isCancelRequested()
+                                    ? "turn_cancelled" : "turn_deadline");
+                } catch (IllegalStateException raced) {
+                    return capabilityRuntime.findApproval(requested.approvalId())
+                            .orElseThrow(() -> raced);
+                }
+            }
+            try {
+                Thread.sleep(Math.min(100L,
+                        Math.max(1L, record.remaining().toMillis())));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                try {
+                    capabilityRuntime.resolveApproval(
+                            requested.approvalId(),
+                            ApprovalService.Decision.CANCEL,
+                            "turn_interrupted");
+                } catch (IllegalStateException ignored) {
+                    // A concurrent client decision remains authoritative.
+                }
+                throw new IllegalStateException(
+                        "approval wait was interrupted", interrupted);
+            }
+        }
+    }
+
+    private void emitApprovalResolved(
+            TurnRecord record, ApprovalService.Approval resolved) {
+        LinkedHashMap<String, Object> event = new LinkedHashMap<>();
+        event.put("approval_id", resolved.approvalId());
+        event.put("capability_id", resolved.capabilityId());
+        putIfPresent(event, "operation_id", resolved.operationId());
+        event.put("decision", resolved.decision().name().toLowerCase());
+        emit(record, "approval.resolved", Map.copyOf(event));
     }
 
     private ToolProposal toolProposal(
@@ -1455,10 +1914,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             String idempotencyKey,
             String approvalId) {
         TurnRequest request = record.getRequest();
-        boolean networkAllowed = request.retrievalMode() == RetrievalMode.SLOW
+        boolean networkAllowed = (request.retrievalMode() == RetrievalMode.SLOW
+                || request.agentProposal() != null)
                 && ("web.read".equals(capabilityId)
                 || "weather.read".equals(capabilityId)
-                || "agent.invoke".equals(capabilityId));
+                || "agent.invoke".equals(capabilityId)
+                || capabilityId.startsWith("mcp."));
         return new ToolProposal(
                 record.getTurnId(),
                 record.getTraceId(),
@@ -1467,7 +1928,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 request.getClientId(),
                 capabilityId,
                 input,
-                Set.of(),
+                request.authorizedCapabilityScopes(),
                 operationId,
                 idempotencyKey,
                 approvalId,
@@ -1497,59 +1958,6 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private static boolean requiresApproval(String capabilityId) {
         return isWriteCapability(capabilityId)
                 || "agent.invoke".equals(capabilityId);
-    }
-
-    private static CapabilityPolicy.SandboxBudget legacySandbox(
-            TurnRecord record, String capabilityId) {
-        if (!"agent.invoke".equals(capabilityId)) return null;
-        Duration remaining = record.remaining();
-        Duration wallTime = remaining.compareTo(Duration.ofSeconds(30)) < 0
-                ? remaining : Duration.ofSeconds(30);
-        return new CapabilityPolicy.SandboxBudget(
-                wallTime,
-                1,
-                1,
-                1000,
-                Set.of("agent.invoke"),
-                Set.of(),
-                Set.of("configured-provider"),
-                false);
-    }
-
-    private Mono<List<com.meguri.core.dto.MemoryCandidate>> materializeMemoryCandidates(
-            TurnRequest request, LlmResponse response) {
-        if (!response.getMemoryCandidates().isEmpty()) {
-            return Mono.just(response.getMemoryCandidates());
-        }
-        return memory.extract(request).map(List::copyOf);
-    }
-
-    private static LlmResponse withMemoryCandidates(
-            LlmResponse response, List<com.meguri.core.dto.MemoryCandidate> candidates) {
-        return new LlmResponse(
-                response.getReply(), response.getExpressionTag(), response.getExpressionIntensity(),
-                response.getVoiceStyle(), candidates);
-    }
-
-    static Map<String, Object> memoryWriteInput(
-            TurnRequest request,
-            String turnId,
-            List<com.meguri.core.dto.MemoryCandidate> candidates) {
-        List<Map<String, Object>> values = candidates.stream()
-                .map(candidate -> Map.<String, Object>of(
-                        "type", candidate.getType().value(),
-                        "summary", candidate.getSummary(),
-                        "confidence", candidate.getConfidence(),
-                        "sensitivity", candidate.getSensitivity().value(),
-                        "source_scope", candidate.getSourceScope().value()))
-                .toList();
-        return Map.of(
-                "turn_id", turnId,
-                "user_id", request.getUserId(),
-                "client_id", request.getClientId(),
-                "session_id", request.getSessionId(),
-                "candidate_count", values.size(),
-                "candidates", values);
     }
 
     private static boolean hasAfter(List<EventEnvelope> available, long cursor) {
@@ -1622,87 +2030,31 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
 
     private ExposurePlanner.ExposureContext exposureContext(TurnRecord record) {
         TurnRequest request = record.getRequest();
+        boolean explicitAgent = request.agentProposal() != null;
         CapabilityDescriptor.Mode mode = switch (request.retrievalMode()) {
             case NONE, FAST -> CapabilityDescriptor.Mode.FAST;
             case SLOW -> CapabilityDescriptor.Mode.DEEP;
         };
+        if (explicitAgent) mode = CapabilityDescriptor.Mode.DEEP;
         return new ExposurePlanner.ExposureContext(
                 record.getTurnId(),
                 request.tenantId(),
                 request.getUserId(),
                 request.getClientId(),
-                Set.of(),
+                request.authorizedCapabilityScopes(),
                 mode,
                 Set.of(),
                 1,
-                request.retrievalMode() == RetrievalMode.SLOW,
+                request.retrievalMode() == RetrievalMode.SLOW || explicitAgent,
                 request.formalMemoryAllowed()
                         ? CapabilityDescriptor.DataClassification.CONFIDENTIAL
                         : CapabilityDescriptor.DataClassification.INTERNAL);
     }
 
     private void registerRuntimeCapabilities() {
-        registerRuntimeCapability(runtimeDescriptor(
-                "lore.read",
-                CapabilityDescriptor.Kind.READ_TOOL,
-                CapabilityDescriptor.SideEffect.READ,
-                CapabilityDescriptor.ApprovalRequirement.NONE,
-                Duration.ofSeconds(8),
-                Set.of(
-                        CapabilityDescriptor.Mode.FAST,
-                        CapabilityDescriptor.Mode.BALANCED,
-                        CapabilityDescriptor.Mode.DEEP),
-                CapabilityDescriptor.DataClassification.INTERNAL,
-                false,
-                false,
-                objectSchema(
-                        Map.of("query", CapabilityDescriptor.ValueType.STRING),
-                        Set.of("query"))));
-        registerRuntimeCapability(runtimeDescriptor(
-                "memory.read",
-                CapabilityDescriptor.Kind.READ_TOOL,
-                CapabilityDescriptor.SideEffect.READ,
-                CapabilityDescriptor.ApprovalRequirement.NONE,
-                Duration.ofSeconds(5),
-                Set.of(
-                        CapabilityDescriptor.Mode.FAST,
-                        CapabilityDescriptor.Mode.BALANCED,
-                        CapabilityDescriptor.Mode.DEEP),
-                CapabilityDescriptor.DataClassification.INTERNAL,
-                false,
-                false,
-                objectSchema(
-                        Map.of("query", CapabilityDescriptor.ValueType.STRING),
-                        Set.of("query"))));
-        registerRuntimeCapability(runtimeDescriptor(
-                "knowledge.read",
-                CapabilityDescriptor.Kind.READ_TOOL,
-                CapabilityDescriptor.SideEffect.READ,
-                CapabilityDescriptor.ApprovalRequirement.NONE,
-                Duration.ofSeconds(5),
-                Set.of(
-                        CapabilityDescriptor.Mode.FAST,
-                        CapabilityDescriptor.Mode.BALANCED,
-                        CapabilityDescriptor.Mode.DEEP),
-                CapabilityDescriptor.DataClassification.INTERNAL,
-                false,
-                false,
-                objectSchema(
-                        Map.of("query", CapabilityDescriptor.ValueType.STRING),
-                        Set.of("query"))));
-        registerRuntimeCapability(runtimeDescriptor(
-                "web.read",
-                CapabilityDescriptor.Kind.READ_TOOL,
-                CapabilityDescriptor.SideEffect.EXTERNAL,
-                CapabilityDescriptor.ApprovalRequirement.NONE,
-                Duration.ofSeconds(8),
-                Set.of(CapabilityDescriptor.Mode.DEEP),
-                CapabilityDescriptor.DataClassification.PUBLIC,
-                true,
-                false,
-                objectSchema(
-                        Map.of("message", CapabilityDescriptor.ValueType.STRING),
-                        Set.of("message"))));
+        // Lore, Memory, Knowledge and Web are typed Retrieval providers governed
+        // by RetrievalAuthorizationPolicy, not callable Tools. Registering fake
+        // Tool descriptors for them would create a second, non-authoritative path.
         registerRuntimeCapability(runtimeDescriptor(
                 "weather.read",
                 CapabilityDescriptor.Kind.READ_TOOL,
@@ -1756,7 +2108,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private void registerRuntimeCapability(CapabilityDescriptor descriptor) {
         capabilityRuntime.register(
                 descriptor,
-                (input, context) -> Map.of("authorized", true));
+                (input, context) -> {
+                    throw new IllegalStateException(
+                            "turn runtime callback is required for " + descriptor.id());
+                });
     }
 
     private static CapabilityDescriptor runtimeDescriptor(
@@ -1811,75 +2166,27 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 properties, required, false, Set.of());
     }
 
-    private CapabilityRegistry defaultCapabilities() {
-        CapabilityRegistry registry = new CapabilityRegistry();
-        registry.register(new CapabilityRegistry.Descriptor(
-                "lore.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.READ,
-                CapabilityRegistry.Approval.NONE, Duration.ofSeconds(8), 4, ragProviderName()));
-        registry.register(new CapabilityRegistry.Descriptor(
-                "memory.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.READ,
-                CapabilityRegistry.Approval.NONE, Duration.ofSeconds(5), 4, memoryProviderName()));
-        registry.register(new CapabilityRegistry.Descriptor(
-                "knowledge.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.READ,
-                CapabilityRegistry.Approval.NONE, Duration.ofSeconds(5), 4, "KnowledgeRuntime"));
-        registry.register(new CapabilityRegistry.Descriptor(
-                "memory.write", CapabilityRegistry.Kind.WRITE_TOOL, CapabilityRegistry.Effect.WRITE,
-                CapabilityRegistry.Approval.RISK_BASED, Duration.ofSeconds(5), 2, memoryProviderName()));
-        registry.register(new CapabilityRegistry.Descriptor(
-                "web.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.EXTERNAL,
-                CapabilityRegistry.Approval.NONE, Duration.ofSeconds(8), 2, webSearchProviderName()));
-        registry.register(new CapabilityRegistry.Descriptor(
-                "weather.read", CapabilityRegistry.Kind.READ_TOOL, CapabilityRegistry.Effect.EXTERNAL,
-                CapabilityRegistry.Approval.NONE, Duration.ofSeconds(5), 2,
-                weatherConversation.getClass().getSimpleName()));
-        registry.register(new CapabilityRegistry.Descriptor(
-                "agent.invoke", CapabilityRegistry.Kind.REMOTE_AGENT, CapabilityRegistry.Effect.EXTERNAL,
-                CapabilityRegistry.Approval.RISK_BASED, Duration.ofSeconds(30), 2,
-                "AgentRuntime"));
-        return registry;
-    }
-
-    private CapabilityExecutor defaultCapabilityExecutor() {
-        CapabilityExecutor executor = new CapabilityExecutor(
-                new DefaultCapabilityPolicy(), new InMemoryEffectLedger());
-        executor.registerSchema("lore.read", new CapabilityInputSchema(
-                Map.of("query", CapabilityInputSchema.ValueKind.STRING), Set.of("query"), false));
-        executor.registerSchema("memory.read", new CapabilityInputSchema(
-                Map.of("query", CapabilityInputSchema.ValueKind.STRING), Set.of("query"), false));
-        executor.registerSchema("knowledge.read", new CapabilityInputSchema(
-                Map.of("query", CapabilityInputSchema.ValueKind.STRING), Set.of("query"), false));
-        executor.registerSchema("web.read", new CapabilityInputSchema(
-                Map.of("message", CapabilityInputSchema.ValueKind.STRING), Set.of("message"), false));
-        executor.registerSchema("weather.read", new CapabilityInputSchema(
-                Map.of("message", CapabilityInputSchema.ValueKind.STRING), Set.of("message"), false));
-        executor.registerSchema("memory.write", new CapabilityInputSchema(
-                Map.of(
-                        "turn_id", CapabilityInputSchema.ValueKind.STRING,
-                        "user_id", CapabilityInputSchema.ValueKind.STRING,
-                        "client_id", CapabilityInputSchema.ValueKind.STRING,
-                        "session_id", CapabilityInputSchema.ValueKind.STRING,
-                        "candidate_count", CapabilityInputSchema.ValueKind.NUMBER,
-                        "candidates", CapabilityInputSchema.ValueKind.ARRAY),
-                Set.of("turn_id", "user_id", "client_id", "session_id", "candidate_count", "candidates"),
-                false));
-        executor.registerSchema("agent.invoke", new CapabilityInputSchema(
-                Map.of(), Set.of(), true));
-        return executor;
-    }
-
     private record LifecycleState(
             TurnStatus status,
             TurnStage stage,
             ChatResponse result,
-            String error) {
+            String failureCode,
+            String error,
+            String retryOfTurnId,
+            long version) {
 
         private static LifecycleState capture(TurnRecord record) {
             return new LifecycleState(
-                    record.getStatus(), record.getStage(), record.getResult(), record.getError());
+                    record.getStatus(), record.getStage(), record.getResult(),
+                    record.getFailureCode(), record.getError(),
+                    record.getRetryOfTurnId(), record.getVersion());
         }
 
         private void restore(TurnRecord record) {
-            record.restore(status, stage, record.getManifest(), result, error);
+            record.restore(status, stage, record.getManifest(), result,
+                    failureCode, error, retryOfTurnId, version);
         }
     }
+
+    private record GeneratedResponse(LlmResponse response, boolean nativeStream) { }
 }

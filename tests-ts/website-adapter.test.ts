@@ -184,6 +184,109 @@ test('website session restores an interrupted active turn after reload', async (
   assert.deepEqual(requestedAfter, ['0', '2'])
 })
 
+test('website reuses the persisted idempotency key after a lost POST response', async () => {
+  const storage = new MemoryStorage()
+  const idempotencyKeys: string[] = []
+  let createAttempts = 0
+  const fetchImpl: FetchLike = async (input, init) => {
+    const url = String(input)
+    if (url.endsWith('/v1/hello'))
+      return jsonResponse(helloResponse())
+    if (url.endsWith('/v1/turns')) {
+      createAttempts += 1
+      idempotencyKeys.push(new Headers(init?.headers).get('Idempotency-Key') ?? '')
+      if (createAttempts === 1)
+        throw new TypeError('connection closed after request upload')
+      return jsonResponse({
+        turn_id: 'turn-web-1',
+        session_id: 'session-web-1',
+        build_id: 'build-1',
+        status: 'accepted',
+      }, 202)
+    }
+    return streamResponse([
+      sse(envelope(1, 'turn.started')),
+      sse(envelope(2, 'text.completed', { text: 'created once' })),
+      sse(envelope(3, 'turn.completed')),
+    ])
+  }
+  const api = new MeguriApiClient('http://127.0.0.1:8000', fetchImpl)
+  const identity = { meguriUserId: 'bound-user-1', storageKey: 'lost-response' }
+  const first = new WebsiteMeguriSession(api, identity, storage, {
+    createSessionId: () => 'session-web-1',
+  })
+
+  await assert.rejects(first.send('same logical request', {
+    idempotencyKey: 'web-stable-fixture-key',
+  }))
+  const restored = new WebsiteMeguriSession(api, identity, storage)
+  const state = await restored.send('same logical request')
+
+  assert.deepEqual(idempotencyKeys, ['web-stable-fixture-key', 'web-stable-fixture-key'])
+  assert.equal(state.status, 'completed')
+})
+
+test('website preserves ambiguous create keys and releases deterministic 4xx keys', async () => {
+  const cases = [
+    ...[408, 425, 429, 500, 502, 503, 504].map(status => ({ status, preservesKey: true })),
+    ...[400, 401, 403, 404, 409, 422].map(status => ({ status, preservesKey: false })),
+  ]
+
+  for (const { status, preservesKey } of cases) {
+    const storage = new MemoryStorage()
+    const idempotencyKeys: string[] = []
+    let createAttempts = 0
+    const fetchImpl: FetchLike = async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/v1/hello'))
+        return jsonResponse(helloResponse())
+      if (url.endsWith('/v1/turns')) {
+        createAttempts += 1
+        idempotencyKeys.push(new Headers(init?.headers).get('Idempotency-Key') ?? '')
+        if (createAttempts === 1) {
+          return jsonResponse({
+            error: {
+              code: `CREATE_${status}`,
+              message: `create failed with ${status}`,
+              retryable: preservesKey,
+              details: {},
+            },
+          }, status)
+        }
+        return jsonResponse({
+          turn_id: 'turn-web-1',
+          session_id: `session-web-${status}`,
+          build_id: 'build-1',
+          status: 'accepted',
+        }, 202)
+      }
+      return streamResponse([
+        sse(envelope(1, 'turn.started')),
+        sse(envelope(2, 'text.completed', { text: 'accepted' })),
+        sse(envelope(3, 'turn.completed')),
+      ])
+    }
+    const api = new MeguriApiClient('http://127.0.0.1:8000', fetchImpl)
+    const identity = { meguriUserId: 'bound-user-1', storageKey: `http-${status}` }
+    const first = new WebsiteMeguriSession(api, identity, storage, {
+      createSessionId: () => `session-web-${status}`,
+    })
+    const firstMessage = `request-${status}`
+
+    await assert.rejects(first.send(firstMessage, {
+      idempotencyKey: `web-initial-${status}`,
+    }))
+    const restored = new WebsiteMeguriSession(api, identity, storage)
+    const state = await restored.send(
+      preservesKey ? firstMessage : `replacement-${status}`,
+      preservesKey ? {} : { idempotencyKey: `web-replacement-${status}` },
+    )
+
+    assert.equal(state.status, 'completed')
+    assert.equal(idempotencyKeys[1] === idempotencyKeys[0], preservesKey, `status ${status}`)
+  }
+})
+
 test('website restores a 410 cursor from snapshot and persists it', async () => {
   const storage = new MemoryStorage()
   const fetchImpl: FetchLike = async (input) => {

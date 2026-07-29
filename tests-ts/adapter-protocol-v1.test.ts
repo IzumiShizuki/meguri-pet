@@ -10,7 +10,9 @@ import {
   assertCompatibleProtocolVersion,
   negotiateHello,
   parseClientHello,
+  parseTurnCreateRequest,
   parseTurnEventEnvelope,
+  replayPolicyForEvent,
   validateDto,
   type ClientCapabilities,
   type ClientHello,
@@ -26,6 +28,53 @@ test('AIRI, AstrBot, and Website hello profiles validate from the canonical sche
   assert.deepEqual(Object.keys(profiles).sort(), ['airi', 'astrbot', 'website'])
   for (const profile of Object.values(profiles))
     assert.doesNotThrow(() => parseClientHello(profile))
+  const identities = Object.values(profiles) as ClientHello[]
+  assert.deepEqual(
+    [...new Set(identities.map(profile => profile.identity.meguri_user.id))],
+    [(flows.identity as { shared_meguri_user_id: string }).shared_meguri_user_id],
+  )
+  assert.equal(
+    new Set(identities.map(profile => profile.identity.session.id)).size,
+    (flows.identity as { isolated_session_ids: string[] }).isolated_session_ids.length,
+  )
+})
+
+test('required Tool, Approval, Skill, and Agent events share the Core replay policy', () => {
+  const catalog = flows.required_event_catalog as Array<{ type: string, replay_policy: string }>
+  for (const fixture of catalog) {
+    const parsed = parseTurnEventEnvelope(envelope(1, fixture.type, {
+      replay_policy: undefined,
+    }))
+    assert.equal(parsed.replay_policy, fixture.replay_policy)
+    assert.equal(replayPolicyForEvent(fixture.type), fixture.replay_policy)
+  }
+})
+
+test('known events reject replay policies that differ from the canonical result', () => {
+  assert.throws(
+    () => parseTurnEventEnvelope(envelope(1, 'tool.proposed', {
+      replay_policy: 'STATE',
+    })),
+    /non-canonical replay policy.*expected ALWAYS.*received STATE/,
+  )
+  assert.throws(
+    () => parseTurnEventEnvelope(envelope(1, 'semantic.cue', {
+      replay_policy: 'STATE',
+      data: { channel: 'animation' },
+    })),
+    /non-canonical replay policy.*expected ONCE.*received STATE/,
+  )
+  assert.equal(parseTurnEventEnvelope(envelope(1, 'future.optional', {
+    required: false,
+    replay_policy: 'ALWAYS',
+  })).replay_policy, 'ALWAYS')
+})
+
+test('terminal and stable error fixtures cover the adapter completion boundary', () => {
+  assert.deepEqual(flows.terminal, ['turn.completed', 'turn.cancelled', 'turn.failed'])
+  const stableErrors = flows.stable_errors as Array<{ code: string, retryable: boolean }>
+  assert.ok(stableErrors.some(error => error.code === 'CURSOR_EXPIRED' && error.retryable))
+  assert.ok(stableErrors.some(error => error.code === 'UNSUPPORTED_PROTOCOL_MAJOR' && !error.retryable))
 })
 
 test('URL v1 accepts future 1.x optional fields and rejects incompatible majors', () => {
@@ -152,6 +201,104 @@ test('canonical schema validates session snapshot and stable cursor error semant
     },
   })
 })
+
+test('one executable three-client fixture shares formal memory but isolates raw sessions', () => {
+  const scenario = flows.cross_client_memory as {
+    formal_memory: { key: string, value: string, writer: string, readers: string[] }
+    session_messages: Record<string, string>
+    expected_shared_memory_readers: number
+    expected_raw_messages_per_session: number
+  }
+  const core = new DeterministicFixtureCore()
+
+  for (const [client, value] of Object.entries(profiles)) {
+    const hello = parseClientHello(value)
+    const request = parseTurnCreateRequest({
+      protocol_version: hello.protocol_versions[0],
+      identity: hello.identity,
+      message: scenario.session_messages[client],
+    })
+    core.submit(request)
+  }
+  const writer = parseClientHello(profiles[scenario.formal_memory.writer])
+  core.writeFormalMemory(
+    writer.identity.meguri_user.id,
+    scenario.formal_memory.key,
+    scenario.formal_memory.value,
+  )
+
+  const identities = Object.values(profiles).map(parseClientHello)
+  assert.equal(
+    identities.filter(profile => core.readFormalMemory(
+      profile.identity.meguri_user.id,
+      scenario.formal_memory.key,
+    ) === scenario.formal_memory.value).length,
+    scenario.expected_shared_memory_readers,
+  )
+  for (const profile of identities) {
+    assert.deepEqual(
+      core.rawSession(profile.identity.session.id),
+      [scenario.session_messages[profile.identity.client_instance.profile]],
+    )
+    assert.equal(
+      core.rawSession(profile.identity.session.id).length,
+      scenario.expected_raw_messages_per_session,
+    )
+    assert.deepEqual(core.checkpoint(profile.identity.session.id), {
+      session_id: profile.identity.session.id,
+      last_sequence: 2,
+      processed_event_ids: [
+        `fixture-${profile.identity.session.id}-1`,
+        `fixture-${profile.identity.session.id}-2`,
+      ],
+    })
+  }
+})
+
+class DeterministicFixtureCore {
+  private readonly formalMemory = new Map<string, Map<string, string>>()
+  private readonly transcripts = new Map<string, string[]>()
+  private readonly reducers = new Map<string, SessionTurnReducer>()
+
+  submit(value: unknown): void {
+    const request = parseTurnCreateRequest(value)
+    const session = request.identity.session.id
+    this.transcripts.set(session, [...(this.transcripts.get(session) ?? []), request.message])
+    const reducer = new SessionTurnReducer()
+    const turnId = `turn-${session}`
+    reducer.apply(parseTurnEventEnvelope(envelope(1, 'turn.started', {
+      event_id: `fixture-${session}-1`,
+      turn_id: turnId,
+      session_id: session,
+    })))
+    reducer.apply(parseTurnEventEnvelope(envelope(2, 'turn.completed', {
+      event_id: `fixture-${session}-2`,
+      turn_id: turnId,
+      session_id: session,
+    })))
+    this.reducers.set(session, reducer)
+  }
+
+  writeFormalMemory(userId: string, key: string, value: string): void {
+    const memory = this.formalMemory.get(userId) ?? new Map<string, string>()
+    memory.set(key, value)
+    this.formalMemory.set(userId, memory)
+  }
+
+  readFormalMemory(userId: string, key: string): string | undefined {
+    return this.formalMemory.get(userId)?.get(key)
+  }
+
+  rawSession(sessionId: string): string[] {
+    return [...(this.transcripts.get(sessionId) ?? [])]
+  }
+
+  checkpoint(sessionId: string) {
+    const reducer = this.reducers.get(sessionId)
+    assert.ok(reducer, `missing fixture reducer for ${sessionId}`)
+    return reducer.checkpoint()
+  }
+}
 
 function envelope(
   sequence: number,

@@ -3,9 +3,13 @@ package com.meguri.core.retrieval;
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /** Final server-side validation; client plans must pass through this gate. */
 public final class RetrievalGate {
+    private static final Pattern NO_RETRIEVAL = Pattern.compile(
+            "(?i)^\\s*(hi|hello|hey|thanks?|thank you|good (morning|night)|"
+                    + "你好|您好|嗨|哈喽|谢谢|晚安|早安)[！!。.?？~～,，\\s]*$");
     public static final int MAX_GRAPH_HOPS = 3;
     public static final int MAX_TOTAL_ITEMS = 64;
     public static final int MAX_SOURCE_ITEMS = 32;
@@ -35,6 +39,16 @@ public final class RetrievalGate {
             throw new IllegalArgumentException("Graph requires the Knowledge source");
         }
         return requested;
+    }
+
+    /** Deterministic cheap gate; explicit SLOW requests are never silently downgraded. */
+    public RetrievalMode classify(String query, RetrievalMode requested) {
+        RetrievalMode mode = requested == null ? RetrievalMode.NONE : requested;
+        if (mode == RetrievalMode.SLOW) return mode;
+        if (query == null || query.isBlank() || NO_RETRIEVAL.matcher(query).matches()) {
+            return RetrievalMode.NONE;
+        }
+        return mode;
     }
 
     /** Clamps untrusted source limits before constructing a plan. */

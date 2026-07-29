@@ -2,7 +2,9 @@ package com.meguri.core.capability;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meguri.core.dto.TurnRequest;
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -22,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Secrets are referenced by environment-variable name and never persisted in source status.
  */
 @Component
-public final class McpSourceManager {
+public final class McpSourceManager implements AutoCloseable, McpContentResolver {
     private static final Set<String> SENSITIVE_HEADERS = Set.of(
             "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key");
     private static final Set<String> TRANSPORT_HEADERS = Set.of(
@@ -148,6 +150,63 @@ public final class McpSourceManager {
         }
     }
 
+    /** Explicit hook for a caller-controlled, bounded polling schedule. */
+    public synchronized SourceStatus poll(String sourceId) {
+        ManagedSource source = require(sourceId);
+        if (source.synchronizer == null) return register(source.configuration);
+        try {
+            source.synchronizer.pollForListChanges(source.protocolVersion);
+            source.succeed();
+            return status(sourceId);
+        } catch (RuntimeException failure) {
+            source.fail(failure);
+            throw new McpSourceException("MCP source poll failed closed", failure);
+        }
+    }
+
+    /** Reads one previously allowlisted prompt from one explicit source namespace. */
+    public List<McpExternalContent> getPrompt(
+            String sourceId,
+            String promptName,
+            Map<String, Object> arguments,
+            Set<String> authorizedScopes) {
+        requireScope(sourceId, authorizedScopes);
+        ManagedSource source = requireConnected(sourceId);
+        return source.synchronizer.getPrompt(
+                CapabilityDescriptor.required(promptName, "promptName"),
+                arguments == null ? Map.of() : Map.copyOf(arguments));
+    }
+
+    /** Reads one previously allowlisted resource from one explicit source namespace. */
+    public List<McpExternalContent> readResource(
+            String sourceId, String uri, Set<String> authorizedScopes) {
+        requireScope(sourceId, authorizedScopes);
+        ManagedSource source = requireConnected(sourceId);
+        return source.synchronizer.readResource(
+                CapabilityDescriptor.required(uri, "resource uri"));
+    }
+
+    private static void requireScope(String sourceId, Set<String> authorizedScopes) {
+        String requiredScope = "mcp:" + safeId(sourceId);
+        if (authorizedScopes == null || !authorizedScopes.contains(requiredScope)) {
+            throw new SecurityException("MCP source scope is not authorized");
+        }
+    }
+
+    @Override
+    public List<McpExternalContent> resolve(
+            TurnRequest.McpContentSelection selection,
+            Set<String> authorizedScopes) {
+        Objects.requireNonNull(selection, "selection");
+        return switch (selection.kind()) {
+            case PROMPT -> getPrompt(
+                    selection.sourceId(), selection.identifier(),
+                    selection.arguments(), authorizedScopes);
+            case RESOURCE -> readResource(
+                    selection.sourceId(), selection.identifier(), authorizedScopes);
+        };
+    }
+
     public synchronized SourceStatus remove(String sourceId) {
         ManagedSource source = require(sourceId);
         store.delete(source.configuration.id());
@@ -162,6 +221,15 @@ public final class McpSourceManager {
 
     public List<SourceStatus> statuses() {
         return sources.keySet().stream().sorted().map(this::status).toList();
+    }
+
+    @Override
+    @PreDestroy
+    public synchronized void close() {
+        sources.values().forEach(source -> {
+            if (source.synchronizer != null) source.synchronizer.deactivate();
+        });
+        sources.clear();
     }
 
     public SourceStatus status(String sourceId) {
@@ -275,6 +343,14 @@ public final class McpSourceManager {
     private ManagedSource require(String sourceId) {
         ManagedSource source = sources.get(safeId(sourceId));
         if (source == null) throw new IllegalArgumentException("unknown MCP source");
+        return source;
+    }
+
+    private ManagedSource requireConnected(String sourceId) {
+        ManagedSource source = require(sourceId);
+        if (source.state != SourceState.CONNECTED || source.synchronizer == null) {
+            throw new McpSourceException("MCP source is not connected");
+        }
         return source;
     }
 

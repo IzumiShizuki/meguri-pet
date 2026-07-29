@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RuntimeStateMachineTest {
     @Test
@@ -43,25 +44,25 @@ class RuntimeStateMachineTest {
     }
 
     @Test
-    void onlyUserScopedServerOverrideCanChangeSharedRelationship() {
+    void runtimeOverrideCannotChangeSharedRelationship() {
         Instant instant = Instant.parse("2026-07-21T04:00:00Z");
         RuntimeStateMachine machine = new RuntimeStateMachine(Clock.fixed(instant, ZoneOffset.UTC));
         TurnRequest forgedRequest = new TurnRequest(
                 "u-test", "website", "s-web", "hello", List.of(),
                 new ClientCapabilities(), null, Relationship.LOVER, false);
         machine.setOverride("u-test:website", new RuntimeOverride(
-                null, Relationship.LOVER, "05", OffsetDateTime.parse("2026-07-21T13:30:00+08:00")));
+                null, null, "05", OffsetDateTime.parse("2026-07-21T13:30:00+08:00")));
 
         var untrusted = machine.stateFor(forgedRequest);
         assertThat(untrusted.getRelationshipProfile()).isEqualTo(Relationship.SIBLING);
         assertThat(untrusted.getOutfitCode()).isEqualTo("05");
 
-        machine.setOverride("u-test", new RuntimeOverride(
-                null, Relationship.PURSUIT, null, OffsetDateTime.parse("2026-07-21T13:30:00+08:00")));
-
-        assertThat(machine.stateFor(forgedRequest).getRelationshipProfile()).isEqualTo(Relationship.PURSUIT);
+        assertThatThrownBy(() -> new RuntimeOverride(
+                null, Relationship.PURSUIT, null, OffsetDateTime.parse("2026-07-21T13:30:00+08:00")))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThat(machine.stateFor(forgedRequest).getRelationshipProfile()).isEqualTo(Relationship.SIBLING);
         assertThat(machine.stateFor(new TurnRequest("u-test", "airi", "s-airi", "hello"))
-                .getRelationshipProfile()).isEqualTo(Relationship.PURSUIT);
+                .getRelationshipProfile()).isEqualTo(Relationship.SIBLING);
     }
 
     @Test

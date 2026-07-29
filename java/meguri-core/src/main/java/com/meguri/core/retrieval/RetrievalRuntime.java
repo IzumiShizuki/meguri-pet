@@ -25,6 +25,7 @@ public final class RetrievalRuntime implements AutoCloseable {
     private final KnowledgeGraphRetrievalService graph;
     private final BundleAssembler assembler;
     private final RetrievalTraceRepository traces;
+    private final RetrievalAuthorizationPolicy authorization;
     private final ExecutorService executor;
     private final Duration maxLaneDuration;
     private final Duration maxGraphDuration;
@@ -40,7 +41,8 @@ public final class RetrievalRuntime implements AutoCloseable {
             Duration maxGraphDuration) {
         this(planner, new RetrievalGate(), providers, hybridKnowledge, graph,
                 new BundleAssembler(), traces, Executors.newVirtualThreadPerTaskExecutor(),
-                maxLaneDuration, maxGraphDuration, true);
+                maxLaneDuration, maxGraphDuration, true,
+                RetrievalAuthorizationPolicy.allowAll());
     }
 
     public RetrievalRuntime(
@@ -55,6 +57,24 @@ public final class RetrievalRuntime implements AutoCloseable {
             Duration maxLaneDuration,
             Duration maxGraphDuration,
             boolean ownsExecutor) {
+        this(planner, gate, providers, hybridKnowledge, graph, assembler, traces,
+                executor, maxLaneDuration, maxGraphDuration, ownsExecutor,
+                RetrievalAuthorizationPolicy.allowAll());
+    }
+
+    public RetrievalRuntime(
+            RetrievalPlanner planner,
+            RetrievalGate gate,
+            Map<SourceType, RetrievalProvider> providers,
+            RetrievalProvider hybridKnowledge,
+            KnowledgeGraphRetrievalService graph,
+            BundleAssembler assembler,
+            RetrievalTraceRepository traces,
+            ExecutorService executor,
+            Duration maxLaneDuration,
+            Duration maxGraphDuration,
+            boolean ownsExecutor,
+            RetrievalAuthorizationPolicy authorization) {
         this.planner = Objects.requireNonNull(planner);
         this.gate = Objects.requireNonNull(gate);
         EnumMap<SourceType, RetrievalProvider> copy = new EnumMap<>(SourceType.class);
@@ -65,6 +85,7 @@ public final class RetrievalRuntime implements AutoCloseable {
         this.graph = graph;
         this.assembler = Objects.requireNonNull(assembler);
         this.traces = Objects.requireNonNull(traces);
+        this.authorization = Objects.requireNonNull(authorization);
         this.executor = Objects.requireNonNull(executor);
         this.maxLaneDuration = positive(maxLaneDuration, Duration.ofSeconds(2));
         this.maxGraphDuration = positive(maxGraphDuration, Duration.ofMillis(500));
@@ -74,7 +95,9 @@ public final class RetrievalRuntime implements AutoCloseable {
     public RetrievalBundle retrieve(
             String query, RetrievalMode mode, RetrievalContext context) {
         Objects.requireNonNull(context);
-        RetrievalPlan plan = gate.validate(planner.plan(query, mode, context.deadline()));
+        RetrievalMode gatedMode = gate.classify(query, mode);
+        RetrievalPlan plan = gate.validate(authorization.authorize(
+                gate.validate(planner.plan(query, gatedMode, context.deadline())), context));
         if (plan.mode() == RetrievalMode.NONE) {
             RetrievalBundle bundle = assembler.assemble(context.traceId(), plan, List.of());
             saveTrace(bundle, context);
@@ -112,7 +135,7 @@ public final class RetrievalRuntime implements AutoCloseable {
         if (provider == null) return RetrievalLaneResult.skipped(source, "provider_not_configured");
         int limit = plan.sourceBudgets().getOrDefault(source, 0);
         RetrievalProviderResult result = provider.retrieveWithDiagnostics(
-                plan.query().rewrittenQuery(), limit, context);
+                plan.query().queryFor(source), limit, context);
         return laneResult(source, provider.getClass().getSimpleName(),
                 validateItems(source, result.items(), context.traceId()),
                 result.degradations());
@@ -172,7 +195,7 @@ public final class RetrievalRuntime implements AutoCloseable {
     private RetrievalProviderResult callHybrid(
             RetrievalPlan plan, RetrievalContext context, int limit) {
         RetrievalProviderResult result = hybridKnowledge.retrieveWithDiagnostics(
-                plan.query().rewrittenQuery(), limit, context);
+                plan.query().queryFor(SourceType.KNOWLEDGE), limit, context);
         return new RetrievalProviderResult(
                 validateItems(SourceType.KNOWLEDGE, result.items(), context.traceId()),
                 result.degradations());
@@ -256,6 +279,10 @@ public final class RetrievalRuntime implements AutoCloseable {
 
     private void saveTrace(RetrievalBundle bundle, RetrievalContext context) {
         traces.save(RetrievalTrace.capture(bundle, context));
+    }
+
+    RetrievalTraceRepository traceRepository() {
+        return traces;
     }
 
     private static Duration positive(Duration value, Duration fallback) {

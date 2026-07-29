@@ -1,5 +1,6 @@
 package com.meguri.core.capability;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +15,12 @@ public final class McpCapabilitySynchronizer {
     private final McpCapabilityNormalizer normalizer;
     private final Lifecycle lifecycle;
     private final Map<String, String> knownVersions = new LinkedHashMap<>();
+    private Map<String, PromptDefinition> prompts = Map.of();
+    private Map<String, ResourceDefinition> resources = Map.of();
+    private Set<String> negotiatedCapabilities = Set.of("tools");
     private boolean active = true;
+    private boolean refreshing;
+    private boolean refreshPending;
 
     public McpCapabilitySynchronizer(
             String server,
@@ -60,7 +66,9 @@ public final class McpCapabilitySynchronizer {
     }
 
     public McpAdapter.Negotiation start(int maximumProtocol) {
-        McpAdapter.Negotiation negotiation = adapter.negotiate(maximumProtocol, Set.of("tools", "list_changed"));
+        McpAdapter.Negotiation negotiation = adapter.negotiate(
+                maximumProtocol, Set.of("tools", "prompts", "resources", "list_changed"));
+        negotiatedCapabilities = negotiation.capabilities();
         refresh(negotiation.protocolVersion());
         adapter.onListChanged(() -> {
             synchronized (this) {
@@ -68,6 +76,7 @@ public final class McpCapabilitySynchronizer {
             }
             refresh(negotiation.protocolVersion());
         });
+        adapter.startListChangeMonitoring(Duration.ofSeconds(30));
         return negotiation;
     }
 
@@ -75,9 +84,29 @@ public final class McpCapabilitySynchronizer {
         if (!active) {
             throw new IllegalStateException("MCP source is no longer active");
         }
+        if (refreshing) {
+            refreshPending = true;
+            return;
+        }
+        refreshing = true;
+        try {
+            refreshPending = false;
+            refreshOnce(protocolVersion);
+            if (refreshPending) {
+                refreshPending = false;
+                refreshOnce(protocolVersion);
+            }
+        } finally {
+            refreshing = false;
+        }
+    }
+
+    private void refreshOnce(int protocolVersion) {
         List<PreparedTool> prepared = new ArrayList<>();
         Map<String, String> refreshed = new LinkedHashMap<>();
-        for (Map<String, Object> raw : adapter.listTools()) {
+        List<Map<String, Object>> remoteTools = negotiatedCapabilities.contains("tools")
+                ? adapter.listTools() : List.of();
+        for (Map<String, Object> raw : remoteTools) {
             CapabilityDescriptor descriptor = normalizer.normalize(server, raw, protocolVersion);
             String toolName = String.valueOf(raw.get("name"));
             CapabilityImplementation implementation =
@@ -88,6 +117,16 @@ public final class McpCapabilitySynchronizer {
             }
             prepared.add(new PreparedTool(descriptor, implementation));
         }
+        Map<String, PromptDefinition> preparedPrompts = negotiatedCapabilities.contains("prompts")
+                ? definitions(adapter.listPrompts(), "prompt").entrySet().stream()
+                        .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                                Map.Entry::getKey,
+                                entry -> new PromptDefinition(entry.getKey(), entry.getValue())))
+                : Map.of();
+        Map<String, ResourceDefinition> preparedResources = negotiatedCapabilities.contains("resources")
+                ? resourceDefinitions(adapter.listResources()) : Map.of();
+
+        // No registry mutation occurs before all three remote namespaces validate.
         lifecycle.activateAll(prepared.stream()
                 .map(tool -> new PreparedCapability(
                         tool.descriptor(), tool.implementation()))
@@ -107,6 +146,8 @@ public final class McpCapabilitySynchronizer {
                 .forEach(lifecycle::drain);
         knownVersions.clear();
         knownVersions.putAll(refreshed);
+        prompts = preparedPrompts;
+        resources = preparedResources;
         // Existing ExposurePlans retain their frozen grants; this binding change is visible only to later snapshots.
     }
 
@@ -114,8 +155,41 @@ public final class McpCapabilitySynchronizer {
         return Map.copyOf(knownVersions);
     }
 
+    public synchronized Map<String, PromptDefinition> prompts() {
+        return prompts;
+    }
+
+    public synchronized Map<String, ResourceDefinition> resources() {
+        return resources;
+    }
+
+    public boolean pollForListChanges(int protocolVersion) {
+        synchronized (this) {
+            if (!active) throw new IllegalStateException("MCP source is no longer active");
+        }
+        if (!adapter.pollForListChanges()) return false;
+        refresh(protocolVersion);
+        return true;
+    }
+
+    public List<McpExternalContent> getPrompt(String name, Map<String, Object> arguments) {
+        synchronized (this) {
+            if (!active || !prompts.containsKey(name)) throw new SecurityException("unknown MCP prompt");
+        }
+        return McpExternalContent.prompts(
+                server, name, new McpPromptNormalizer().normalize(adapter.getPrompt(name, arguments)));
+    }
+
+    public List<McpExternalContent> readResource(String uri) {
+        synchronized (this) {
+            if (!active || !resources.containsKey(uri)) throw new SecurityException("unknown MCP resource");
+        }
+        return McpExternalContent.resources(server, uri, adapter.readResource(uri));
+    }
+
     public synchronized void deactivate() {
         active = false;
+        adapter.close();
     }
 
     private synchronized Map<String, Object> invokePinned(
@@ -124,11 +198,35 @@ public final class McpCapabilitySynchronizer {
             String toolName,
             Map<String, Object> input,
             CapabilityImplementation.ExecutionContext context) throws Exception {
-        if (!active || !version.equals(knownVersions.get(capabilityId))) {
+        if (!active) {
             throw new IllegalStateException(
-                    "MCP capability version is no longer active");
+                    "MCP source is no longer active");
         }
         return adapter.invoke(toolName, input, context);
+    }
+
+    private static Map<String, Map<String, Object>> definitions(
+            List<Map<String, Object>> rawValues, String type) {
+        Map<String, Map<String, Object>> values = new LinkedHashMap<>();
+        for (Map<String, Object> raw : rawValues == null ? List.<Map<String, Object>>of() : rawValues) {
+            String name = CapabilityDescriptor.required(String.valueOf(raw.get("name")), "MCP " + type + " name");
+            if (values.putIfAbsent(name, Map.copyOf(raw)) != null) {
+                throw new IllegalArgumentException("duplicate MCP " + type + ": " + name);
+            }
+        }
+        return Map.copyOf(values);
+    }
+
+    private static Map<String, ResourceDefinition> resourceDefinitions(List<Map<String, Object>> rawValues) {
+        Map<String, ResourceDefinition> values = new LinkedHashMap<>();
+        for (Map<String, Object> raw : rawValues == null ? List.<Map<String, Object>>of() : rawValues) {
+            String uri = CapabilityDescriptor.required(String.valueOf(raw.get("uri")), "MCP resource uri");
+            String name = String.valueOf(raw.getOrDefault("name", uri));
+            if (values.putIfAbsent(uri, new ResourceDefinition(uri, name, Map.copyOf(raw))) != null) {
+                throw new IllegalArgumentException("duplicate MCP resource: " + uri);
+            }
+        }
+        return Map.copyOf(values);
     }
 
     public interface Lifecycle {
@@ -140,6 +238,14 @@ public final class McpCapabilitySynchronizer {
     public record PreparedCapability(
             CapabilityDescriptor descriptor,
             CapabilityImplementation implementation) { }
+
+    public record PromptDefinition(String name, Map<String, Object> metadata) {
+        public PromptDefinition { metadata = Map.copyOf(metadata); }
+    }
+
+    public record ResourceDefinition(String uri, String name, Map<String, Object> metadata) {
+        public ResourceDefinition { metadata = Map.copyOf(metadata); }
+    }
 
     private record PreparedTool(
             CapabilityDescriptor descriptor,

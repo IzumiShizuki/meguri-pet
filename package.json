@@ -8,6 +8,7 @@
     "node": ">=24"
   },
   "scripts": {
+    "test:adapter-contract": "python scripts/run_adapter_contract_fixtures.py",
     "test:ts": "node --test tests-ts/protocol.test.ts tests-ts/adapter-protocol-v1.test.ts tests-ts/client-sdk-v1.test.ts tests-ts/renderer.test.ts tests-ts/airi-adapter.test.ts tests-ts/tts-adapter.test.ts tests-ts/website-adapter.test.ts"
   }
 }

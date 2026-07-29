@@ -8,7 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RetrievalTraceSchemaContractTest {
     @Test
-    void postgresSchemaKeepsOneImmutableContentBearingTracePerTurnTraceId()
+    void postgresSchemaKeepsOneImmutableSafeProjectionPerTurnTraceId()
             throws Exception {
         String sql;
         try (var input = getClass().getClassLoader()
@@ -24,6 +24,8 @@ class RetrievalTraceSchemaContractTest {
                 .contains("knowledge_revision bigint not null")
                 .contains("valid_at timestamptz not null")
                 .contains("algorithm_revision text not null")
+                .contains("projection_version text not null")
+                .contains("legacy_trace_redacted")
                 .contains("trace_json jsonb not null");
     }
 }

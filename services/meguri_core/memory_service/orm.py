@@ -32,6 +32,7 @@ from .enums import (
     IdentityBindingStatus,
     MemoryScope,
     MemoryStatus,
+    MemoryVersionStatus,
     MemoryType,
     MergePolicy,
     OutboxStatus,
@@ -173,6 +174,14 @@ class MemoryItemRow(Base):
             deferrable=True,
             initially="DEFERRED",
         ),
+        ForeignKeyConstraint(
+            ["memory_id", "last_stable_version_id"],
+            ["memory_versions.memory_id", "memory_versions.version_id"],
+            name="fk_memory_items_last_stable_version_same_item",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
     )
 
     memory_id: Mapped[UUID] = mapped_column(
@@ -185,6 +194,9 @@ class MemoryItemRow(Base):
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     canonical_key: Mapped[str | None] = mapped_column(String(500))
     current_version_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    last_stable_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+    )
     importance: Mapped[float] = mapped_column(
         Float, nullable=False, server_default=text("0.5")
     )
@@ -208,6 +220,7 @@ class MemoryVersionRow(Base):
         UniqueConstraint("memory_id", "version_no", name="uq_memory_versions_item_number"),
         UniqueConstraint("memory_id", "version_id", name="uq_memory_versions_item_version"),
         _enum_check("created_by_type", ActorType, "valid_created_by_type"),
+        _enum_check("status", MemoryVersionStatus, "valid_status"),
     )
 
     version_id: Mapped[UUID] = mapped_column(
@@ -219,6 +232,12 @@ class MemoryVersionRow(Base):
         nullable=False,
     )
     version_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default=text("'active'")
+    )
+    base_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("memory_versions.version_id", ondelete="SET NULL")
+    )
     content_text: Mapped[str] = mapped_column(Text, nullable=False)
     content_json: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")

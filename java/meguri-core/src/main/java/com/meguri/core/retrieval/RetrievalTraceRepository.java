@@ -6,4 +6,8 @@ public interface RetrievalTraceRepository {
     void save(RetrievalTrace trace);
 
     Optional<RetrievalTrace> find(String traceId);
+
+    default Optional<RetrievalTraceProjection> findProjection(String traceId) {
+        return find(traceId).map(RetrievalTraceProjection::capture);
+    }
 }

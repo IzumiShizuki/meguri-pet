@@ -1,5 +1,6 @@
 import {
   MeguriApiClient,
+  MeguriApiError,
   type FollowOptions,
 } from '../../../packages/client-sdk/src/index.ts'
 import {
@@ -43,6 +44,12 @@ export interface WebsiteSessionRecordV2 {
   activeTurnState?: TurnViewState
   selectedProtocolVersion?: ProtocolVersion
   serverCapabilitiesRevision?: string
+  pendingCreate?: PendingTurnCreate
+}
+
+export interface PendingTurnCreate {
+  fingerprint: string
+  idempotencyKey: string
 }
 
 export type WebsiteSessionRecord = WebsiteSessionRecordV1 | WebsiteSessionRecordV2
@@ -127,6 +134,7 @@ export class WebsiteMeguriSession {
   private serverCapabilitiesRevision?: string
   private helloComplete = false
   private activeTurnId?: string
+  private pendingCreate?: PendingTurnCreate
 
   constructor(
     api: MeguriApiClient,
@@ -139,7 +147,7 @@ export class WebsiteMeguriSession {
     this.api = api
     this.identity = identity
     this.store = new WebsiteSessionStore(storage, identity.storageKey)
-    this.capabilities = { ...defaultCapabilities, ...options.capabilities }
+    this.capabilities = mergeCapabilities(defaultCapabilities, options.capabilities)
     this.permissions = { ...defaultPermissions, ...options.permissions }
     this.protocolVersions = options.protocolVersions ?? ['1.1', '1.0']
     const saved = this.store.load()
@@ -152,6 +160,7 @@ export class WebsiteMeguriSession {
     this.serverCapabilitiesRevision = saved?.version === 2
       ? saved.serverCapabilitiesRevision
       : undefined
+    this.pendingCreate = saved?.version === 2 ? saved.pendingCreate : undefined
     if (saved?.version === 2 && saved.activeTurnState)
       this.reducer.turns.set(saved.activeTurnState.turnId, { ...saved.activeTurnState })
     this.persist()
@@ -184,8 +193,31 @@ export class WebsiteMeguriSession {
         ? { relationship_profile: options.relationshipProfile }
         : {}),
     }
-    const created = await this.api.createTurn(request, options.idempotencyKey)
+    const fingerprint = requestFingerprint(request)
+    if (this.pendingCreate && this.pendingCreate.fingerprint !== fingerprint)
+      throw new Error('retry the pending website request before sending a different message')
+    this.pendingCreate ??= {
+      fingerprint,
+      idempotencyKey: options.idempotencyKey ?? `website-${crypto.randomUUID()}`,
+    }
+    // Persist before POST. If the response is lost after Core commits the Turn,
+    // a reload can retry this logical request with the same idempotency key.
+    this.persist()
+    let created
+    try {
+      created = await this.api.createTurn(request, this.pendingCreate.idempotencyKey)
+    }
+    catch (error) {
+      if (error instanceof MeguriApiError
+        && error.status !== undefined
+        && isDeterministicCreateRejection(error.status)) {
+        this.pendingCreate = undefined
+        this.persist()
+      }
+      throw error
+    }
     this.activeTurnId = created.turn_id
+    this.pendingCreate = undefined
     this.persist()
     return await this.followActive(options)
   }
@@ -243,6 +275,7 @@ export class WebsiteMeguriSession {
       activeTurnState: activeTurnState ? { ...activeTurnState } : undefined,
       selectedProtocolVersion: this.selectedProtocolVersion,
       serverCapabilitiesRevision: this.serverCapabilitiesRevision,
+      pendingCreate: this.pendingCreate,
     })
   }
 
@@ -282,6 +315,26 @@ function createSessionId(): string {
   return `web_${crypto.randomUUID().replaceAll('-', '')}`
 }
 
+function isDeterministicCreateRejection(status: number): boolean {
+  return status >= 400
+    && status < 500
+    && status !== 408
+    && status !== 425
+    && status !== 429
+}
+
+function mergeCapabilities(
+  defaults: ClientCapabilities,
+  overrides: Partial<ClientCapabilities> | undefined,
+): ClientCapabilities {
+  const merged = { ...defaults }
+  for (const [capability, enabled] of Object.entries(overrides ?? {})) {
+    if (typeof enabled === 'boolean')
+      merged[capability] = enabled
+  }
+  return merged
+}
+
 function isSessionRecord(value: unknown): value is WebsiteSessionRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     return false
@@ -302,11 +355,43 @@ function isSessionRecord(value: unknown): value is WebsiteSessionRecord {
     && (typeof record.serverCapabilitiesRevision !== 'string'
       || record.serverCapabilitiesRevision.length === 0))
     return false
+  if (record.pendingCreate !== undefined && !isPendingCreate(record.pendingCreate))
+    return false
   if (record.checkpoint.session_id !== undefined
     && record.checkpoint.session_id !== record.sessionId)
     return false
   return record.activeTurnState === undefined
     || isTurnViewState(record.activeTurnState, record.activeTurnId)
+}
+
+function isPendingCreate(value: unknown): value is PendingTurnCreate {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const pending = value as Record<string, unknown>
+  return typeof pending.fingerprint === 'string'
+    && pending.fingerprint.length > 0
+    && typeof pending.idempotencyKey === 'string'
+    && pending.idempotencyKey.length > 0
+}
+
+function requestFingerprint(request: TurnCreateRequest): string {
+  const serialized = stableStringify(request)
+  let hash = 0xcbf29ce484222325n
+  for (const byte of new TextEncoder().encode(serialized)) {
+    hash ^= BigInt(byte)
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
+  }
+  return hash.toString(16).padStart(16, '0')
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value))
+    return `[${value.map(stableStringify).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
 }
 
 function isCheckpoint(value: unknown): value is SessionEventCheckpoint {

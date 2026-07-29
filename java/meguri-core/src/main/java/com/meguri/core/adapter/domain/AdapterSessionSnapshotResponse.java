@@ -39,10 +39,10 @@ public record AdapterSessionSnapshotResponse(
         for (TurnSnapshot turn : snapshot.turns()) {
             String text = turn.result() == null ? "" : turn.result().getResponse().getReply();
             Map<String, Object> expression = turn.result() == null
-                    ? Map.of() : Map.of(
+                    ? Map.of() : immutableExpression(Map.of(
                             "expression", turn.result().getExpression().getExpressionTag().value(),
-                            "intensity", turn.result().getExpression().getExpressionIntensity().value(),
-                            "outfit_code", turn.result().getExpression().getOutfitCode());
+                            "intensity", turn.result().getExpression().getExpressionIntensity().value()),
+                            turn.result().getExpression().getOutfitCode());
             state.put(turn.turnId(), new MutableTurnState(
                     turn.turnId(), normalizeStatus(turn.status()), text, expression, turn.error()));
         }
@@ -55,7 +55,7 @@ public record AdapterSessionSnapshotResponse(
                 turn.text = turn.text + event.getData().get("delta");
             } else if ("expression.cue".equals(event.getType())
                     || "sprite.resolved".equals(event.getType())) {
-                turn.expression = Map.copyOf(event.getData());
+                turn.expression = immutableMapWithoutNulls(event.getData());
             }
         }
         List<AdapterTurnSnapshot> turns = new ArrayList<>();
@@ -78,6 +78,22 @@ public record AdapterSessionSnapshotResponse(
         };
     }
 
+    private static Map<String, Object> immutableExpression(
+            Map<String, Object> required, Object outfitCode) {
+        Map<String, Object> expression = new LinkedHashMap<>(required);
+        expression.put("outfit_code", outfitCode);
+        return immutableMapWithoutNulls(expression);
+    }
+
+    private static Map<String, Object> immutableMapWithoutNulls(Map<String, ?> values) {
+        if (values == null || values.isEmpty()) return Map.of();
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        values.forEach((key, value) -> {
+            if (key != null && value != null) sanitized.put(key, value);
+        });
+        return Map.copyOf(sanitized);
+    }
+
     public record AdapterTurnSnapshot(
             @JsonProperty("turn_id") String turnId,
             String status,
@@ -89,7 +105,7 @@ public record AdapterSessionSnapshotResponse(
                 throw new IllegalArgumentException("turn snapshot identity and status are required");
             }
             text = text == null ? "" : text;
-            expression = expression == null ? Map.of() : Map.copyOf(expression);
+            expression = immutableMapWithoutNulls(expression);
         }
     }
 

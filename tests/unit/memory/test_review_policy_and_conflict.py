@@ -102,6 +102,14 @@ def test_policy_detects_credentials_in_structured_content_and_provenance():
             content_json={"api_key": "sk-structured-secret"},
         )
     ).rejected
+    raw = policy.evaluate(
+        candidate(
+            "User shared an ordinary preference",
+            provenance={"raw_excerpt": "otherwise harmless verbatim source"},
+        )
+    )
+    assert raw.rejected
+    assert raw.reason == "raw_external_or_rag_content"
     assert policy.evaluate(
         candidate(
             "User shared an account setting",

@@ -320,12 +320,26 @@ class EmbeddingWorker:
                 worker_id=self.worker_id,
                 limit=self.batch_size,
                 lease_seconds=self.lease_seconds,
+                event_types=("embedding.requested", "embedding.deleted"),
             )
         completed = failed = 0
         self.metrics.set_gauge("memory_embedding_queue_depth", len(claimed))
         for task in claimed:
             try:
                 version_id = UUID(str(task.payload["version_id"]))
+                if getattr(task, "event_type", "embedding.requested") == "embedding.deleted":
+                    deleted_version_id = UUID(str(task.payload["deleted_version_id"]))
+                    async with self.uow_factory() as uow:
+                        repository = self._repository(uow)
+                        await repository.delete_embedding_projection(deleted_version_id)
+                        acknowledged = await repository.complete_outbox(
+                            task.outbox_id,
+                            worker_id=self.worker_id,
+                            claim_locked_at=task.locked_at,
+                        )
+                    completed += int(acknowledged)
+                    failed += int(not acknowledged)
+                    continue
                 async with self.uow_factory() as uow:
                     version = await self._repository(uow).get_version(version_id)
                     if version is None:
@@ -345,13 +359,20 @@ class EmbeddingWorker:
                         vector=vector,
                         content_sha256=digest,
                     )
-                    await repository.complete_outbox(task.outbox_id)
-                completed += 1
+                    acknowledged = await repository.complete_outbox(
+                        task.outbox_id,
+                        worker_id=self.worker_id,
+                        claim_locked_at=task.locked_at,
+                    )
+                completed += int(acknowledged)
+                failed += int(not acknowledged)
             except Exception as exc:
                 retry_delay = self.base_retry_seconds * (2 ** min(task.attempts, 8))
                 async with self.uow_factory() as uow:
                     await self._repository(uow).fail_outbox(
                         task.outbox_id,
+                        worker_id=self.worker_id,
+                        claim_locked_at=task.locked_at,
                         error_code=type(exc).__name__,
                         max_attempts=self.max_attempts,
                         retry_delay_seconds=retry_delay,

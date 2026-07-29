@@ -28,6 +28,14 @@ class RiskLevel(StrEnum):
 
 
 class MergePolicy(StrEnum):
+    REPLACE = "replace"
+    SET_UNION = "set_union"
+    SET_REMOVE = "set_remove"
+    CONFIRM = "confirm"
+    STATE_TRANSITION = "state_transition"
+    THREE_WAY_MERGE = "three_way_merge"
+    MANUAL = "manual"
+    # Legacy values remain readable while old candidates are drained.
     REVIEW = "review"
     CREATE_ONLY = "create_only"
     SUPERSEDE = "supersede"
@@ -39,6 +47,9 @@ class MemoryScope(StrEnum):
 
 
 class CandidateStatus(StrEnum):
+    PENDING = "pending"
+    AUTO_APPROVED = "auto_approved"
+    NEEDS_CONFIRMATION = "needs_confirmation"
     PENDING_REVIEW = "pending_review"
     PROCESSING = "processing"
     APPROVED = "approved"
@@ -48,10 +59,18 @@ class CandidateStatus(StrEnum):
 
 class MemoryStatus(StrEnum):
     ACTIVE = "active"
+    CONFLICTED = "conflicted"
     SUPERSEDED = "superseded"
     EXPIRED = "expired"
     ARCHIVED = "archived"
     DELETED = "deleted"
+
+
+class MemoryVersionStatus(StrEnum):
+    ACTIVE = "active"
+    SUPERSEDED = "superseded"
+    CONFLICT_BRANCH = "conflict_branch"
+    TOMBSTONE = "tombstone"
 
 
 class ReviewDecision(StrEnum):
@@ -74,7 +93,12 @@ class ActorType(StrEnum):
 
 
 class SourceKind(StrEnum):
+    USER_MANUAL = "user_manual"
     DIRECT_USER = "direct_user"
+    REPEATED_EVIDENCE = "repeated_evidence"
+    LOCAL_EDIT = "local_edit"
+    SUMMARY = "summary"
+    EXTERNAL = "external"
     LLM_CANDIDATE = "llm_candidate"
     MEMORYOS_IMPORT = "memoryos_import"
     MEM0_SHADOW = "mem0_shadow"
@@ -116,6 +140,8 @@ class AuditAction(StrEnum):
     HARD_DELETE = "hard_delete"
     IDENTITY_BIND = "identity_bind"
     IDENTITY_UNBIND = "identity_unbind"
+    CONFLICT = "conflict"
+    PROJECTION_REPAIR = "projection_repair"
 
 
 class ConflictAction(StrEnum):
@@ -134,16 +160,26 @@ class SearchMode(StrEnum):
 
 
 CANDIDATE_TRANSITIONS: dict[CandidateStatus, frozenset[CandidateStatus]] = {
+    CandidateStatus.PENDING: frozenset(
+        {CandidateStatus.AUTO_APPROVED, CandidateStatus.NEEDS_CONFIRMATION,
+         CandidateStatus.APPROVED, CandidateStatus.REJECTED, CandidateStatus.EXPIRED}
+    ),
+    CandidateStatus.AUTO_APPROVED: frozenset(
+        {CandidateStatus.APPROVED, CandidateStatus.NEEDS_CONFIRMATION}
+    ),
+    CandidateStatus.NEEDS_CONFIRMATION: frozenset(
+        {CandidateStatus.APPROVED, CandidateStatus.REJECTED, CandidateStatus.EXPIRED}
+    ),
     CandidateStatus.PENDING_REVIEW: frozenset(
         {
             CandidateStatus.PROCESSING,
+            CandidateStatus.APPROVED,
             CandidateStatus.REJECTED,
             CandidateStatus.EXPIRED,
         }
     ),
     CandidateStatus.PROCESSING: frozenset(
         {
-            CandidateStatus.PENDING_REVIEW,
             CandidateStatus.APPROVED,
             CandidateStatus.REJECTED,
         }
@@ -161,12 +197,14 @@ MEMORY_TRANSITIONS: dict[MemoryStatus, frozenset[MemoryStatus]] = {
             MemoryStatus.EXPIRED,
             MemoryStatus.ARCHIVED,
             MemoryStatus.DELETED,
+            MemoryStatus.CONFLICTED,
         }
     ),
     MemoryStatus.SUPERSEDED: frozenset({MemoryStatus.DELETED}),
     MemoryStatus.EXPIRED: frozenset({MemoryStatus.ACTIVE, MemoryStatus.DELETED}),
     MemoryStatus.ARCHIVED: frozenset({MemoryStatus.ACTIVE, MemoryStatus.DELETED}),
     MemoryStatus.DELETED: frozenset({MemoryStatus.ACTIVE}),
+    MemoryStatus.CONFLICTED: frozenset({MemoryStatus.ACTIVE, MemoryStatus.DELETED}),
 }
 
 
@@ -176,3 +214,17 @@ def candidate_transition_allowed(current: CandidateStatus, target: CandidateStat
 
 def memory_transition_allowed(current: MemoryStatus, target: MemoryStatus) -> bool:
     return target in MEMORY_TRANSITIONS[current]
+
+
+VERSION_TRANSITIONS: dict[MemoryVersionStatus, frozenset[MemoryVersionStatus]] = {
+    MemoryVersionStatus.ACTIVE: frozenset({MemoryVersionStatus.SUPERSEDED}),
+    MemoryVersionStatus.SUPERSEDED: frozenset(),
+    MemoryVersionStatus.CONFLICT_BRANCH: frozenset(),
+    MemoryVersionStatus.TOMBSTONE: frozenset(),
+}
+
+
+def version_transition_allowed(
+    current: MemoryVersionStatus, target: MemoryVersionStatus
+) -> bool:
+    return target in VERSION_TRANSITIONS[current]

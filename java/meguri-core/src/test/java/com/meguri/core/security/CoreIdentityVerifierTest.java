@@ -7,8 +7,11 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CoreIdentityVerifierTest {
@@ -53,6 +56,21 @@ class CoreIdentityVerifierTest {
                         exchange(false), "different-user", "airi", "session-a"))
                 .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
                 .hasMessageContaining("does not belong");
+    }
+
+    @Test
+    void capabilityScopesComeOnlyFromServerConfiguration() {
+        CoreIdentityVerifier verifier = new CoreIdentityVerifier(
+                true, "tenant-a", "", "shared-secret",
+                "", "", "mcp:alpha,repository.read");
+        TurnRequest verified = verifier.verifyBody(
+                exchange(false),
+                new TurnRequest("user-a", "airi", "session-a", "hello")
+                        .withAuthorizedCapabilityScopes(Set.of("mcp:attacker")));
+
+        assertThat(verified.authorizedCapabilityScopes())
+                .containsExactlyInAnyOrder("mcp:alpha", "repository.read")
+                .doesNotContain("mcp:attacker");
     }
 
     private static MockServerWebExchange exchange(boolean formalMemoryAllowed) {

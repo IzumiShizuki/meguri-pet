@@ -12,6 +12,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.net.URI;
+import java.util.Map;
 
 /**
  * Standalone Agent runtime assembly. A production RemoteAgentGateway bean wins;
@@ -75,6 +78,33 @@ public class AgentRuntimeSpringConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(RemoteAgentGateway.class)
+    @ConditionalOnProperty(name = "meguri.agent.gateway-mode", havingValue = "http")
+    HttpRemoteAgentGateway httpRemoteAgentGateway(
+            ObjectProvider<ObjectMapper> mapperProvider,
+            @Value("${meguri.agent.remote.endpoint}") String endpoint,
+            @Value("${meguri.agent.remote.authorization-environment:}") String authorizationEnvironment,
+            @Value("${meguri.agent.remote.connect-timeout-ms:3000}") long connectTimeoutMs,
+            @Value("${meguri.agent.remote.request-timeout-ms:10000}") long requestTimeoutMs,
+            @Value("${meguri.agent.remote.maximum-response-characters:262144}") int maximumResponseCharacters,
+            @Value("${meguri.agent.remote.allow-insecure-localhost:false}") boolean allowInsecureLocalhost) {
+        String authorization = null;
+        if (authorizationEnvironment != null && !authorizationEnvironment.isBlank()) {
+            authorization = System.getenv(authorizationEnvironment.trim());
+            if (authorization == null || authorization.isBlank()) {
+                throw new IllegalStateException(
+                        "remote agent authorization environment is not set");
+            }
+        }
+        ObjectMapper mapper = mapperProvider.getIfAvailable(
+                () -> new ObjectMapper().findAndRegisterModules());
+        return new HttpRemoteAgentGateway(new HttpRemoteAgentGateway.Config(
+                URI.create(endpoint), authorization, Map.of(),
+                Duration.ofMillis(connectTimeoutMs), Duration.ofMillis(requestTimeoutMs),
+                maximumResponseCharacters, allowInsecureLocalhost), mapper);
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(RemoteAgentGateway.class)
     @ConditionalOnProperty(
             name = "meguri.agent.gateway-mode",
             havingValue = "unavailable",
@@ -99,5 +129,15 @@ public class AgentRuntimeSpringConfiguration {
     @ConditionalOnMissingBean(AgentRuntime.class)
     AgentRuntime agentRuntime(AgentRuntimeAssembly assembly) {
         return assembly.runtime();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(AgentDurableRecoveryLifecycle.class)
+    AgentDurableRecoveryLifecycle agentDurableRecoveryLifecycle(
+            AgentRuntime runtime,
+            @Value("${meguri.agent.recovery.interval-ms:5000}") long intervalMs,
+            @Value("${meguri.agent.recovery.batch-size:32}") int batchSize) {
+        return new AgentDurableRecoveryLifecycle(
+                runtime, Duration.ofMillis(intervalMs), batchSize);
     }
 }

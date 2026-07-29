@@ -2,6 +2,7 @@ package com.meguri.core.capability;
 
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -122,6 +123,36 @@ class CapabilityRuntimeTest {
         assertThat(fixture.audit.events())
                 .extracting(CapabilityAudit.Event::phase)
                 .containsExactly("COMPLETED", "IDEMPOTENT_REPLAY");
+        fixture.close();
+    }
+
+    @Test
+    void idempotentExternalUnknownOutcomeIsClaimedAndNeverInvokedAgain() {
+        Fixture fixture = new Fixture();
+        AtomicInteger calls = new AtomicInteger();
+        CapabilityDescriptor descriptor = descriptor(
+                "external.effect", "1", CapabilityDescriptor.Kind.REMOTE_AGENT,
+                CapabilityDescriptor.SideEffect.EXTERNAL,
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL,
+                Duration.ofSeconds(1), 1,
+                new CapabilityDescriptor.RetryPolicy(3, Duration.ZERO),
+                new CapabilityDescriptor.IdempotencyPolicy(true, true),
+                Set.of(), false, CapabilityDescriptor.DataClassification.INTERNAL, 1);
+        fixture.registry.registerAndEnable(descriptor, (input, context) -> {
+            calls.incrementAndGet();
+            throw new IOException("ambiguous transport failure");
+        });
+        ExposurePlanner.ExposurePlan plan = fixture.plan(Set.of(descriptor.id()));
+
+        CapabilityResult first = fixture.executor.execute(
+                plan, proposal(descriptor.id(), "external-op-1", "external-key", null));
+        CapabilityResult replay = fixture.executor.execute(
+                plan, proposal(descriptor.id(), "external-op-2", "external-key", null));
+
+        assertThat(first.status()).isEqualTo(CapabilityResult.Status.UNKNOWN_OUTCOME);
+        assertThat(replay).isEqualTo(first);
+        assertThat(calls).hasValue(1);
         fixture.close();
     }
 

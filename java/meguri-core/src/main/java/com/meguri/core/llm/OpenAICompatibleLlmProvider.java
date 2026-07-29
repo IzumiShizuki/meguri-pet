@@ -36,6 +36,12 @@ public final class OpenAICompatibleLlmProvider implements LlmProvider {
     }
 
     @Override
+    public Mono<AgentPlanningRequest.Decision> planAgent(
+            AgentPlanningRequest request) {
+        return delegate.planAgent(request);
+    }
+
+    @Override
     public Mono<LlmResponse> respond(TurnRequest request, RuntimeState state, List<String> canon,
                                      List<String> memories, List<String> recentContext,
                                      List<String> webResults) {

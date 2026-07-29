@@ -29,14 +29,27 @@ public final class GlobalPromptBudget {
     }
 
     public BudgetedPrompt fit(String systemPrompt, Map<String, Object> context) {
+        return fit(systemPrompt, context, OPTIONAL_LANES);
+    }
+
+    /**
+     * Fits one provider request while preserving every lane not explicitly marked optional.
+     * Optional lanes are trimmed in the supplied order when equally large.
+     */
+    public BudgetedPrompt fit(
+            String systemPrompt,
+            Map<String, Object> context,
+            List<String> optionalLanes) {
         Map<String, Object> mutable = mutableCopy(context);
+        List<String> removable = optionalLanes == null ? List.of() : List.copyOf(optionalLanes);
         String beforeJson = write(mutable);
         int before = total(systemPrompt, beforeJson);
         if (before <= precompressThreshold) {
             return new BudgetedPrompt(beforeJson, before, before, false, tokenizer.name());
         }
 
-        while (total(systemPrompt, write(mutable)) > hardTarget && removeLargestOptionalItem(mutable)) {
+        while (total(systemPrompt, write(mutable)) > hardTarget
+                && removeLargestOptionalItem(mutable, removable)) {
             // Remove whole lowest-priority records so provenance boundaries stay intact.
         }
         String json = write(mutable);
@@ -48,22 +61,29 @@ public final class GlobalPromptBudget {
         return new BudgetedPrompt(json, before, consumed, true, tokenizer.name());
     }
 
-    private boolean removeLargestOptionalItem(Map<String, Object> context) {
+    private boolean removeLargestOptionalItem(
+            Map<String, Object> context,
+            List<String> optionalLanes) {
         String selected = null;
         int selectedTokens = -1;
-        for (String lane : OPTIONAL_LANES) {
+        for (String lane : optionalLanes) {
             Object value = context.get(lane);
-            if (!(value instanceof List<?> list) || list.isEmpty()) continue;
-            int tokens = tokenizer.count(String.valueOf(list));
+            if (value == null || value instanceof List<?> list && list.isEmpty()) continue;
+            int tokens = tokenizer.count(write(Map.of(lane, value)));
             if (tokens > selectedTokens) {
                 selected = lane;
                 selectedTokens = tokens;
             }
         }
         if (selected == null) return false;
-        @SuppressWarnings("unchecked")
-        List<Object> values = (List<Object>) context.get(selected);
-        values.removeLast();
+        Object selectedValue = context.get(selected);
+        if (selectedValue instanceof List<?> list && list.size() > 1) {
+            @SuppressWarnings("unchecked")
+            List<Object> values = (List<Object>) list;
+            values.removeLast();
+        } else {
+            context.remove(selected);
+        }
         return true;
     }
 

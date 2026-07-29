@@ -17,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static com.meguri.core.agent.AgentRuntimeState.AgentStatus;
@@ -82,15 +81,12 @@ public final class AgentRuntime implements AutoCloseable {
 
     void restoreDurableCapacity() {
         tasks.findResumable().stream()
+                .filter(task -> task.status() == AgentStatus.RUNNING
+                        || task.status() == AgentStatus.WAITING_EXTERNAL)
                 .sorted(java.util.Comparator
                         .comparing(AgentTask::createdAt)
                         .thenComparing(AgentTask::taskId))
-                .forEach(task -> leases.put(
-                        task.taskId(),
-                        registry.restoreInFlight(
-                                task.resourceId(),
-                                task.tenantId(),
-                                task.userId())));
+                .forEach(this::ensureInFlightLease);
     }
 
     public Mono<AgentInvocation> invokeAgent(
@@ -135,11 +131,29 @@ public final class AgentRuntime implements AutoCloseable {
     public Mono<List<AgentInvocation>> resumeDurableTasks(int maxTasks) {
         if (maxTasks < 0) return Mono.error(new IllegalArgumentException("maxTasks must be non-negative"));
         return Flux.fromIterable(tasks.findResumable().stream().limit(maxTasks).toList())
-                .concatMap(task -> {
-                    Prepared prepared = restore(task);
-                    return poll(prepared, 0).onErrorResume(error -> fail(prepared, error));
-                })
+                .concatMap(task -> Mono.defer(() -> resumeDurableTask(task))
+                        .onErrorResume(error -> Mono.empty()))
                 .collectList();
+    }
+
+    private Mono<AgentInvocation> resumeDurableTask(AgentTask task) {
+        Prepared prepared = restore(task);
+        if (!clock.instant().isBefore(task.context().deadline())) {
+            return timeout(prepared);
+        }
+        return switch (task.status()) {
+            case CREATED -> admitAndSubmit(prepared)
+                    .onErrorResume(AgentSkippedException.class,
+                            error -> skip(prepared, error.getMessage()));
+            case QUEUED -> acquireQueuedAndSubmit(prepared)
+                    .onErrorResume(AgentSkippedException.class,
+                            error -> skip(prepared, error.getMessage()));
+            case RUNNING -> resumeRunning(prepared);
+            case WAITING_EXTERNAL -> resumeWaiting(prepared);
+            case SUCCEEDED, FAILED, CANCELLED, TIMED_OUT ->
+                    Mono.error(new IllegalStateException(
+                            "terminal agent task is not resumable"));
+        };
     }
 
     public Mono<Void> cancelTask(String taskId) {
@@ -149,7 +163,11 @@ public final class AgentRuntime implements AutoCloseable {
             task.context().cancellation().cancel();
             if (AgentRuntimeState.terminal(task.status())) return Mono.empty();
             Prepared prepared = restore(task);
-            return cancelRemote(task).then(Mono.fromRunnable(() ->
+            Mono<Void> children = Flux.fromIterable(tasks.findChildren(task.taskId()))
+                    .filter(child -> !AgentRuntimeState.terminal(child.status()))
+                    .concatMap(child -> cancelTask(child.taskId()))
+                    .then();
+            return children.then(cancelRemote(task)).then(Mono.fromRunnable(() ->
                     terminatePrepared(prepared, AgentStatus.CANCELLED, StepStatus.CANCELLED,
                             SkillStatus.CANCELLED, "cancelled")));
         });
@@ -253,7 +271,11 @@ public final class AgentRuntime implements AutoCloseable {
 
     private Mono<AgentInvocation> admitAndSubmit(Prepared prepared) {
         AgentTask queued = save(prepared.task(), AgentStatus.QUEUED, null, null);
-        Prepared current = prepared.withTask(queued);
+        return acquireQueuedAndSubmit(prepared.withTask(queued));
+    }
+
+    private Mono<AgentInvocation> acquireQueuedAndSubmit(Prepared prepared) {
+        AgentTask queued = prepared.task();
         ExecutionResourceRegistry.AdmissionRequest request = new ExecutionResourceRegistry.AdmissionRequest(
                 queued.tenantId(), queued.userId(), queued.context().deadline(),
                 prepared.proposal().required(), queued.context().cancellation());
@@ -261,10 +283,10 @@ public final class AgentRuntime implements AutoCloseable {
                 .flatMap(lease -> Mono.defer(() -> {
                     leases.put(queued.taskId(), lease);
                     emit(AgentLifecycleEvent.Type.CAPACITY_ACQUIRED,
-                            current.skill(), current.step(), queued, null, null, queued.resourceId());
+                            prepared.skill(), prepared.step(), queued, null, null, queued.resourceId());
                     try {
                         AgentTask running = save(queued, AgentStatus.RUNNING, null, null);
-                        Prepared active = current.withTask(running).withLease(lease);
+                        Prepared active = prepared.withTask(running).withLease(lease);
                         return dispatcher.dispatch(ExecutionDomain.REMOTE_AGENT,
                                         () -> gateway.submit(running, prepared.proposal()))
                                 .doOnSuccess(ignored -> releaseSubmit(active))
@@ -279,6 +301,63 @@ public final class AgentRuntime implements AutoCloseable {
                 }));
     }
 
+    private Mono<AgentInvocation> resumeRunning(Prepared prepared) {
+        ensureInFlightLease(prepared.task());
+        Prepared restored = prepared.withLease(leases.get(prepared.task().taskId()));
+        if (prepared.task().remoteTaskId() != null) {
+            return resumeWaiting(normalizeWaiting(restored));
+        }
+        return registry.acquireSubmit(
+                        prepared.task().resourceId(),
+                        prepared.task().context().deadline(),
+                        prepared.task().context().cancellation())
+                .flatMap(submitLease -> dispatcher.dispatch(
+                                ExecutionDomain.REMOTE_AGENT,
+                                () -> gateway.submit(
+                                        prepared.task(), prepared.proposal()))
+                        .doFinally(ignored -> submitLease.close()))
+                .flatMap(submission -> submitted(restored, submission))
+                .onErrorResume(error -> fail(restored, error));
+    }
+
+    private Mono<AgentInvocation> resumeWaiting(Prepared prepared) {
+        if (prepared.task().remoteTaskId() == null) {
+            return fail(prepared, new IllegalStateException(
+                    "waiting agent task has no remote task id"));
+        }
+        ensureInFlightLease(prepared.task());
+        Prepared normalized = normalizeWaiting(
+                prepared.withLease(leases.get(prepared.task().taskId())));
+        return awaitRemote(normalized);
+    }
+
+    private Prepared normalizeWaiting(Prepared prepared) {
+        AgentTask task = prepared.task();
+        if (task.status() == AgentStatus.RUNNING) {
+            task = save(task, AgentStatus.WAITING_EXTERNAL, null, null);
+        }
+        StepExecution step = prepared.step();
+        if (step.status() == StepStatus.PENDING) {
+            step = save(step, StepStatus.RUNNING, null, null);
+        }
+        if (step.status() == StepStatus.RUNNING) {
+            step = save(step, StepStatus.WAITING, null, null);
+        }
+        SkillExecution skill = prepared.skill();
+        if (skill.status() == SkillStatus.RUNNING) {
+            skill = save(skill, SkillStatus.WAITING_REMOTE_AGENT, null);
+        }
+        return new Prepared(
+                skill, step, task, prepared.proposal(),
+                prepared.created(), prepared.lease());
+    }
+
+    private void ensureInFlightLease(AgentTask task) {
+        leases.computeIfAbsent(task.taskId(), ignored ->
+                registry.restoreInFlight(
+                        task.resourceId(), task.tenantId(), task.userId()));
+    }
+
     private Mono<AgentInvocation> submitted(
             Prepared prepared, RemoteAgentGateway.RemoteSubmission submission) {
         AgentTask identified = tasks.save(
@@ -287,10 +366,11 @@ public final class AgentRuntime implements AutoCloseable {
         emit(AgentLifecycleEvent.Type.REMOTE_SUBMITTED,
                 prepared.skill(), prepared.step(), identified, null, null, submission.remoteTaskId());
         AgentTask waiting = save(identified, AgentStatus.WAITING_EXTERNAL, null, null);
-        StepExecution step = save(prepared.step(), StepStatus.RUNNING, null, null);
-        step = save(step, StepStatus.WAITING, null, null);
-        SkillExecution skill = save(prepared.skill(), SkillStatus.WAITING_REMOTE_AGENT, null);
-        Prepared waitingPrepared = new Prepared(skill, step, waiting, prepared.proposal(), true, prepared.lease());
+        Prepared waitingPrepared = normalizeWaiting(new Prepared(
+                prepared.skill(), prepared.step(), waiting,
+                prepared.proposal(), true, prepared.lease()));
+        StepExecution step = waitingPrepared.step();
+        SkillExecution skill = waitingPrepared.skill();
 
         if (prepared.proposal().mode() == InvokeAgentProposal.InvocationMode.DURABLE_ASYNC) {
             watchDurableCancellation(waiting);
@@ -300,23 +380,28 @@ public final class AgentRuntime implements AutoCloseable {
                     skill.executionId(), step.stepExecutionId(), waiting.taskId(), submission.remoteTaskId(),
                     AgentInvocation.Status.ACCEPTED_DURABLE, null, null));
         }
-        Duration remaining = Duration.between(clock.instant(), waiting.context().deadline());
-        if (remaining.isNegative() || remaining.isZero()) return timeout(waitingPrepared);
-        Mono<AgentInvocation> awaited = poll(waitingPrepared, 0)
-                .timeout(remaining)
-                .onErrorResume(TimeoutException.class, ignored -> timeout(waitingPrepared))
-                .onErrorResume(error -> fail(waitingPrepared, error));
+        Mono<AgentInvocation> awaited = awaitRemote(waitingPrepared);
         Mono<AgentInvocation> cancellation = waiting.context().cancellation().onCancel()
                 .then(cancelRemote(waiting))
                 .then(Mono.defer(() -> cancel(waitingPrepared)));
         return Mono.firstWithSignal(awaited, cancellation);
     }
 
+    private Mono<AgentInvocation> awaitRemote(Prepared prepared) {
+        Duration remaining = Duration.between(
+                clock.instant(), prepared.task().context().deadline());
+        if (remaining.isNegative() || remaining.isZero()) return timeout(prepared);
+        return poll(prepared, 0)
+                .timeout(remaining, Mono.defer(() -> timeout(prepared)))
+                .onErrorResume(error -> failUnlessTerminal(prepared, error));
+    }
+
     private Mono<AgentInvocation> poll(Prepared prepared, int attempt) {
         if (attempt >= prepared.proposal().maxPollAttempts()) {
-            return Mono.error(new AgentDeadlineExceededException("remote agent poll attempts exhausted"));
+            return timeout(prepared);
         }
-        if (!clock.instant().isBefore(prepared.task().context().deadline())) return timeout(prepared);
+        // The single awaitRemote timer owns deadline transition and remote cancellation.
+        if (!clock.instant().isBefore(prepared.task().context().deadline())) return Mono.never();
         return gateway.poll(prepared.task().remoteTaskId()).flatMap(status -> switch (status) {
             case SUCCEEDED -> gateway.result(prepared.task().remoteTaskId())
                     .flatMap(result -> complete(prepared, result));
@@ -326,6 +411,15 @@ public final class AgentRuntime implements AutoCloseable {
             case QUEUED, RUNNING, WAITING_EXTERNAL -> Mono.delay(prepared.proposal().pollInterval())
                     .then(poll(prepared, attempt + 1));
         });
+    }
+
+    private Mono<AgentInvocation> failUnlessTerminal(
+            Prepared prepared, Throwable error) {
+        AgentTask latest = tasks.findTask(prepared.task().taskId())
+                .orElse(prepared.task());
+        return AgentRuntimeState.terminal(latest.status())
+                ? Mono.error(error)
+                : fail(prepared, error);
     }
 
     private Mono<AgentInvocation> complete(Prepared prepared, AgentResult rawResult) {

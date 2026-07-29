@@ -58,6 +58,12 @@ public record FrozenKnowledgeSnapshot(
         return freeze(projection, at, null);
     }
 
+    /** Fail-closed snapshot used when the Knowledge authority cannot be read at Turn acceptance. */
+    public static FrozenKnowledgeSnapshot empty(Instant at) {
+        if (at == null) throw new IllegalArgumentException("freeze time is required");
+        return create(at, List.of());
+    }
+
     public static FrozenKnowledgeSnapshot freeze(
             KnowledgeSearchProjectionPort projection, Instant at, String tenantId) {
         if (projection == null || at == null) {

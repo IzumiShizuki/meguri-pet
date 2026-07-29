@@ -37,9 +37,13 @@ public record AdapterTurnCreateRequest(
 
     public TurnRequest toCoreRequest(ClientBinding binding) {
         if (binding == null) throw new IllegalArgumentException("Client Hello binding is required");
+        String platformActorHash = PlatformActorMapper.hash(
+                identity.platformActor().platform(), identity.platformActor().actorId());
         if (!binding.meguriUserId().equals(identity.meguriUser().id())
                 || !binding.clientId().equals(identity.clientInstance().profile())
-                || !binding.clientInstanceId().equals(identity.clientInstance().id())) {
+                || !binding.clientInstanceId().equals(identity.clientInstance().id())
+                || binding.platformActorHash() == null
+                || !binding.platformActorHash().equals(platformActorHash)) {
             throw new IllegalArgumentException("Turn identity does not match Client Hello binding");
         }
         ProtocolVersion requestVersion = ProtocolVersion.parse(protocolVersion);
@@ -71,7 +75,7 @@ public record AdapterTurnCreateRequest(
                 retrievalMode);
         return request.withAdapterIdentity(
                         identity.platformActor().platform(),
-                        identity.platformActor().actorId(),
+                        platformActorHash,
                         identity.clientInstance().id())
                 .withTenantId(binding.tenantId());
     }

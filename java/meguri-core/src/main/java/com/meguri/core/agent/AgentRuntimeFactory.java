@@ -23,6 +23,17 @@ public final class AgentRuntimeFactory {
         return create(Config.defaults(), listener, Clock.systemUTC());
     }
 
+    public static AgentRuntimeAssembly createHttp(
+            Config config,
+            AgentLifecycleListener listener,
+            Clock clock,
+            AgentExecutionStores.RuntimeStore store,
+            HttpRemoteAgentGateway.Config transport) {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        return create(config, listener, clock,
+                new HttpRemoteAgentGateway(transport, mapper), store);
+    }
+
     public static AgentRuntimeAssembly create(
             Config config, AgentLifecycleListener listener, Clock clock) {
         InMemoryRemoteAgentGateway gateway = new InMemoryRemoteAgentGateway(

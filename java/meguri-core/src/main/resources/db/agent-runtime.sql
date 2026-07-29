@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS ix_agent_task_execution
     ON agent_task (execution_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_agent_task_resumable
     ON agent_task (status, updated_at)
-    WHERE status = 'WAITING_EXTERNAL';
+    WHERE status IN ('CREATED', 'QUEUED', 'RUNNING', 'WAITING_EXTERNAL');
 CREATE INDEX IF NOT EXISTS ix_agent_task_quota
     ON agent_task (tenant_id, user_id, status)
     WHERE status IN ('QUEUED', 'RUNNING', 'WAITING_EXTERNAL');
