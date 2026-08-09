@@ -21,6 +21,7 @@
 3. 根据任务打开：
 
    - [architecture.md](architecture.md)：模块边界、运行时归属、权威数据和请求流。
+   - [module-index.md](module-index.md)：按功能定位入口文件、API、包职责和对应测试。
    - [workflows.md](workflows.md)：本机启动、测试、构建、基准和运维命令。
    - [guardrails.md](guardrails.md)：离线默认、秘密、外部状态、Git 和 OpenSpec 安全边界。
 

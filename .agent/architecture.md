@@ -20,6 +20,112 @@ Website / AIRI / AstrBot / Desktop
 - `java/meguri-core/` 是 Java 21 的并行 JVM 边界。它使用 Spring Boot WebFlux 和 LangChain4j，默认不访问外部 LLM；Java 不是把 Python 现有权威状态静默复制成另一份权威。
 - `apps/desktop-airi/`、网站客户端、AIRI 和 AstrBot 都是边缘适配层。它们负责协议转换、session/client identity、渲染或平台投递，不应自行重写核心状态机。
 
+详细的文件入口、API、包职责和测试定位见 [module-index.md](module-index.md)。下面的图只表达稳定的主链路；具体分支仍以各 controller、orchestrator、adapter 和契约文件为准。
+
+## System request chain
+
+```mermaid
+flowchart LR
+    subgraph Clients["Clients and platform edges"]
+        WEB["Website"]
+        AIRI["AIRI"]
+        AST["AstrBot"]
+        DESK["Desktop / Electron"]
+    end
+
+    CONTRACT["packages/protocol\npackages/client-sdk"]
+    PY["Python Core\nservices/meguri_core\n127.0.0.1:8000"]
+    JAVA["Java Core\njava/meguri-core\n127.0.0.1:18080"]
+    TURN["Turn orchestration\nstate + context + retrieval + capability"]
+    PROVIDER["LLM / planner / RAG\nmock by default"]
+    EVENTS["Durable events\nSSE + replay + cancellation"]
+    RENDER["Renderer / platform delivery"]
+
+    WEB --> CONTRACT
+    AIRI --> CONTRACT
+    AST --> CONTRACT
+    DESK --> CONTRACT
+    CONTRACT -->|HTTP + SSE| PY
+    CONTRACT -->|HTTP + SSE| JAVA
+    PY --> TURN
+    JAVA --> TURN
+    TURN --> PROVIDER
+    PROVIDER --> TURN
+    TURN --> EVENTS
+    EVENTS --> CONTRACT
+    CONTRACT --> RENDER
+```
+
+## Durable event and replay chain
+
+```mermaid
+sequenceDiagram
+    participant Edge as "Adapter / desktop client"
+    participant Core as "Python or Java Core"
+    participant Journal as "Turn journal / event store"
+    participant Stream as "SSE stream"
+    participant Reducer as "Client reducer / checkpoint"
+    participant SideEffect as "Renderer / platform side effect"
+
+    Edge->>Core: create turn with identity and idempotency key
+    Core->>Journal: persist TurnCreated and resolved state
+    Core-->>Edge: 202 turn_id and session_id
+    Core->>Core: run provider and bounded child work
+    Core->>Journal: append delta or terminal event
+    Journal-->>Stream: release only persisted event
+    Stream-->>Reducer: event with monotonic sequence
+    Reducer->>Reducer: deduplicate and checkpoint
+    Reducer->>SideEffect: dispatch only after checkpoint
+    Edge->>Stream: reconnect with after_sequence / Last-Event-ID
+    Stream-->>Reducer: replay missing events or snapshot recovery
+```
+
+## Local startup and dependency chain
+
+```mermaid
+flowchart TD
+    JAVA["Java Core\nport 18080\nmock provider by default"]
+    PY["Python Core\nport 8000\nmock memory/RAG by default"]
+    DESKTOP["Desktop web server\nport 5173"]
+    TTS["Local TTS bridge\n127.0.0.1:9880"]
+    AIRI["External AIRI checkout\nD:/program/airi-meguri"]
+    AST["AstrBot plugin\nconfigured Core URL"]
+    WEBSITE["Website client\nconfigured loopback URL"]
+
+    PY -. "Java memory/RAG bridge when configured" .-> JAVA
+    JAVA --> DESKTOP
+    TTS --> AIRI
+    JAVA --> AIRI
+    JAVA --> AST
+    PY --> WEBSITE
+    JAVA --> WEBSITE
+```
+
+The desktop web server has both configured remote and local Core targets in its source; inspect `MEGURI_CORE_URL`, `MEGURI_LOCAL_CORE_URL`, origin checks, and the security tests before changing the target. The diagram shows dependency order, not permission to enable remote services.
+
+## Authority boundary chain
+
+```mermaid
+flowchart LR
+    REQUEST["Client request\nuntrusted mode / input / identity"]
+    VERIFY["Identity + policy\nserver-side verification"]
+    DECISION["Execution decision\nFAST / THINK / AGENT"]
+    RETRIEVAL["Retrieval + context\nACL / trust / deadline"]
+    ACTION["Capability / ReAct\napproval / budget / idempotency"]
+    MEMORY["Formal memory\nauthoritative provider only"]
+    EVENT["Durable turn event\nreplayable observation"]
+    OUT["Client rendering\nnon-authoritative side effect"]
+
+    REQUEST --> VERIFY --> DECISION
+    DECISION --> RETRIEVAL
+    DECISION --> ACTION
+    RETRIEVAL --> EVENT
+    ACTION --> EVENT
+    RETRIEVAL -. "reviewed write only" .-> MEMORY
+    ACTION -. "untrusted observation" .-> EVENT
+    EVENT --> OUT
+```
+
 ## Contract ownership
 
 | 领域 | 权威来源 | Agent 修改规则 |
