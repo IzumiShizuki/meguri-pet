@@ -11,6 +11,15 @@ import com.meguri.core.dto.MemoryStatus;
 import com.meguri.core.dto.ResolvedExpression;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.CurrentTurnSignals;
+import com.meguri.core.execution.DeterministicExecutionModeResolver;
+import com.meguri.core.execution.ExecutionBudget;
+import com.meguri.core.execution.ExecutionBudgetPolicy;
+import com.meguri.core.execution.ExecutionModeAvailability;
+import com.meguri.core.execution.ExecutionModeDecision;
+import com.meguri.core.execution.ExecutionModeResolver;
+import com.meguri.core.execution.ExecutionModeResolutionContext;
+import com.meguri.core.execution.TurnExecutionMode;
 import com.meguri.core.agent.AgentLifecycleEvent;
 import com.meguri.core.agent.AgentInvocation;
 import com.meguri.core.agent.AgentResult;
@@ -19,6 +28,7 @@ import com.meguri.core.agent.AgentRuntimeFactory;
 import com.meguri.core.agent.AgentTaskContext;
 import com.meguri.core.agent.CancellationToken;
 import com.meguri.core.agent.InvokeAgentProposal;
+import com.meguri.core.agent.StepDispatcher;
 import com.meguri.core.capability.ApprovalService;
 import com.meguri.core.capability.CapabilityDescriptor;
 import com.meguri.core.capability.CapabilityResult;
@@ -41,7 +51,9 @@ import com.meguri.core.harness.retrieval.RetrievalMode;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
 import com.meguri.core.llm.NativeTextDeltaAggregator;
+import com.meguri.core.llm.UserVisibleReplyStream;
 import com.meguri.core.llm.AgentPlanningRequest;
+import com.meguri.core.llm.AgentPlannerException;
 import com.meguri.core.llm.ProviderRequest;
 import com.meguri.core.context.CompanionContextRuntime;
 import com.meguri.core.context.ContextBuildRequest;
@@ -52,6 +64,10 @@ import com.meguri.core.context.InMemoryContextRuntimePersistence;
 import com.meguri.core.memory.job.InMemoryPostReplyMemoryJobStore;
 import com.meguri.core.memory.job.PostReplyMemoryJob;
 import com.meguri.core.memory.job.PostReplyMemoryJobEnqueuer;
+import com.meguri.core.observability.TurnLatencyMissingReason;
+import com.meguri.core.observability.TurnLatencyPoint;
+import com.meguri.core.observability.TurnLatencyTraceMetadata;
+import com.meguri.core.observability.TurnLatencyTraceRecorder;
 import com.meguri.core.persona.PersonaRuntimeDefaults;
 import com.meguri.core.persona.PersonaRuntimeFacade;
 import com.meguri.core.persona.presentation.PresentationIntent;
@@ -64,8 +80,20 @@ import com.meguri.core.rag.CanonicalRagRetriever;
 import com.meguri.core.rag.MockRagProvider;
 import com.meguri.core.rag.RagProvider;
 import com.meguri.core.resources.LocalResourcePromptContext;
+import com.meguri.core.artifact.ModelGeneratedArtifactResolver;
+import com.meguri.core.document.DocumentEditPreviewStore;
+import com.meguri.core.document.ModelDocumentEditProposalResolver;
 import com.meguri.core.memory.MemoryGateway;
 import com.meguri.core.retrieval.KnowledgeTurnRetrievalRuntime;
+import com.meguri.core.react.ActionProposalValidator;
+import com.meguri.core.react.CapabilityRuntimeReactActionExecutor;
+import com.meguri.core.react.DefaultObservationNormalizer;
+import com.meguri.core.react.InMemoryReactTraceRepository;
+import com.meguri.core.react.LimitedReActRuntime;
+import com.meguri.core.react.ReactInvocationScope;
+import com.meguri.core.react.ReactPlanner;
+import com.meguri.core.react.ReactRunRequest;
+import com.meguri.core.react.TerminationPolicy;
 import com.meguri.core.training.TrainingFeedbackRequest;
 import com.meguri.core.training.TrainingFeedbackService;
 import com.meguri.core.websearch.NoopWebSearchGateway;
@@ -73,6 +101,7 @@ import com.meguri.core.websearch.WebSearchGateway;
 import com.meguri.core.weather.WeatherConversationService;
 import com.meguri.core.weather.WeatherConversationService.TurnWeatherContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.Disposable;
 import reactor.core.publisher.BufferOverflowStrategy;
@@ -117,6 +146,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private final LlmProvider llm;
     private volatile SessionContextStore sessions;
     private final ObjectMapper objectMapper;
+    private final ModelDocumentEditProposalResolver documentEditProposals;
     private final String buildId;
     private final Duration streamInterval;
     private final MemoryGateway memory;
@@ -131,6 +161,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private volatile CanonicalTurnPipeline canonicalPipeline;
     private volatile PresentationResolver presentationResolver;
     private volatile PostReplyMemoryJobEnqueuer postReplyMemoryJobs;
+    private final Clock clock = Clock.systemUTC();
+    private final ExecutionModeResolver executionModeResolver;
+    private volatile boolean executionModeEnabled;
+    private volatile boolean fastPathEnabled;
+    private volatile boolean limitedReactEnabled;
+    private volatile Duration agentPlannerDeadline = Duration.ofSeconds(5);
+    private volatile ReactPlanner limitedReactPlanner;
+    private final InMemoryReactTraceRepository limitedReactTraces =
+            new InMemoryReactTraceRepository();
     private final String executionOwnerId = "meguri-core-" + UUID.randomUUID();
     private static final Duration EXECUTION_LEASE = Duration.ofSeconds(30);
 
@@ -260,6 +299,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         this.expressionResolver = Objects.requireNonNull(expressionResolver, "expressionResolver");
         this.buildId = expressionResolver.buildId();
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
+        this.documentEditProposals = new ModelDocumentEditProposalResolver(
+                this.objectMapper, DocumentEditPreviewStore.shared());
         this.llm = llm == null ? defaultLlm(this.objectMapper) : llm;
         this.rag = rag == null ? defaultRag(this.buildId) : rag;
         this.streamInterval = streamInterval == null ? Duration.ofMillis(10) : streamInterval;
@@ -288,6 +329,42 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         this.presentationResolver = new PresentationResolver();
         this.postReplyMemoryJobs = new PostReplyMemoryJobEnqueuer(
                 new InMemoryPostReplyMemoryJobStore(), this.objectMapper, Clock.systemUTC());
+        this.executionModeResolver = new DeterministicExecutionModeResolver(
+                ExecutionBudgetPolicy.safeBootstrapDefaults(clock),
+                Duration.ofMillis(250), Duration.ofSeconds(1), clock);
+    }
+
+    @Autowired
+    public void configurePerformanceFeatures(
+            @Value("${meguri.performance.execution-mode-enabled:false}")
+            boolean executionModeEnabled,
+            @Value("${meguri.performance.fast-path-enabled:false}")
+            boolean fastPathEnabled,
+            @Value("${meguri.performance.limited-react-enabled:false}")
+            boolean limitedReactEnabled,
+            @Value("${meguri.agent.planner.deadline-ms:5000}")
+            long agentPlannerDeadlineMs) {
+        if (agentPlannerDeadlineMs <= 0) {
+            throw new IllegalArgumentException("meguri.agent.planner.deadline-ms must be positive");
+        }
+        this.executionModeEnabled = executionModeEnabled;
+        this.fastPathEnabled = executionModeEnabled && fastPathEnabled;
+        this.limitedReactEnabled = executionModeEnabled && limitedReactEnabled;
+        this.agentPlannerDeadline = Duration.ofMillis(agentPlannerDeadlineMs);
+    }
+
+    /** Compatibility hook for tests and embedders that predate the planner deadline setting. */
+    public void configurePerformanceFeatures(
+            boolean executionModeEnabled,
+            boolean fastPathEnabled,
+            boolean limitedReactEnabled) {
+        configurePerformanceFeatures(executionModeEnabled, fastPathEnabled,
+                limitedReactEnabled, 5_000L);
+    }
+
+    @Autowired(required = false)
+    public void configureLimitedReactPlanner(ReactPlanner planner) {
+        this.limitedReactPlanner = Objects.requireNonNull(planner, "planner");
     }
 
     @Autowired(required = false)
@@ -916,6 +993,26 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (record.getManifest() != null) return;
         TurnRequest request = record.getRequest();
         Instant frozenAt = Instant.now();
+        ExecutionModeDecision executionDecision = executionModeEnabled
+                ? resolveExecutionMode(record) : null;
+        if (executionDecision != null) {
+            record.freezeExecutionModeDecision(executionDecision);
+        }
+        String traceExecutionMode = executionDecision == null
+                ? (request.retrievalMode() == RetrievalMode.SLOW ? "THINK" : "FAST")
+                : executionDecision.mode().name();
+        TurnLatencyTraceRecorder latency = new TurnLatencyTraceRecorder(
+                new TurnLatencyTraceMetadata(
+                        record.getTraceId(), record.getTurnId(), buildId,
+                        System.getenv("MEGURI_GIT_COMMIT"),
+                        System.getenv("MEGURI_IMAGE_DIGEST"),
+                        EventEnvelope.CURRENT_PROTOCOL_VERSION,
+                        "runtime", llm.modelId(), llm.providerName(),
+                        traceExecutionMode, observabilityRetrievalMode(record),
+                        request.getClientId()));
+        latency.markAt(TurnLatencyPoint.TURN_RECEIVED, record.getAcceptedAt());
+        latency.mark(TurnLatencyPoint.PERSONA_STARTED);
+        record.freezeLatencyTraceRecorder(latency);
         sessions.appendNode(
                 request.getUserId(), request.getClientId(), request.getSessionId(),
                 userMessageId(record), null,
@@ -925,8 +1022,19 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 record, temporalState);
         RuntimeState state = canonicalPipeline.applyPersona(temporalState, effectivePersona);
         PersonaRuntime.PersonaSnapshot persona = personaSnapshot(state, effectivePersona);
-        CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities =
-                capabilityRuntime.freeze(exposureContext(record));
+        latency.mark(TurnLatencyPoint.PERSONA_READY);
+        boolean explicitWeather = request.retrievalMode() != RetrievalMode.NONE
+                && weatherConversation.classify(request.getMessage())
+                        != WeatherConversationService.Intent.NONE;
+        boolean omitToolSchemas = fastPathEnabled
+                && executionDecision != null
+                && executionDecision.mode() != TurnExecutionMode.AGENT
+                && !explicitWeather;
+        latency.mark(TurnLatencyPoint.CAPABILITY_EXPOSURE_STARTED);
+        CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities = omitToolSchemas
+                ? capabilityRuntime.freezeEmpty(record.getTurnId())
+                : capabilityRuntime.freeze(exposureContext(record));
+        latency.mark(TurnLatencyPoint.CAPABILITY_EXPOSURE_READY);
         FrozenKnowledgeSnapshot knowledgeSnapshot;
         try {
             knowledgeSnapshot = canonicalPipeline.freezeKnowledge(request, frozenAt);
@@ -960,6 +1068,81 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 llm.modelId(),
                 frozenAt));
         journal.persist(record);
+        latency.mark(TurnLatencyPoint.TURN_PERSISTED);
+    }
+
+    private ExecutionModeDecision resolveExecutionMode(TurnRecord record) {
+        TurnRequest request = record.getRequest();
+        String normalized = request.getMessage() == null
+                ? "" : request.getMessage().trim().toLowerCase(java.util.Locale.ROOT);
+        java.util.LinkedHashSet<String> intents = new java.util.LinkedHashSet<>();
+        if (isSimpleGreeting(normalized)) intents.add("greeting");
+        if (containsAny(normalized, "architecture", "架构", "设计", "compare", "比较", "对比",
+                "analysis", "分析", "reason", "推理", "计划")) {
+            intents.add("architecture");
+        }
+        boolean explicitAgent = request.agentProposal() != null
+                || containsAny(normalized, "agent", "仓库分析", "repository analysis", "多步骤执行");
+        if (explicitAgent) intents.add("repository_analysis");
+        boolean externalObservation = request.retrievalMode() != RetrievalMode.NONE
+                && weatherConversation.classify(request.getMessage())
+                        != WeatherConversationService.Intent.NONE;
+        if (externalObservation) intents.add("tool_required");
+
+        // Intent may request AGENT, but it must never manufacture capability
+        // authority. Only authenticated scopes (or the existing explicit
+        // weather lane) establish local read-tool availability.
+        boolean toolCapable = externalObservation
+                || !request.authorizedCapabilityScopes().isEmpty();
+        ExecutionBudget parentBudget = new ExecutionBudget(
+                Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE,
+                Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE,
+                Integer.MAX_VALUE, Integer.MAX_VALUE,
+                Long.MAX_VALUE, Long.MAX_VALUE, record.getDeadlineAt());
+        CurrentTurnSignals signals = new CurrentTurnSignals(
+                request.requestedExecutionMode(), null, null, List.copyOf(intents),
+                externalObservation, explicitAgent, toolCapable, false,
+                record.remaining().toMillis());
+        boolean limitedReactAvailable = limitedReactEnabled && limitedReactPlanner != null;
+        boolean plannerAvailable = agentRuntime != null && agentRuntimeConfig != null;
+        ExecutionModeAvailability availability = new ExecutionModeAvailability(
+                true,
+                limitedReactAvailable || plannerAvailable,
+                toolCapable,
+                false);
+        return executionModeResolver.resolve(signals,
+                new ExecutionModeResolutionContext(null, parentBudget, availability));
+    }
+
+    private static boolean isSimpleGreeting(String message) {
+        if (message == null) return true;
+        String compact = message.replaceAll("[\\p{Punct}\\s。！？～~]+", "");
+        return Set.of("", "hi", "hello", "hey", "thanks", "thankyou", "goodmorning",
+                "goodnight", "你好", "您好", "嗨", "哈喽", "谢谢", "早安", "晚安",
+                "おはよう", "こんにちは", "こんばんは", "ありがとう", "おやすみ")
+                .contains(compact);
+    }
+
+    private static boolean containsAny(String value, String... candidates) {
+        if (value == null || value.isBlank()) return false;
+        for (String candidate : candidates) {
+            if (value.contains(candidate)) return true;
+        }
+        return false;
+    }
+
+    private static String observabilityRetrievalMode(TurnRecord record) {
+        TurnRequest request = record.getRequest();
+        ExecutionModeDecision decision = record.getExecutionModeDecision();
+        if (decision == null || decision.mode() != TurnExecutionMode.FAST) {
+            return request.retrievalMode().name();
+        }
+        com.meguri.core.retrieval.RetrievalMode requested = switch (request.retrievalMode()) {
+            case NONE -> com.meguri.core.retrieval.RetrievalMode.NONE;
+            case FAST, SLOW -> com.meguri.core.retrieval.RetrievalMode.FAST;
+        };
+        return new com.meguri.core.retrieval.RetrievalGate()
+                .classify(request.getMessage(), requested).name();
     }
 
     private TurnSnapshot snapshotOf(TurnRecord record) {
@@ -1013,13 +1196,26 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         RuntimeState state;
         try {
             state = record.getPersonaSnapshot().state();
-            emit(record, "turn.started", Map.of(
-                    "stage", record.getStage().wireValue(),
-                    "runtime_state", beanMap(state),
-                    "manifest", beanMap(record.getManifest()),
-                    "persona_provenance", beanMap(record.getPersonaSnapshot().provenance())));
+            LinkedHashMap<String, Object> started = new LinkedHashMap<>();
+            started.put("stage", record.getStage().wireValue());
+            started.put("runtime_state", beanMap(state));
+            started.put("manifest", beanMap(record.getManifest()));
+            started.put("persona_provenance", beanMap(record.getPersonaSnapshot().provenance()));
+            ExecutionModeDecision executionDecision = record.getExecutionModeDecision();
+            if (executionDecision != null) {
+                started.put("execution_mode", executionDecision.mode().name());
+                started.put("execution_decision", beanMap(executionDecision));
+            }
+            emit(record, "turn.started", Map.copyOf(started));
         } catch (Throwable error) {
             return fail(record, error);
+        }
+
+        WeatherConversationService.Intent weatherIntent =
+                weatherConversation.classify(request.getMessage());
+        if (weatherIntent == WeatherConversationService.Intent.WEATHER
+                && request.retrievalMode() != RetrievalMode.NONE) {
+            return runDirectWeatherRecord(record, state);
         }
 
         transition(record, TurnStage.RETRIEVING);
@@ -1043,7 +1239,13 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 .flatMap(prepared -> {
                     Map<String, Object> retrievalTrace = new LinkedHashMap<>();
                     retrievalTrace.put("trace_id", prepared.retrieval().traceId());
-                    retrievalTrace.put("retrieval_mode", request.retrievalMode().wireValue());
+                    retrievalTrace.put("retrieval_mode",
+                            prepared.retrieval().plan().mode().name().toLowerCase(
+                                    java.util.Locale.ROOT));
+                    if (record.getExecutionModeDecision() != null) {
+                        retrievalTrace.put("execution_mode",
+                                record.getExecutionModeDecision().mode().name());
+                    }
                     retrievalTrace.put("lanes", prepared.retrieval().lanes().entrySet().stream()
                             .sorted(Map.Entry.comparingByKey())
                             .map(entry -> Map.<String, Object>of(
@@ -1093,7 +1295,11 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                 Map.copyOf(skillEvent));
                     }
 
-                    Mono<TurnWeatherContext> weather = request.retrievalMode().permitsOpenRetrieval()
+                    WeatherConversationService.Intent intent =
+                            weatherConversation.classify(request.getMessage());
+                    Mono<TurnWeatherContext> weather =
+                            intent != WeatherConversationService.Intent.NONE
+                                    && request.retrievalMode() != RetrievalMode.NONE
                             ? executeCapability(
                                     record,
                                     "weather.read",
@@ -1131,12 +1337,21 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             TurnRecord record,
             CanonicalTurnPipeline.Prepared planningContext) {
         TurnRequest request = record.getRequest();
+        ExecutionModeDecision executionDecision = record.getExecutionModeDecision();
+        if (executionDecision != null
+                && executionDecision.mode() != TurnExecutionMode.AGENT) {
+            return Mono.just(List.of());
+        }
+        if (executionDecision != null && executionDecision.reactEligible()
+                && limitedReactEnabled && limitedReactPlanner != null) {
+            return limitedReactContext(record);
+        }
         TurnRequest.AgentProposal requested = request.agentProposal();
         if (requested != null) {
             return invokeAgentContext(
                     record, planningContext, requested, true);
         }
-        if (request.retrievalMode() != RetrievalMode.SLOW) {
+        if (executionDecision == null) {
             return Mono.just(List.of());
         }
         AgentRuntime runtime = agentRuntime;
@@ -1155,10 +1370,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         config.resultSchemaId())),
                 request.retrievalMode().wireValue());
         return llm.planAgent(planningRequest)
-                .timeout(laneTimeout(record, Duration.ofSeconds(5)))
+                .timeout(laneTimeout(record, agentPlannerDeadline))
                 .onErrorResume(error -> {
                     emitAgentOutcome(record, "agent.failed", null, false,
-                            "AGENT_PLANNER_UNAVAILABLE");
+                            plannerFailureCode(error));
                     return Mono.empty();
                 })
                 .flatMap(decision -> invokeAgentContext(
@@ -1169,6 +1384,61 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                 "planner-" + decision.agentId()),
                         false))
                 .switchIfEmpty(Mono.just(List.of()));
+    }
+
+    private Mono<List<ContextBuildRequest.ExternalBlock>> limitedReactContext(
+            TurnRecord record) {
+        CapabilityRuntimeFacade.TurnCapabilities frozen = record.getRuntimeCapabilities();
+        ExecutionModeDecision decision = record.getExecutionModeDecision();
+        if (frozen == null || decision == null || limitedReactPlanner == null) {
+            return Mono.just(List.of());
+        }
+        StepDispatcher dispatcher = new StepDispatcher(2, 1, 1, 1);
+        LimitedReActRuntime runtime = new LimitedReActRuntime(
+                limitedReactPlanner,
+                new ActionProposalValidator(),
+                new CapabilityRuntimeReactActionExecutor(
+                        capabilityRuntime, frozen, dispatcher, clock),
+                new DefaultObservationNormalizer(1_024),
+                new TerminationPolicy(), limitedReactTraces, clock);
+        ReactInvocationScope scope = new ReactInvocationScope(
+                record.getTurnId(), record.getTraceId(),
+                record.getRequest().tenantId(), record.getRequest().getUserId(),
+                record.getRequest().getClientId(),
+                record.getRequest().authorizedCapabilityScopes(),
+                frozen.snapshotId(), false);
+        ReactRunRequest request = new ReactRunRequest(
+                scope, record.getRequest().getMessage(), TurnExecutionMode.AGENT,
+                decision.budget(), capabilityRuntime.exposedDescriptors(frozen),
+                record.agentCancellation(), "limited-react-v1");
+        return runtime.run(request)
+                .map(result -> {
+                    List<ContextBuildRequest.ExternalBlock> blocks = new java.util.ArrayList<>();
+                    result.observations().stream()
+                            .filter(observation -> !observation.summary().isBlank())
+                            .forEach(observation -> blocks.add(
+                                    new ContextBuildRequest.ExternalBlock(
+                                            ContextBundle.BlockType.TOOL_RESULT,
+                                            List.of("LIMITED_REACT",
+                                                    "trace:" + record.getTraceId(),
+                                                    "observation:" + observation.informationDigest()),
+                                            ContextBundle.Trust.UNTRUSTED_EXTERNAL,
+                                            observation.summary(), false)));
+                    if (result.finalAnswer() != null && !result.finalAnswer().isBlank()) {
+                        blocks.add(new ContextBuildRequest.ExternalBlock(
+                                ContextBundle.BlockType.TOOL_RESULT,
+                                List.of("LIMITED_REACT", "trace:" + record.getTraceId()),
+                                ContextBundle.Trust.UNTRUSTED_EXTERNAL,
+                                result.finalAnswer(), false));
+                    }
+                    return List.copyOf(blocks);
+                })
+                .onErrorResume(error -> {
+                    emitAgentOutcome(record, "agent.failed", null, false,
+                            "LIMITED_REACT_FAILED");
+                    return Mono.just(List.of());
+                })
+                .doFinally(ignored -> dispatcher.close());
     }
 
     private Mono<List<ContextBuildRequest.ExternalBlock>> invokeAgentContext(
@@ -1385,16 +1655,46 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 : current.getClass().getSimpleName();
     }
 
+    private static String plannerFailureCode(Throwable error) {
+        for (Throwable current = error; current != null && current.getCause() != current;
+                current = current.getCause()) {
+            if (current instanceof AgentPlannerException planner) {
+                return switch (planner.reason()) {
+                    case QUEUE_SATURATED -> "AGENT_PLANNER_SATURATED";
+                    case PROVIDER_TIMEOUT, INTERRUPTED -> "AGENT_PLANNER_TIMEOUT";
+                    case INVALID_RESPONSE -> "AGENT_PLANNER_INVALID_RESPONSE";
+                    case UPSTREAM_FAILURE -> "AGENT_PLANNER_UPSTREAM_FAILED";
+                };
+            }
+            if (current instanceof TimeoutException) return "AGENT_PLANNER_TIMEOUT";
+        }
+        return "AGENT_PLANNER_UNAVAILABLE";
+    }
+
     private Mono<GeneratedResponse> generatePrimary(
             TurnRecord record, ProviderRequest request) {
         if (!llm.supportsNativeStreaming()) {
+            markLatency(record, TurnLatencyPoint.PROVIDER_REQUEST_SENT);
             return llm.respond(request)
+                    .doOnNext(ignored -> {
+                        markLatency(record, TurnLatencyPoint.PROVIDER_FIRST_BYTE);
+                        markLatencyMissing(record, TurnLatencyPoint.PROVIDER_FIRST_TOKEN,
+                                TurnLatencyMissingReason.PROVIDER_UNSUPPORTED);
+                    })
                     .map(response -> new GeneratedResponse(response, false));
         }
         AtomicLong index = new AtomicLong();
         StringBuilder reply = new StringBuilder();
-        return NativeTextDeltaAggregator.aggregate(
-                        llm.stream(request))
+        markLatency(record, TurnLatencyPoint.PROVIDER_REQUEST_SENT);
+        Flux<String> providerStream = llm.stream(request)
+                .doOnNext(delta -> {
+                    if (delta != null && !delta.isEmpty()) {
+                        markLatency(record, TurnLatencyPoint.PROVIDER_FIRST_BYTE);
+                        markLatency(record, TurnLatencyPoint.PROVIDER_FIRST_TOKEN);
+                    }
+                });
+        Flux<String> visibleStream = UserVisibleReplyStream.sanitize(providerStream);
+        return NativeTextDeltaAggregator.aggregate(visibleStream)
                 .doOnNext(delta -> {
                     if (record.isCancelRequested()) {
                         throw new java.util.concurrent.CancellationException("turn cancelled during provider stream");
@@ -1566,6 +1866,31 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         "status", context.available() ? "ok" : "unavailable")));
     }
 
+    private Mono<Void> runDirectWeatherRecord(TurnRecord record, RuntimeState state) {
+        TurnRequest request = record.getRequest();
+        transition(record, TurnStage.RETRIEVING);
+        return executeCapability(
+                        record,
+                        "weather.read",
+                        Map.of("message", request.getMessage()),
+                        false,
+                        result -> objectMapper.convertValue(
+                                result.data(), TurnWeatherContext.class),
+                        () -> retrieveWeather(record, request))
+                .timeout(laneTimeout(record,
+                        capabilityTimeout(record, "weather.read", Duration.ofSeconds(5))))
+                .onErrorResume(error -> weatherConversation.contextFor(request.getMessage()))
+                .flatMap(weatherContext -> {
+                    transition(record, TurnStage.GENERATING);
+                    transition(record, TurnStage.FINALIZING);
+                    return completeSemantic(
+                            record, state,
+                            weatherContext.directResponse(request.replyFormat()),
+                            false);
+                })
+                .onErrorResume(error -> fail(record, error));
+    }
+
     private static String agentEventType(AgentLifecycleEvent event) {
         return switch (event.type()) {
             case SKILL_CREATED, STEP_CREATED -> "skill.started";
@@ -1632,6 +1957,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         semantic.putAll(beanMap(expression));
         semantic.put("presentation", beanMap(presentation));
         emit(record, "semantic.completed", semantic);
+        List<Map<String, Object>> artifacts = new ModelGeneratedArtifactResolver()
+                .resolve(response.getReply()).stream()
+                .map(artifact -> Map.<String, Object>of(
+                        "label", artifact.label(),
+                        "href", artifact.href(),
+                        "local_path", artifact.localPath()))
+                .toList();
+        List<Map<String, Object>> documentEdits = documentEditProposals
+                .resolve(response.getReply(), request.attachments());
         ResolvedExpression finalExpression = expression;
         PresentationResolver.ResolvedPresentation finalPresentation = presentation;
         Mono<Void> textDelivery = nativeStream
@@ -1649,7 +1983,11 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 }));
         return textDelivery.then(Mono.defer(() -> {
                     if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
-                    emit(record, "text.completed", Map.of("text", response.getReply()));
+                    Map<String, Object> textCompleted = new LinkedHashMap<>();
+                    textCompleted.put("text", response.getReply());
+                    if (!artifacts.isEmpty()) textCompleted.put("artifacts", artifacts);
+                    if (!documentEdits.isEmpty()) textCompleted.put("document_edits", documentEdits);
+                    emit(record, "text.completed", Map.copyOf(textCompleted));
                     if (request.getClientCapabilities().isVoice()) {
                         emit(record, "tts.requested", Map.of(
                                 "text", response.getReply(),
@@ -1669,8 +2007,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                             state, finalExpression,
                             enqueueMemory ? MemoryStatus.PENDING : MemoryStatus.UNAVAILABLE,
                             buildId);
+                    Map<String, Object> completed = new LinkedHashMap<>();
+                    completed.put("reply", response.getReply());
+                    if (!artifacts.isEmpty()) completed.put("artifacts", artifacts);
+                    if (!documentEdits.isEmpty()) completed.put("document_edits", documentEdits);
                     if (!appendTerminal(record, () -> record.tryComplete(result),
-                            "turn.completed", Map.of("reply", response.getReply()))) {
+                            "turn.completed", Map.copyOf(completed))) {
                         return record.isCancelRequested()
                                 ? cancelRecord(record, "client_requested")
                                 : Mono.empty();
@@ -1733,7 +2075,19 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         LifecycleState before = LifecycleState.capture(record);
         if (!transition.getAsBoolean()) return false;
         try {
-            emit(record, eventType, data);
+            LinkedHashMap<String, Object> terminalData = new LinkedHashMap<>(
+                    data == null ? Map.of() : data);
+            TurnLatencyTraceRecorder latency = record.getLatencyTraceRecorder();
+            if (latency != null) {
+                latency.markMissing(TurnLatencyPoint.FIRST_DELTA_SSE_FLUSHED,
+                        TurnLatencyMissingReason.NOT_RECORDED);
+                latency.markMissing(TurnLatencyPoint.CLIENT_FIRST_DELTA_RECEIVED,
+                        TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
+                latency.markMissing(TurnLatencyPoint.CLIENT_FIRST_RENDER,
+                        TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
+                terminalData.put("latency_trace", beanMap(latency.snapshot()));
+            }
+            emit(record, eventType, Map.copyOf(terminalData));
         } catch (Throwable persistenceError) {
             before.restore(record);
             throw persistenceError;
@@ -1747,9 +2101,26 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (!TurnEventTypes.isSupported(type)) {
             throw new IllegalArgumentException("unsupported turn event type: " + type);
         }
-        return journal.appendExecution(record, executionOwnerId, type,
+        EventEnvelope event = journal.appendExecution(record, executionOwnerId, type,
                 data == null ? Map.of() : data,
                 new EventMetadata(record.getTraceId(), "meguri-core", Instant.now(), buildId));
+        if ("text.delta".equals(type)) {
+            markLatency(record, TurnLatencyPoint.FIRST_DELTA_PERSISTED);
+        }
+        return event;
+    }
+
+    private static void markLatency(TurnRecord record, TurnLatencyPoint point) {
+        TurnLatencyTraceRecorder recorder = record.getLatencyTraceRecorder();
+        if (recorder != null) recorder.mark(point);
+    }
+
+    private static void markLatencyMissing(
+            TurnRecord record,
+            TurnLatencyPoint point,
+            TurnLatencyMissingReason reason) {
+        TurnLatencyTraceRecorder recorder = record.getLatencyTraceRecorder();
+        if (recorder != null) recorder.markMissing(point, reason);
     }
 
     private <T> Mono<T> executeCapability(
@@ -1914,8 +2285,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             String idempotencyKey,
             String approvalId) {
         TurnRequest request = record.getRequest();
-        boolean networkAllowed = (request.retrievalMode() == RetrievalMode.SLOW
-                || request.agentProposal() != null)
+        boolean explicitWeather = request.retrievalMode() != RetrievalMode.NONE
+                && weatherConversation.classify(request.getMessage())
+                        != WeatherConversationService.Intent.NONE;
+        ExecutionModeDecision executionDecision = record.getExecutionModeDecision();
+        boolean executionAllowsNetwork = executionDecision == null
+                ? request.retrievalMode() == RetrievalMode.SLOW
+                        || request.agentProposal() != null
+                : executionDecision.mode() == TurnExecutionMode.AGENT;
+        boolean networkAllowed = (executionAllowsNetwork || explicitWeather)
                 && ("web.read".equals(capabilityId)
                 || "weather.read".equals(capabilityId)
                 || "agent.invoke".equals(capabilityId)
@@ -2031,11 +2409,23 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private ExposurePlanner.ExposureContext exposureContext(TurnRecord record) {
         TurnRequest request = record.getRequest();
         boolean explicitAgent = request.agentProposal() != null;
-        CapabilityDescriptor.Mode mode = switch (request.retrievalMode()) {
-            case NONE, FAST -> CapabilityDescriptor.Mode.FAST;
-            case SLOW -> CapabilityDescriptor.Mode.DEEP;
-        };
-        if (explicitAgent) mode = CapabilityDescriptor.Mode.DEEP;
+        boolean explicitWeather = request.retrievalMode() != RetrievalMode.NONE
+                && weatherConversation.classify(request.getMessage())
+                        != WeatherConversationService.Intent.NONE;
+        ExecutionModeDecision executionDecision = record.getExecutionModeDecision();
+        CapabilityDescriptor.Mode mode = executionDecision == null
+                ? switch (request.retrievalMode()) {
+                    case NONE, FAST -> CapabilityDescriptor.Mode.FAST;
+                    case SLOW -> CapabilityDescriptor.Mode.DEEP;
+                }
+                : switch (executionDecision.mode()) {
+                    case FAST -> CapabilityDescriptor.Mode.FAST;
+                    case THINK -> CapabilityDescriptor.Mode.BALANCED;
+                    case AGENT -> CapabilityDescriptor.Mode.DEEP;
+                };
+        if (executionDecision == null && explicitAgent) {
+            mode = CapabilityDescriptor.Mode.DEEP;
+        }
         return new ExposurePlanner.ExposureContext(
                 record.getTurnId(),
                 request.tenantId(),
@@ -2043,9 +2433,11 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 request.getClientId(),
                 request.authorizedCapabilityScopes(),
                 mode,
-                Set.of(),
+                explicitWeather ? Set.of("weather.read") : Set.of(),
                 1,
-                request.retrievalMode() == RetrievalMode.SLOW || explicitAgent,
+                executionDecision == null
+                        ? request.retrievalMode() == RetrievalMode.SLOW || explicitAgent || explicitWeather
+                        : executionDecision.mode() == TurnExecutionMode.AGENT || explicitWeather,
                 request.formalMemoryAllowed()
                         ? CapabilityDescriptor.DataClassification.CONFIDENTIAL
                         : CapabilityDescriptor.DataClassification.INTERNAL);
@@ -2061,7 +2453,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 CapabilityDescriptor.SideEffect.EXTERNAL,
                 CapabilityDescriptor.ApprovalRequirement.NONE,
                 Duration.ofSeconds(5),
-                Set.of(CapabilityDescriptor.Mode.DEEP),
+                Set.of(
+                        CapabilityDescriptor.Mode.FAST,
+                        CapabilityDescriptor.Mode.BALANCED,
+                        CapabilityDescriptor.Mode.DEEP),
                 CapabilityDescriptor.DataClassification.PUBLIC,
                 true,
                 false,

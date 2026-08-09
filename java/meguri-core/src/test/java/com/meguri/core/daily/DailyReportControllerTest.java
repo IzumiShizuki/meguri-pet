@@ -39,6 +39,7 @@ class DailyReportControllerTest {
                 .expectStatus().isOk()
                 .expectBody()
                 .jsonPath("$.delivery_text").isEqualTo("【中文】\n【日本語】")
+                .jsonPath("$.render_payload.template").isEqualTo("bilibili_daily_v1")
                 .jsonPath("$.markdown").doesNotExist();
 
         client.get().uri("/v1/daily/reports/bilibili/2026-07-24/markdown")
@@ -74,6 +75,21 @@ class DailyReportControllerTest {
                 .expectStatus().isNotFound();
     }
 
+    @Test
+    void rejectsANonObjectRenderPayload() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        WebTestClient client = WebTestClient.bindToController(
+                new DailyReportController(new DailyReportStore(mapper, temporaryDirectory))).build();
+        Map<String, Object> upload = fixture("# fixture\n");
+        upload.put("render_payload", "not-an-object");
+
+        client.post().uri("/v1/daily/reports")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(upload)
+                .exchange()
+                .expectStatus().isEqualTo(422);
+    }
+
     private static Map<String, Object> fixture(String markdown) {
         return new java.util.LinkedHashMap<>(Map.ofEntries(
                 Map.entry("schema_version", 1),
@@ -90,6 +106,9 @@ class DailyReportControllerTest {
                 Map.entry("sync_status", "success"),
                 Map.entry("unique_videos", 64),
                 Map.entry("total_visits", 64),
+                Map.entry("render_payload", Map.of(
+                        "schema_version", 1,
+                        "template", "bilibili_daily_v1")),
                 Map.entry("markdown_sha256", sha256(markdown)),
                 Map.entry("markdown", markdown)));
     }

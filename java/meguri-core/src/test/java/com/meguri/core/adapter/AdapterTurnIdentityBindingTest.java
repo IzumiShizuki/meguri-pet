@@ -8,6 +8,7 @@ import com.meguri.core.adapter.domain.AdapterProtocolPermissions;
 import com.meguri.core.adapter.domain.AdapterTurnCreateRequest;
 import com.meguri.core.adapter.domain.PlatformActorMapper;
 import com.meguri.core.adapter.infrastructure.InMemoryClientBindingRepository;
+import com.meguri.core.execution.TurnExecutionMode;
 import com.meguri.core.harness.retrieval.RetrievalMode;
 import org.junit.jupiter.api.Test;
 
@@ -36,6 +37,7 @@ class AdapterTurnIdentityBindingTest {
         assertThat(request.getPlatformActorId())
                 .isEqualTo(PlatformActorMapper.hash("qq", "actor-raw-1"))
                 .doesNotContain("actor-raw-1");
+        assertThat(request.getRequestedExecutionMode()).isEqualTo(TurnExecutionMode.AGENT);
         assertThatThrownBy(() -> turn(identity("actor-raw-2")).toCoreRequest(binding))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("does not match");
@@ -75,6 +77,7 @@ class AdapterTurnIdentityBindingTest {
                 false,
                 "default",
                 RetrievalMode.FAST,
+                TurnExecutionMode.AGENT,
                 List.of());
     }
 

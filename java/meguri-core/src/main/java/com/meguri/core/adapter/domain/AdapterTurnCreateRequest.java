@@ -7,6 +7,7 @@ import com.meguri.core.adapter.application.UnsupportedProtocolVersionException;
 import com.meguri.core.dto.ClientCapabilities;
 import com.meguri.core.dto.Relationship;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.TurnExecutionMode;
 import com.meguri.core.harness.retrieval.RetrievalMode;
 
 import java.util.List;
@@ -23,6 +24,7 @@ public record AdapterTurnCreateRequest(
         @JsonProperty("training_mode") Boolean trainingMode,
         @JsonProperty("reply_format") String replyFormat,
         @JsonProperty("retrieval_mode") RetrievalMode retrievalMode,
+        @JsonProperty("execution_mode") TurnExecutionMode executionMode,
         @JsonProperty("required_extensions") List<String> requiredExtensions) {
 
     public AdapterTurnCreateRequest {
@@ -33,6 +35,20 @@ public record AdapterTurnCreateRequest(
         }
         attachments = attachments == null ? List.of() : List.copyOf(attachments);
         requiredExtensions = requiredExtensions == null ? List.of() : List.copyOf(requiredExtensions);
+    }
+
+    public AdapterTurnCreateRequest(
+            String protocolVersion,
+            AdapterIdentityContext identity,
+            String message,
+            List<Map<String, Object>> attachments,
+            Relationship relationshipProfile,
+            Boolean trainingMode,
+            String replyFormat,
+            RetrievalMode retrievalMode,
+            List<String> requiredExtensions) {
+        this(protocolVersion, identity, message, attachments, relationshipProfile,
+                trainingMode, replyFormat, retrievalMode, null, requiredExtensions);
     }
 
     public TurnRequest toCoreRequest(ClientBinding binding) {
@@ -73,7 +89,7 @@ public record AdapterTurnCreateRequest(
                 trainingMode != null && trainingMode,
                 replyFormat,
                 retrievalMode);
-        return request.withAdapterIdentity(
+        return request.withRequestedExecutionMode(executionMode).withAdapterIdentity(
                         identity.platformActor().platform(),
                         platformActorHash,
                         identity.clientInstance().id())

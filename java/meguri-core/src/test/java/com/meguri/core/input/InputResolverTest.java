@@ -23,6 +23,15 @@ class InputResolverTest {
     }
 
     @Test
+    void keepsTheRequestedDateForTheWeatherShortcut() {
+        InputResolution result = InputResolver.resolve("#天气 明天");
+
+        assertThat(result.kind()).isEqualTo("command");
+        assertThat(result.command()).isEqualTo("weather");
+        assertThat(result.arguments()).isEqualTo("明天");
+    }
+
+    @Test
     void resolvesBillingOnlyAsAnExplicitShortcut() {
         InputResolution result = InputResolver.resolve("#账单");
         assertThat(result.kind()).isEqualTo("command");

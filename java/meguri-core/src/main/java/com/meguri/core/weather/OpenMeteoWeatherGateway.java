@@ -6,6 +6,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import reactor.core.publisher.Mono;
 
 import java.time.Clock;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -33,23 +34,35 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
 
     @Override
     public Mono<WeatherBriefing> fetch(WeatherLocation location) {
+        LocalDate today = LocalDate.now(clock.withZone(ZoneId.of(location.timezone())));
+        return fetch(location, today);
+    }
+
+    @Override
+    public Mono<WeatherBriefing> fetch(WeatherLocation location, LocalDate targetDate) {
         java.net.URI uri = UriComponentsBuilder.fromUriString(baseUrl)
                         .queryParam("latitude", location.latitude())
                         .queryParam("longitude", location.longitude())
                         .queryParam("hourly", "temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation_probability,weather_code")
                         .queryParam("daily", "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max")
                         .queryParam("timezone", location.timezone())
-                        .queryParam("forecast_days", 2)
+                        .queryParam("start_date", targetDate)
+                        .queryParam("end_date", targetDate)
                         .build().encode().toUri();
         return webClient.get().uri(uri)
                 .retrieve()
                 .bodyToMono(JsonNode.class)
-                .map(json -> parse(location, json));
+                .map(json -> parse(location, json, targetDate));
     }
 
     WeatherBriefing parse(WeatherLocation location, JsonNode json) {
+        LocalDate today = LocalDate.now(clock.withZone(ZoneId.of(location.timezone())));
+        return parse(location, json, today);
+    }
+
+    WeatherBriefing parse(WeatherLocation location, JsonNode json, LocalDate targetDate) {
         JsonNode daily = json.path("daily");
-        requireArray(daily, "time");
+        JsonNode dates = requireArray(daily, "time");
         requireArray(daily, "weather_code");
         requireArray(daily, "temperature_2m_max");
         requireArray(daily, "temperature_2m_min");
@@ -57,11 +70,22 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
 
         ZoneId zone = ZoneId.of(location.timezone());
         ZonedDateTime now = ZonedDateTime.now(clock.withZone(zone));
-        String date = daily.path("time").path(0).asText();
-        int dailyCode = daily.path("weather_code").path(0).asInt();
-        double min = daily.path("temperature_2m_min").path(0).asDouble();
-        double max = daily.path("temperature_2m_max").path(0).asDouble();
-        int maxRain = daily.path("precipitation_probability_max").path(0).asInt();
+        int dailyIndex = -1;
+        for (int index = 0; index < dates.size(); index++) {
+            if (targetDate.toString().equals(dates.path(index).asText())) {
+                dailyIndex = index;
+                break;
+            }
+        }
+        if (dailyIndex < 0) {
+            throw new IllegalStateException("weather response missing requested date " + targetDate);
+        }
+        String date = dates.path(dailyIndex).asText();
+        int dailyCode = daily.path("weather_code").path(dailyIndex).asInt();
+        double min = daily.path("temperature_2m_min").path(dailyIndex).asDouble();
+        double max = daily.path("temperature_2m_max").path(dailyIndex).asDouble();
+        int maxRain = daily.path("precipitation_probability_max").path(dailyIndex).asInt();
+        boolean todayRequested = targetDate.equals(now.toLocalDate());
 
         JsonNode hourly = json.path("hourly");
         JsonNode times = requireArray(hourly, "time");
@@ -78,7 +102,7 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
         Integer nextRainProbability = null;
         ZonedDateTime lookahead = now.plusHours(rainLookaheadHours);
         ZonedDateTime currentHour = now.withMinute(0).withSecond(0).withNano(0);
-        for (int index = 0; index < Math.min(times.size(), probabilities.size()); index++) {
+        for (int index = 0; todayRequested && index < Math.min(times.size(), probabilities.size()); index++) {
             ZonedDateTime hour = LocalDateTime.parse(times.path(index).asText(), HOUR).atZone(zone);
             if (hour.equals(currentHour) && hourlyCodes.isArray() && index < hourlyCodes.size()) {
                 currentCode = hourlyCodes.path(index).asInt(dailyCode);
@@ -105,8 +129,12 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
 
         String summary = weatherCodeLabel(currentCode);
         String dailySummary = weatherCodeLabel(dailyCode);
-        String briefing = "%s目前%s；今天整体%s，%.0f～%.0f℃，最高降雨概率%d%%。".formatted(
-                location.name(), summary, dailySummary, min, max, maxRain);
+        String dateLabel = dateLabel(now.toLocalDate(), targetDate);
+        String briefing = todayRequested
+                ? "%s目前%s；今天整体%s，%.0f～%.0f℃，最高降雨概率%d%%。".formatted(
+                        location.name(), summary, dailySummary, min, max, maxRain)
+                : "%s%s整体%s，%.0f～%.0f℃，最高降雨概率%d%%。".formatted(
+                        location.name(), dateLabel, dailySummary, min, max, maxRain);
         if (currentTemperature != null) briefing += "当前%.1f℃。".formatted(currentTemperature);
         if (currentHumidity != null) briefing += "湿度%d%%。".formatted(currentHumidity);
         if (currentWindSpeed != null) briefing += "风速%.1f公里/小时。".formatted(currentWindSpeed);
@@ -117,6 +145,14 @@ public final class OpenMeteoWeatherGateway implements WeatherGateway {
         return new WeatherBriefing(location, OffsetDateTime.now(clock.withZone(zone)), date, summary,
                 currentTemperature, currentHumidity, currentWindSpeed,
                 min, max, maxRain, nextRainAt != null, nextRainAt, nextRainProbability, briefing);
+    }
+
+    private static String dateLabel(LocalDate today, LocalDate targetDate) {
+        long days = java.time.temporal.ChronoUnit.DAYS.between(today, targetDate);
+        if (days == 0) return "今天";
+        if (days == 1) return "明天";
+        if (days == 2) return "后天";
+        return "%d月%d日".formatted(targetDate.getMonthValue(), targetDate.getDayOfMonth());
     }
 
     private static JsonNode requireArray(JsonNode parent, String field) {

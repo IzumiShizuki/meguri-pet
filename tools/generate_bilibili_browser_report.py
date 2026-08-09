@@ -58,6 +58,82 @@ MAX_MCP_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_ACCOUNT_RECORDS = 2_000
 MAX_SYNC_STATUS_BYTES = 64 * 1024
 ALLOWED_SYNC_STATUSES = frozenset({"success", "risk_stop", "error"})
+EDITORIAL_TOPIC_KEYWORDS = {
+    "国际局势": (
+        "国际",
+        "外交",
+        "地缘",
+        "美国",
+        "日本",
+        "俄罗斯",
+        "俄乌",
+        "中美",
+        "战争",
+        "大选",
+        "选举",
+        "关税",
+    ),
+    "宏观经济": (
+        "经济",
+        "财经",
+        "金融",
+        "股市",
+        "楼市",
+        "房价",
+        "消费",
+        "就业",
+        "贸易",
+        "通胀",
+        "降息",
+    ),
+    "科技产业": (
+        "科技",
+        "人工智能",
+        "ai",
+        "芯片",
+        "互联网",
+        "新能源",
+        "电动车",
+        "机器人",
+        "产业",
+    ),
+    "社会观察": (
+        "社会",
+        "教育",
+        "医疗",
+        "人口",
+        "年轻人",
+        "职场",
+        "舆论",
+        "生活成本",
+    ),
+    "政策解读": ("政策", "法规", "改革", "治理", "监管", "税制"),
+    "历史文化": ("历史", "文化", "文明", "考古"),
+}
+IGNORED_INTEREST_LABELS = frozenset({"待定", "未分类", "其他", "未知", "unknown", "综合"})
+COMMENTARY_TITLE_MARKERS = (
+    "时事",
+    "时评",
+    "新闻",
+    "评论",
+    "观察",
+    "预测",
+    "趋势",
+    "影响",
+    "争议",
+    "政策",
+    "法规",
+    "改革",
+    "监管",
+    "关税",
+    "降息",
+    "就业",
+    "年轻人",
+    "产业",
+    "竞争",
+)
+COMMENTARY_CATEGORIES = frozenset({"资讯", "财经", "新闻", "时政"})
+VISUAL_TEMPLATE = "bilibili_daily_v1"
 
 
 class McpClientError(RuntimeError):
@@ -602,7 +678,7 @@ def build_account_report(
     if truncated:
         source_message_parts.append(f"超过安全上限，仅纳入前 {MAX_ACCOUNT_RECORDS} 条")
     report_file = project_root.resolve() / "reports" / "daily" / f"bilibili-{target_date.isoformat()}.md"
-    return {
+    report = {
         "status": "ready" if videos else "empty",
         "date": target_date.isoformat(),
         "generated_at": datetime.now(target_zone).isoformat(timespec="seconds"),
@@ -633,6 +709,8 @@ def build_account_report(
         ],
         "error": None,
     }
+    report["visual_payload"] = build_visual_payload(report)
+    return report
 
 
 def format_duration(seconds: int) -> str:
@@ -644,6 +722,170 @@ def format_duration(seconds: int) -> str:
     if minutes:
         return f"{minutes} 分钟 {secs} 秒"
     return f"{secs} 秒"
+
+
+def format_duration_compact(seconds: int) -> str:
+    normalized = max(0, int(seconds))
+    hours, remainder = divmod(normalized, 3600)
+    minutes = remainder // 60
+    if hours:
+        return f"{hours}小时{minutes}分"
+    if minutes:
+        return f"{minutes}分钟"
+    return f"{normalized}秒"
+
+
+def _clean_visual_text(value: object, maximum: int = 80) -> str:
+    return " ".join(str(value or "").replace("\x00", "").split())[:maximum]
+
+
+def _topics_in_text(value: object) -> list[str]:
+    haystack = _clean_visual_text(value, 240).casefold()
+    return [
+        topic
+        for topic, keywords in EDITORIAL_TOPIC_KEYWORDS.items()
+        if any(keyword.casefold() in haystack for keyword in keywords)
+    ]
+
+
+def _commentary_topics(video: dict) -> list[str]:
+    title = _clean_visual_text(video.get("title"), 160)
+    topics = _topics_in_text(title)
+    category = _clean_visual_text(video.get("main_category"), 24)
+    if not topics:
+        return []
+    if (
+        len(topics) >= 2
+        or category in COMMENTARY_CATEGORIES
+        or any(marker in title for marker in COMMENTARY_TITLE_MARKERS)
+    ):
+        return topics
+    return []
+
+
+def _visual_weight(video: dict) -> int:
+    watch_seconds = _integer(video.get("estimated_watch_seconds"))
+    if watch_seconds > 0:
+        return watch_seconds
+    progress_seconds = _integer(video.get("progress_seconds"))
+    if progress_seconds > 0:
+        return progress_seconds
+    return max(1, _integer(video.get("visit_count"))) * 60
+
+
+def _ranked_labels(videos: Sequence[dict]) -> tuple[list[str], list[str]]:
+    interest_weights: dict[str, int] = {}
+    topic_weights: dict[str, int] = {}
+    for video in videos:
+        weight = _visual_weight(video)
+        labels = []
+        for field in ("tag_name", "main_category"):
+            label = _clean_visual_text(video.get(field), 12)
+            if label and label.casefold() not in IGNORED_INTEREST_LABELS and label not in labels:
+                labels.append(label)
+        topics = _commentary_topics(video)
+        labels.extend(topic for topic in topics if topic not in labels)
+        for label in labels:
+            interest_weights[label] = interest_weights.get(label, 0) + weight
+        for topic in topics:
+            topic_weights[topic] = topic_weights.get(topic, 0) + weight
+    ranked_interests = sorted(interest_weights, key=lambda value: (-interest_weights[value], value))
+    ranked_topics = sorted(topic_weights, key=lambda value: (-topic_weights[value], value))
+    return ranked_interests[:6], ranked_topics
+
+
+def _top_commentary(videos: Sequence[dict]) -> list[dict]:
+    candidates: list[tuple[float, dict]] = []
+    for video in videos:
+        topics = _commentary_topics(video)
+        if not topics:
+            continue
+        rate = video.get("completion_rate")
+        completion_rate = float(rate) if isinstance(rate, (int, float)) else None
+        score = len(topics) * 5 + min(_visual_weight(video) / 900, 4)
+        if completion_rate is not None:
+            score += completion_rate * 3
+        candidates.append(
+            (
+                score,
+                {
+                    "title": _clean_visual_text(video.get("title"), 80),
+                    "author_name": _clean_visual_text(video.get("author_name"), 24) or None,
+                    "topic": topics[0],
+                    "completion_rate": round(completion_rate, 4) if completion_rate is not None else None,
+                    "visit_count": max(0, _integer(video.get("visit_count"))),
+                },
+            )
+        )
+    candidates.sort(key=lambda item: (-item[0], item[1]["title"]))
+    return [item for _, item in candidates[:3]]
+
+
+def build_visual_payload(report: dict) -> dict:
+    videos = [item for item in (report.get("videos") or []) if isinstance(item, dict)]
+    account_source = report.get("data_source") == DATA_SOURCE_ACCOUNT
+    rates = [
+        float(item["completion_rate"])
+        for item in videos
+        if isinstance(item.get("completion_rate"), (int, float))
+    ]
+    estimated_watch_seconds = (
+        sum(max(0, _integer(item.get("estimated_watch_seconds"))) for item in videos)
+        if account_source
+        else None
+    )
+    average_completion_rate = round(sum(rates) / len(rates), 4) if rates else None
+    completed_videos = sum(rate >= 0.9 for rate in rates)
+    interest_tags, editorial_topics = _ranked_labels(videos)
+    primary_topics = editorial_topics[:2] or interest_tags[:2]
+    top_commentary = _top_commentary(videos)
+
+    if account_source:
+        overview = (
+            f"昨日共观看 {len(videos)} 个视频，估算时长{format_duration_compact(estimated_watch_seconds or 0)}"
+        )
+        if average_completion_rate is not None:
+            overview += f"，平均播放进度约 {average_completion_rate:.0%}"
+        overview += "。"
+    else:
+        overview = (
+            f"昨日浏览器记录到 {len(videos)} 个 B站视频页面；当前数据源无法估算观看时长与播放进度。"
+        )
+    preference = (
+        f"兴趣主要集中在{'、'.join(interest_tags[:3])}。"
+        if interest_tags
+        else "暂未形成稳定的兴趣标签。"
+    )
+    if editorial_topics:
+        observation = f"从标题与分区推测，时评内容更多涉及{'、'.join(editorial_topics[:3])}。"
+    else:
+        observation = "昨日未从标题与分区识别出明确的时评内容。"
+    overall_summary = overview + preference + observation + "以上仅为元数据观察，未读取字幕或视频正文。"
+
+    source_label = {
+        DATA_SOURCE_ACCOUNT: "B站账号历史（时长为估算）",
+        DATA_SOURCE_BROWSER_FALLBACK: "浏览器历史降级（仅访问记录）",
+        DATA_SOURCE_BROWSER: "浏览器历史（仅访问记录）",
+    }.get(str(report.get("data_source") or ""), "本地元数据")
+    return {
+        "schema_version": 1,
+        "template": VISUAL_TEMPLATE,
+        "date": str(report.get("date") or ""),
+        "data_source": str(report.get("data_source") or ""),
+        "source_label": source_label,
+        "statistics": {
+            "video_count": len(videos),
+            "record_count": max(0, _integer(report.get("total_visits"))),
+            "estimated_watch_seconds": estimated_watch_seconds,
+            "average_completion_rate": average_completion_rate,
+            "completed_videos": completed_videos if rates else None,
+            "primary_topics": primary_topics,
+        },
+        "top_commentary": top_commentary,
+        "interest_tags": interest_tags,
+        "overall_summary": overall_summary[:360],
+        "analysis_basis": "metadata_only",
+    }
 
 
 def _safe_error(error: Exception) -> str:
@@ -780,7 +1022,7 @@ def build_browser_report(
         error = None
 
     report_file = project_root.resolve() / "reports" / "daily" / f"bilibili-{target_date.isoformat()}.md"
-    return {
+    report = {
         "status": status,
         "date": target_date.isoformat(),
         "generated_at": datetime.now(target_zone).isoformat(timespec="seconds"),
@@ -808,6 +1050,8 @@ def build_browser_report(
         ],
         "error": error,
     }
+    report["visual_payload"] = build_visual_payload(report)
+    return report
 
 
 def build_report(

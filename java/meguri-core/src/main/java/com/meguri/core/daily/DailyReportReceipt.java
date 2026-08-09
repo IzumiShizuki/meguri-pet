@@ -1,6 +1,7 @@
 package com.meguri.core.daily;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -22,6 +23,7 @@ public record DailyReportReceipt(
         @JsonProperty("sync_status") String syncStatus,
         @JsonProperty("unique_videos") int uniqueVideos,
         @JsonProperty("total_visits") int totalVisits,
+        @JsonProperty("render_payload") JsonNode renderPayload,
         @JsonProperty("markdown_sha256") String markdownSha256,
         @JsonProperty("markdown_href") String markdownHref) {
 }

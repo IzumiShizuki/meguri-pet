@@ -1,6 +1,7 @@
 package com.meguri.core.daily;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -28,6 +29,7 @@ public record DailyReportUpload(
         @JsonProperty("sync_status") @NotBlank @Size(max = 64) String syncStatus,
         @JsonProperty("unique_videos") @Min(0) @Max(1_000_000) int uniqueVideos,
         @JsonProperty("total_visits") @Min(0) @Max(1_000_000) int totalVisits,
+        @JsonProperty("render_payload") JsonNode renderPayload,
         @JsonProperty("markdown_sha256") @NotBlank @Pattern(regexp = "^[0-9a-f]{64}$") String markdownSha256,
         @NotBlank @Size(max = 262_144) String markdown) {
 }

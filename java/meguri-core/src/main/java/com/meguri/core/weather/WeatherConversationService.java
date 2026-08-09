@@ -5,9 +5,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Adds live weather facts and deterministic safety wording to relevant turns. */
@@ -26,6 +28,10 @@ public final class WeatherConversationService {
                     + "(?:(?:出门|出发|出去|外出)(?:一下|一趟|玩|走走|办事|吃饭)?(?:了|啦)?"
                     + "|去(?:公司|上班|学校|上学|吃饭|买菜|拿快递|逛街|办事|医院|车站|机场|健身|玩)(?:了|啦)?"
                     + "|回(?:家|公司|学校)(?:了|啦)?)$");
+    private static final Pattern ISO_DATE =
+            Pattern.compile("(?<!\\d)(\\d{4})-(\\d{1,2})-(\\d{1,2})(?!\\d)");
+    private static final Pattern CHINESE_DATE =
+            Pattern.compile("(?<!\\d)(\\d{1,2})月(\\d{1,2})日?");
 
     private final WeatherService weather;
 
@@ -55,9 +61,32 @@ public final class WeatherConversationService {
     public Mono<TurnWeatherContext> contextFor(String message) {
         Intent intent = classify(message);
         if (intent == Intent.NONE || weather == null) return Mono.just(TurnWeatherContext.none());
-        return weather.current(true)
+        LocalDate targetDate = weather.resolveForecastDate(message);
+        return weather.forecast(targetDate, true)
                 .map(briefing -> TurnWeatherContext.available(intent, briefing))
                 .onErrorReturn(TurnWeatherContext.unavailable(intent));
+    }
+
+    LocalDate resolveTargetDate(String message) {
+        LocalDate today = weather.today();
+        String normalized = message == null ? "" : message.replaceAll("\\s+", "");
+        if (normalized.contains("大后天")) return today.plusDays(3);
+        if (normalized.contains("后天")) return today.plusDays(2);
+        if (normalized.contains("明天")) return today.plusDays(1);
+        if (normalized.contains("今天")) return today;
+
+        Matcher iso = ISO_DATE.matcher(normalized);
+        if (iso.find()) {
+            return LocalDate.of(Integer.parseInt(iso.group(1)),
+                    Integer.parseInt(iso.group(2)), Integer.parseInt(iso.group(3)));
+        }
+        Matcher chinese = CHINESE_DATE.matcher(normalized);
+        if (chinese.find()) {
+            LocalDate candidate = LocalDate.of(today.getYear(),
+                    Integer.parseInt(chinese.group(1)), Integer.parseInt(chinese.group(2)));
+            return candidate.isBefore(today) ? candidate.plusYears(1) : candidate;
+        }
+        return today;
     }
 
     public record TurnWeatherContext(Intent intent, boolean attempted, WeatherBriefing briefing) {
@@ -75,6 +104,29 @@ public final class WeatherConversationService {
 
         public boolean available() {
             return briefing != null;
+        }
+
+        /** Explicit weather turns can answer immediately without asking the text model to restate facts. */
+        public LlmResponse directResponse(String replyFormat) {
+            String chinese;
+            String japanese;
+            if (!available()) {
+                chinese = intent == Intent.OUTING
+                        ? "实时天气暂时没查到，出门路上注意安全。"
+                        : "实时天气查询暂时不可用，请稍后再试。";
+                japanese = intent == Intent.OUTING
+                        ? "リアルタイムの天気を取得できませんでした。気をつけて行ってきてね。"
+                        : "リアルタイムの天気を取得できませんでした。少し後でもう一度試してね。";
+            } else {
+                chinese = intent == Intent.OUTING
+                        ? briefing.briefing() + " 路上注意安全。"
+                        : briefing.briefing();
+                japanese = japaneseBriefing(briefing, intent);
+            }
+            String reply = "zh_ja_pairs".equals(replyFormat)
+                    ? chinese + "\n" + japanese
+                    : chinese;
+            return new LlmResponse(reply);
         }
 
         /** Facts plus response policy are kept separate from conversation history. */
@@ -118,6 +170,25 @@ public final class WeatherConversationService {
             boolean transientTime = List.of("当前", "目前", "今天", "现在", "实时")
                     .stream().anyMatch(normalized::contains);
             return weatherFact && transientTime;
+        }
+
+        private static String japaneseBriefing(WeatherBriefing value, Intent intent) {
+            String condition = switch (value.summary()) {
+                case "晴朗" -> "晴れ";
+                case "多云" -> "曇り";
+                case "有雾" -> "霧";
+                case "有毛毛雨" -> "霧雨";
+                case "有雨" -> "雨";
+                case "有雪" -> "雪";
+                case "有阵雨" -> "にわか雨";
+                case "有阵雪" -> "にわか雪";
+                case "有雷雨" -> "雷雨";
+                default -> "天気不明";
+            };
+            String result = "%sの予報は%s、最低%.0f℃、最高%.0f℃、降水確率は最大%d%%です。".formatted(
+                    value.location().name(), condition, value.temperatureMinC(),
+                    value.temperatureMaxC(), value.rainProbabilityMax());
+            return intent == Intent.OUTING ? result + " 道中、気をつけてね。" : result;
         }
     }
 }

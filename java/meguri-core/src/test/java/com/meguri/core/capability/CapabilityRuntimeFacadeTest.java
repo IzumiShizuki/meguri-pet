@@ -41,6 +41,14 @@ class CapabilityRuntimeFacadeTest {
                     null, null, null));
             assertThat(result.status()).isEqualTo(CapabilityResult.Status.SUCCESS);
             assertThat(result.data()).containsEntry("callback", "read");
+            CapabilityRuntimeFacade.TurnCapabilities artifactReferenceTurn = facade.freeze(
+                    new ExposurePlanner.ExposureContext(
+                            "turn-artifact-reference", "tenant", "user", "client",
+                            Set.of("artifact:reference"), CapabilityDescriptor.Mode.BALANCED,
+                            Set.of(CapabilityRuntimeFacade.APPROVED_FILE_REFERENCE_PROMPT_SKILL),
+                            1, true, CapabilityDescriptor.DataClassification.RESTRICTED));
+            assertThat(artifactReferenceTurn.exposes(
+                    CapabilityRuntimeFacade.APPROVED_FILE_REFERENCE_PROMPT_SKILL)).isTrue();
         }
     }
 

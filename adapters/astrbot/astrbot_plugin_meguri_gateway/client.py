@@ -366,6 +366,17 @@ class HttpMeguriCoreClient:
             if terminal != "turn.completed":
                 raise CoreProtocolError(f"meguri-core turn ended with {terminal}")
             return _assembled_turn_response(turn_id, session_id, state)
+        terminal = await self._restore_session_snapshot(
+            turn_id=turn_id,
+            session_id=session_id,
+            headers=headers,
+            state=state,
+        )
+        self._persist_checkpoint(session_id, turn_id, state, terminal=terminal)
+        if terminal is not None:
+            if terminal != "turn.completed":
+                raise CoreProtocolError(f"meguri-core turn ended with {terminal}")
+            return _assembled_turn_response(turn_id, session_id, state)
         raise CoreProtocolError("meguri-core event stream ended before a terminal event")
 
     async def _consume_event_stream_once(

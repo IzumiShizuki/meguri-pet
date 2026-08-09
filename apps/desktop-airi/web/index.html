@@ -175,7 +175,8 @@
       <div class="meta"><span id="build">build: checking…</span><span>session: local-browser</span></div>
     </section>
   </main>
-  <script>
+  <script type="module">
+    import { followDesktopTurn } from './turn-stream.mjs'
     if (new URLSearchParams(location.search).get('mode') === 'overlay') document.body.classList.add('overlay')
     // The renderer talks only to the loopback desktop gateway. Bearer credentials
     // stay in the Node process and are injected into the upstream request there.
@@ -829,7 +830,7 @@
       speakText(message, 'worried')
       if ('Notification' in window && Notification.permission === 'granted') new Notification('Meguri 天气提醒', { body: message })
     }
-    async function loadWeather(announce = false) {
+    async function loadWeather(announce = false, requestedDate = '') {
       try {
         const locationResponse = await fetch(coreUrl + '/v1/daily/weather/location')
         if (!locationResponse.ok) throw new Error('location ' + locationResponse.status)
@@ -840,7 +841,11 @@
           weatherText.textContent = '天气地点已保存；设置 MEGURI_WEATHER_ENABLED=true 后启用 02:00 更新和临雨提醒。'
           return undefined
         }
-        const response = await fetch(coreUrl + '/v1/daily/weather/briefing' + (announce ? '?refresh=true' : ''))
+        const parameters = new URLSearchParams()
+        if (requestedDate.trim()) parameters.set('date', requestedDate.trim())
+        if (announce) parameters.set('refresh', 'true')
+        const query = parameters.toString()
+        const response = await fetch(coreUrl + '/v1/daily/weather/briefing' + (query ? '?' + query : ''))
         if (!response.ok) throw new Error('weather ' + response.status)
         const data = await response.json()
         weatherText.textContent = data.briefing
@@ -921,34 +926,14 @@
         // The local producer may still be writing or the desktop server may be restarting.
       }
     }
-    function parseSseFrame(frame) {
-      let eventName = ''
-      const dataLines = []
-      for (const line of frame.split(/\r?\n/)) {
-        if (line.startsWith('event:')) eventName = line.slice(6).trim()
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
-      }
-      if (!eventName || dataLines.length === 0) return undefined
-      try { return { eventName, envelope: JSON.parse(dataLines.join('\n')) } } catch { return undefined }
-    }
     async function followTurn(turnId) {
-      const response = await fetch(coreUrl + '/v1/sessions/' + encodeURIComponent(sessionId) + '/events?after_sequence=0', {
-        headers: { Accept: 'text/event-stream' },
-      })
-      if (!response.ok || !response.body) throw new Error('SSE ' + response.status)
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let terminal = false
       let comparison = null
-      while (!terminal) {
-        const { value, done } = await reader.read()
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-        const frames = buffer.split(/\r?\n\r?\n/)
-        buffer = frames.pop() || ''
-        for (const frame of frames) {
-          const parsed = parseSseFrame(frame)
-          if (!parsed || parsed.envelope.turn_id !== turnId) continue
+      await followDesktopTurn({
+        coreUrl,
+        sessionId,
+        turnId,
+        fetchImpl: window.fetch.bind(window),
+        onEvent: parsed => {
           const data = parsed.envelope.data || {}
           if (parsed.eventName === 'tool.started' && data.tool_name === 'web_search') setStatus('正在联网搜索…', true)
           if (parsed.eventName === 'tool.completed' && data.tool_name === 'web_search' && data.status === 'ok') setStatus('已完成联网搜索，正在整理…', true)
@@ -957,11 +942,12 @@
           if (parsed.eventName === 'text.completed' && !bubble.textContent) bubble.textContent = data.text || ''
           if (parsed.eventName === 'tts.requested') speakText(data.text || '', data.voice_style || 'neutral')
           if (parsed.eventName === 'semantic.completed' || parsed.eventName === 'expression.cue' || parsed.eventName === 'sprite.resolved') applyExpression(data)
-          terminal = ['turn.completed', 'turn.cancelled', 'turn.failed'].includes(parsed.eventName)
-        }
-        if (done) break
-      }
-      if (!terminal) throw new Error('SSE 在终止事件前关闭')
+        },
+        onSnapshot: turn => {
+          if (typeof turn.text === 'string') bubble.textContent = turn.text
+          if (turn.expression && typeof turn.expression === 'object') applyExpression(turn.expression)
+        },
+      })
       return comparison
     }
     async function checkCore() {
@@ -1077,7 +1063,7 @@
           return
         }
         if (resolved.command === 'help') {
-          bubble.textContent = '快捷指令：\n#天气  查询已保存地点的天气\n#账单  查看钱迹同步后的安全日报\n#视频日报  汇总昨天完整日的 Bilibili 账号观看历史元数据（账号源不可用时明确降级浏览器访问记录）\n#搜索 关键词  联网检索并整理\n#帮助  查看说明\n\n@文件名  通过 Everything 选择本地资源（只引用元数据，不读取正文）\nElectron 桌宠也可直接拖入文件，仍会经过相同安全校验并要求确认发送。\n正文中可写 @文件名、@{带空格的名称} 或 @"带空格的名称"。\n@@文字  输入普通的 @文字。\n~工程任务  生成可编辑的工程任务草稿。\n\n新生成的报告会出现在聊天记录里，并以图标泡泡浮在桌宠旁，点击即可用默认应用打开。'
+          bubble.textContent = '快捷指令：\n#天气 [今天|明天|后天|YYYY-MM-DD]  查询已保存地点的天气\n#账单  查看钱迹同步后的安全日报\n#视频日报  汇总昨天完整日的 Bilibili 账号观看历史元数据（账号源不可用时明确降级浏览器访问记录）\n#搜索 关键词  联网检索并整理\n#帮助  查看说明\n\n@文件名  通过 Everything 选择本地资源（只引用元数据，不读取正文）\nElectron 桌宠也可直接拖入文件，仍会经过相同安全校验并要求确认发送。\n正文中可写 @文件名、@{带空格的名称} 或 @"带空格的名称"。\n@@文字  输入普通的 @文字。\n~工程任务  生成可编辑的工程任务草稿。\n\n新生成的报告会出现在聊天记录里，并以图标泡泡浮在桌宠旁，点击即可用默认应用打开。'
           appendChatLog({ role: 'meguri', text: bubble.textContent })
           input.value = ''
           sendDraft.hidden = true
@@ -1088,7 +1074,7 @@
         if (resolved.command === 'weather') {
           input.value = ''
           sendDraft.hidden = true
-          const briefing = await loadWeather(true)
+          const briefing = await loadWeather(true, resolved.arguments || '')
           bubble.textContent = briefing?.briefing || weatherText.textContent || '实时天气暂时不可用。'
           appendChatLog({ role: 'meguri', text: bubble.textContent })
           send.disabled = false

@@ -24,9 +24,15 @@ public final class LocalResourcePromptContext {
             if (name.isBlank()) continue;
             String kind = stringValue(attachment.get("kind")).trim().toLowerCase(Locale.ROOT);
             if (!SAFE_KIND.matcher(kind).matches()) kind = "file";
-            context.add("local_resource_reference (untrusted metadata only): name=\""
+            String access = stringValue(attachment.get("content_access"));
+            String description = switch (access) {
+                case "multimodal_read" -> "user-approved content is attached; do not infer access to any other local file";
+                case "document_read" -> "user-approved document content is attached; propose edits but never claim the file was written";
+                default -> "untrusted metadata only; do not claim knowledge of file contents";
+            };
+            context.add("local_resource_reference (" + description + "): name=\""
                     + quoted(name) + "\", kind=\"" + quoted(kind)
-                    + "\", content_access=\"not_read\"; do not claim knowledge of file contents.");
+                    + "\", content_access=\"" + quoted(access) + "\".");
         }
         return List.copyOf(context);
     }
@@ -39,7 +45,9 @@ public final class LocalResourcePromptContext {
         return attachment != null
                 && "local_file_reference".equals(stringValue(attachment.get("type")))
                 && "everything".equals(stringValue(attachment.get("source")))
-                && "not_read".equals(stringValue(attachment.get("content_access")));
+                && ("not_read".equals(stringValue(attachment.get("content_access")))
+                || "multimodal_read".equals(stringValue(attachment.get("content_access")))
+                || "document_read".equals(stringValue(attachment.get("content_access"))));
     }
 
     private static String stringValue(Object value) {

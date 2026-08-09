@@ -141,6 +141,7 @@ export class MeguriApiAdapter extends MeguriApiClient {
         : {}),
       ...(request.reply_format ? { reply_format: request.reply_format } : {}),
       ...(request.retrieval_mode ? { retrieval_mode: request.retrieval_mode } : {}),
+      ...(request.execution_mode ? { execution_mode: request.execution_mode } : {}),
     }
     return await this.createTurn(canonical, idempotencyKey)
   }

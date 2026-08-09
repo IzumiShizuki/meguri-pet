@@ -82,7 +82,7 @@ class McpFixtureHandler(BaseHTTPRequestHandler):
             records = [
                 {
                     "bvid": "BV1xx411c7mD",
-                    "title": "账号历史第一条",
+                    "title": "AI 产业观察：账号历史第一条",
                     "author_name": "测试 UP",
                     "author_mid": 42,
                     "view_at": int(datetime.fromisoformat("2026-07-22T09:00:00+08:00").timestamp()),
@@ -198,6 +198,13 @@ class BilibiliBrowserReportIntegrationTest(unittest.TestCase):
             self.assertEqual("success", report["sync_status"])
             self.assertEqual(2, report["unique_videos"])
             self.assertEqual("not_requested", report["videos"][0]["content_summary_status"])
+            visual = report["visual_payload"]
+            self.assertEqual("bilibili_daily_v1", visual["template"])
+            self.assertEqual(2, visual["statistics"]["video_count"])
+            self.assertEqual(150, visual["statistics"]["estimated_watch_seconds"])
+            self.assertEqual(0.95, visual["statistics"]["average_completion_rate"])
+            self.assertEqual("科技产业", visual["top_commentary"][0]["topic"])
+            self.assertIn("未读取字幕或视频正文", visual["overall_summary"])
             self.assertIn("只读 MCP", report["boundary"])
             tool_call = next(call for call in McpFixtureHandler.calls if call.get("method") == "tools/call")
             self.assertEqual("query_history_records", tool_call["params"]["name"])
@@ -206,7 +213,7 @@ class BilibiliBrowserReportIntegrationTest(unittest.TestCase):
             markdown = (project_root / "reports/daily/bilibili-2026-07-22.md").read_text(encoding="utf-8")
             self.assertIn("数据源：账号历史（BilibiliHistoryFetcher 只读 MCP）", markdown)
             self.assertIn("同步状态：success", markdown)
-            self.assertIn("[账号历史第一条](https://www.bilibili.com/video/BV1xx411c7mD/)", markdown)
+            self.assertIn("[AI 产业观察：账号历史第一条](https://www.bilibili.com/video/BV1xx411c7mD/)", markdown)
 
     def test_unavailable_account_mcp_explicitly_falls_back_to_browser_history(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -257,6 +264,8 @@ class BilibiliBrowserReportIntegrationTest(unittest.TestCase):
             report = json.loads(completed.stdout)
             self.assertEqual("browser_history_fallback", report["data_source"])
             self.assertEqual("error", report["sync_status"])
+            self.assertIsNone(report["visual_payload"]["statistics"]["estimated_watch_seconds"])
+            self.assertIsNone(report["visual_payload"]["statistics"]["average_completion_rate"])
             self.assertEqual("unavailable", report["sources"][0]["status"])
             self.assertEqual("ready", report["sources"][1]["status"])
             markdown = (project_root / "reports/daily/bilibili-2026-07-22.md").read_text(encoding="utf-8")

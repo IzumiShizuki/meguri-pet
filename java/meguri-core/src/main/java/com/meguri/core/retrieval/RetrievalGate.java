@@ -9,7 +9,11 @@ import java.util.regex.Pattern;
 public final class RetrievalGate {
     private static final Pattern NO_RETRIEVAL = Pattern.compile(
             "(?i)^\\s*(hi|hello|hey|thanks?|thank you|good (morning|night)|"
-                    + "你好|您好|嗨|哈喽|谢谢|晚安|早安)[！!。.?？~～,，\\s]*$");
+                    + "你好|您好|嗨|哈喽|谢谢|晚安|早安|"
+                    + "おはよう|こんにちは|こんばんは|ありがとう|おやすみ|"
+                    + "浣犲ソ|鎮ㄥソ|鍡嗗搱鍠|璋㈣阿|鏅氬畨|鏃╁畨)"
+                    + "[！!。．.?？～~、,，\\s]*$",
+            Pattern.UNICODE_CASE);
     public static final int MAX_GRAPH_HOPS = 3;
     public static final int MAX_TOTAL_ITEMS = 64;
     public static final int MAX_SOURCE_ITEMS = 32;

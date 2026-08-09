@@ -18,6 +18,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_MARKDOWN_BYTES = 256 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_RENDER_PAYLOAD_BYTES = 32 * 1024
 KIND_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
@@ -57,6 +58,22 @@ def _source_labels(data_source: str) -> tuple[str, str]:
     }.get(data_source, ("已标记的本地元数据", "ラベル付きローカルメタデータ"))
 
 
+def _render_payload(value: object) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise PublishError("report visual_payload must be an object")
+    if value.get("schema_version") != 1 or value.get("template") != "bilibili_daily_v1":
+        raise PublishError("report visual_payload has an unsupported contract")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise PublishError("report visual_payload is not JSON serializable") from exc
+    if len(encoded) > MAX_RENDER_PAYLOAD_BYTES:
+        raise PublishError("report visual_payload is too large")
+    return value
+
+
 def build_envelope(kind: str, report: dict, markdown: str) -> dict:
     if not KIND_PATTERN.fullmatch(kind):
         raise PublishError("report kind is invalid")
@@ -79,6 +96,7 @@ def build_envelope(kind: str, report: dict, markdown: str) -> dict:
     summary = _required_text(report.get("summary"), "summary", 4000)
     unique_videos = _bounded_integer(report.get("unique_videos"), "unique_videos")
     total_visits = _bounded_integer(report.get("total_visits"), "total_visits")
+    render_payload = _render_payload(report.get("visual_payload"))
     source_zh, source_ja = _source_labels(data_source)
 
     title = f"{report_date.isoformat()} Bilibili 观看元数据日报"
@@ -118,6 +136,7 @@ def build_envelope(kind: str, report: dict, markdown: str) -> dict:
         "sync_status": sync_status,
         "unique_videos": unique_videos,
         "total_visits": total_visits,
+        "render_payload": render_payload,
         "markdown_sha256": digest,
         "markdown": markdown,
     }

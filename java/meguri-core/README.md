@@ -124,6 +124,26 @@ intensity, then combines it with the current outfit to resolve the PNG name.
 It is intentionally separate from the canonical dataset export and fails
 closed on malformed codes or a build ID mismatch.
 
+## Performance execution modes (opt-in)
+
+The performance.v1 rollout keeps independent, reversible switches. All three
+remain disabled by default so an unset deployment preserves the stable Turn
+path:
+
+```powershell
+$env:MEGURI_EXECUTION_MODE_ENABLED = 'true'
+$env:MEGURI_FAST_PATH_ENABLED = 'true'
+$env:MEGURI_LIMITED_REACT_ENABLED = 'false'
+```
+
+Execution mode (`FAST`, `THINK`, or `AGENT`) is server-authoritative and is
+separate from retrieval depth (`NONE`, `FAST`, or `SLOW`). Limited ReAct also
+requires a configured structured planner and authenticated capability scopes;
+the flag alone never grants tools or network access. See
+`docs/contracts/performance-contract-v1.md` and the OpenSpec change
+`optimize-ttft-fast-path-limited-react` for the frozen contract and rollout
+gates.
+
 ## Scope and validation boundary
 
 This is a compileable integration skeleton, not a production deployment. It
@@ -210,6 +230,14 @@ If MCP is unavailable, the report explicitly falls back to local Chrome/Edge
 report adds only metadata such as title, UP, category, progress and duration.
 Every video's `content_summary_status` remains `not_requested`.
 
+Each generated report also carries a bounded `visual_payload` for the
+`bilibili_daily_v1` card. It contains the four headline statistics, up to three
+title-based commentary candidates, six weighted interest tags and a short
+metadata observation. Commentary candidates must match both an issue keyword
+and a current-affairs marker or trusted news/finance category; placeholder rows
+are preferable to forcing unrelated videos into the card. Labels such as
+`待定`, `未分类` and `其他` are discarded.
+
 An independent Windows task can run the synchronization and report pipeline
 while Java Core is down. Install it only after an interactive QR login and a
 successful manual account-MCP report:
@@ -248,6 +276,11 @@ by `CoreTokenFile`; the remote Core keeps complete Markdown under
 both desktop and AstrBot persist the last delivered report ID so a restart does
 not duplicate that day's notice. A remote upload failure leaves the local
 report and desktop notice intact and is recorded as a degraded publication.
+The remote Core stores the optional `render_payload` as a JSON object capped at
+32 KiB. The AstrBot adapter renders it against the bundled 1086x1448 PNG
+template and sends the resulting image with the existing bilingual delivery
+text. Browser-history fallback uses `--` for watch time and completion because
+page visits cannot supply those values.
 
 The report generator can also be invoked directly:
 

@@ -13,7 +13,12 @@ import com.meguri.core.context.ContextProfile;
 import com.meguri.core.dto.ExpressionTag;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.ExecutionModeDecision;
+import com.meguri.core.execution.TurnExecutionMode;
 import com.meguri.core.llm.ProviderRequest;
+import com.meguri.core.observability.TurnLatencyMissingReason;
+import com.meguri.core.observability.TurnLatencyPoint;
+import com.meguri.core.observability.TurnLatencyTraceRecorder;
 import com.meguri.core.persona.PersonaRuntimeFacade;
 import com.meguri.core.persona.prompt.PromptPolicyComposer;
 import com.meguri.core.persona.runtime.ClientCapabilityState;
@@ -132,12 +137,24 @@ public final class CanonicalTurnPipeline {
         TurnRequest request = record.getRequest();
         FrozenKnowledgeSnapshot knowledge = FrozenKnowledgeSnapshot.restore(
                 record.getManifest().knowledgeSnapshotId());
+        mark(record, TurnLatencyPoint.RETRIEVAL_GATE_STARTED);
+        com.meguri.core.retrieval.RetrievalMode effectiveRetrievalMode = retrievalMode(record);
+        mark(record, TurnLatencyPoint.RETRIEVAL_GATE_READY);
+        if (effectiveRetrievalMode != com.meguri.core.retrieval.RetrievalMode.SLOW) {
+            markMissing(record, TurnLatencyPoint.QUERY_REWRITE_STARTED,
+                    TurnLatencyMissingReason.STAGE_BYPASSED);
+            markMissing(record, TurnLatencyPoint.QUERY_REWRITE_READY,
+                    TurnLatencyMissingReason.STAGE_BYPASSED);
+        }
+        mark(record, TurnLatencyPoint.RETRIEVAL_STARTED);
         RetrievalBundle retrievalBundle = retrieval.retrieve(
                 new UnifiedRetrievalFacade.Request(
-                        request.getMessage(), retrievalMode(request), request.tenantId(),
-                        request.getUserId(), retrievalScopes(request), record.getManifest().frozenAt(),
+                        request.getMessage(), effectiveRetrievalMode, request.tenantId(),
+                        request.getUserId(), retrievalScopes(record), record.getManifest().frozenAt(),
                         record.getDeadlineAt(), record.getTraceId(), runtimeState, request),
                 knowledge);
+        mark(record, TurnLatencyPoint.RETRIEVAL_MINIMUM_READY);
+        mark(record, TurnLatencyPoint.RETRIEVAL_ALL_SETTLED);
 
         PromptSkillBatch promptSkills = executePromptSkills(record, capabilities);
         List<ContextBuildRequest.ExternalBlock> adjacent = new ArrayList<>(
@@ -189,11 +206,13 @@ public final class CanonicalTurnPipeline {
         List<ContextBuildRequest.ExternalBlock> external = new ArrayList<>();
         retrievalBundle.items().forEach(item -> external.add(toContextBlock(item)));
         external.addAll(adjacentBlocks);
+        mark(record, TurnLatencyPoint.CONTEXT_BUILD_STARTED);
         CompanionContextRuntime.BuildResult contextBuild = contextRuntime.build(
                 new ContextBuildRequest(
                         request.getUserId(), request.getClientId(), request.getSessionId(),
                         contextProfile, retrievalBundle.plan().query().rewrittenQuery(),
                         0.75, external));
+        mark(record, TurnLatencyPoint.CONTEXT_READY);
         List<PromptPolicyComposer.PromptBlock> promptBlocks =
                 promptComposer.compose(persona, contextBuild.bundle(), promptSkills.contexts());
         ProviderRequest providerRequest = new ProviderRequest(
@@ -208,20 +227,44 @@ public final class CanonicalTurnPipeline {
                 adjacentBlocks, mcpContent);
     }
 
-    private static com.meguri.core.retrieval.RetrievalMode retrievalMode(TurnRequest request) {
-        return switch (request.retrievalMode()) {
+    private static void mark(TurnRecord record, TurnLatencyPoint point) {
+        TurnLatencyTraceRecorder recorder = record.getLatencyTraceRecorder();
+        if (recorder != null) recorder.mark(point);
+    }
+
+    private static void markMissing(
+            TurnRecord record,
+            TurnLatencyPoint point,
+            TurnLatencyMissingReason reason) {
+        TurnLatencyTraceRecorder recorder = record.getLatencyTraceRecorder();
+        if (recorder != null) recorder.markMissing(point, reason);
+    }
+
+    private static com.meguri.core.retrieval.RetrievalMode retrievalMode(TurnRecord record) {
+        TurnRequest request = record.getRequest();
+        com.meguri.core.retrieval.RetrievalMode requested = switch (request.retrievalMode()) {
             case NONE -> com.meguri.core.retrieval.RetrievalMode.NONE;
             case FAST -> com.meguri.core.retrieval.RetrievalMode.FAST;
             case SLOW -> com.meguri.core.retrieval.RetrievalMode.SLOW;
         };
+        ExecutionModeDecision decision = record.getExecutionModeDecision();
+        if (decision == null || decision.mode() != TurnExecutionMode.FAST) {
+            return requested;
+        }
+        com.meguri.core.retrieval.RetrievalMode fastRequested =
+                requested == com.meguri.core.retrieval.RetrievalMode.NONE
+                        ? requested : com.meguri.core.retrieval.RetrievalMode.FAST;
+        return new com.meguri.core.retrieval.RetrievalGate()
+                .classify(request.getMessage(), fastRequested);
     }
 
-    private static Set<String> retrievalScopes(TurnRequest request) {
+    private static Set<String> retrievalScopes(TurnRecord record) {
+        TurnRequest request = record.getRequest();
         LinkedHashSet<String> scopes = new LinkedHashSet<>();
         // formalMemoryAllowed is rebound from the authenticated adapter identity
         // before the Turn reaches this pipeline; the request body is not authority.
         if (request.formalMemoryAllowed()) scopes.add("memory:read");
-        if (request.retrievalMode() == com.meguri.core.harness.retrieval.RetrievalMode.SLOW) {
+        if (retrievalMode(record) == com.meguri.core.retrieval.RetrievalMode.SLOW) {
             scopes.add("web:read");
         }
         return Set.copyOf(scopes);
@@ -231,6 +274,10 @@ public final class CanonicalTurnPipeline {
             TurnRecord record,
             CapabilityRuntimeFacade.TurnCapabilities capabilities) {
         TurnRequest request = record.getRequest();
+        ExecutionModeDecision execution = record.getExecutionModeDecision();
+        if (execution != null && execution.mode() != TurnExecutionMode.AGENT) {
+            return new PromptSkillBatch(List.of(), List.of());
+        }
         List<PromptSkillContextContract.ContextInput> contexts = new ArrayList<>();
         List<PromptSkillExecution> executions = new ArrayList<>();
         int remainingTokens = PROMPT_SKILL_TOKEN_BUDGET;

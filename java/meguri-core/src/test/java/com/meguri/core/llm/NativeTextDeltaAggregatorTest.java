@@ -35,6 +35,16 @@ class NativeTextDeltaAggregatorTest {
     }
 
     @Test
+    void flushesFirstShortTokenImmediatelyRegardlessOfBatchWindow() {
+        String value = NativeTextDeltaAggregator.aggregate(
+                        Flux.concat(Flux.just("first"), Flux.never()),
+                        80, Duration.ofSeconds(5))
+                .blockFirst(Duration.ofMillis(300));
+
+        assertThat(value).isEqualTo("first");
+    }
+
+    @Test
     void flushesAtCharacterLimitWithoutWaitingForTimer() {
         String value = NativeTextDeltaAggregator.aggregate(
                         Flux.just("x".repeat(80)).concatWith(Flux.never()),

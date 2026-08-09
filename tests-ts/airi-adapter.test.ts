@@ -299,13 +299,18 @@ test('AIRI adapter creates turn with idempotency key and follows text events', a
     ])
   }
   const adapter = new MeguriApiAdapter('http://127.0.0.1:8000', fetchImpl)
-  const result = await adapter.runTurn(request, new SessionTurnReducer(), {
+  const result = await adapter.runTurn(
+    { ...request, execution_mode: 'FAST' },
+    new SessionTurnReducer(), {
     idempotencyKey: 'desktop-turn-1',
-  })
+    },
+  )
   assert.equal(result.reducer.turns.get('turn-1')?.text, 'hello Meguri')
   assert.equal(result.reducer.turns.get('turn-1')?.status, 'completed')
   const headers = calls[0].init?.headers as Record<string, string>
   assert.equal(headers['Idempotency-Key'], 'desktop-turn-1')
+  const body = JSON.parse(String(calls[0].init?.body)) as { execution_mode?: string }
+  assert.equal(body.execution_mode, 'FAST')
 })
 
 test('AIRI adapter reconnects using last accepted sequence', async () => {

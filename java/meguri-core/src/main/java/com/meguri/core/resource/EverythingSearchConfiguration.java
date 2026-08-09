@@ -7,8 +7,6 @@ import org.springframework.context.annotation.Configuration;
 
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
 
 /** Offline-first wiring for the local Everything resource picker. */
 @Configuration
@@ -25,25 +23,7 @@ public class EverythingSearchConfiguration {
 
     @Bean
     public ResourceSearchGateway everythingResourceSearchGateway(
-            EsEverythingSearchGateway everythingEsClient,
-            @Value("${meguri.resources.everything.allowed-roots:}") String configuredRoots) {
-        return new EverythingResourceSearchGateway(everythingEsClient, allowedRoots(configuredRoots));
-    }
-
-    private static List<Path> allowedRoots(String configuredRoots) {
-        if (configuredRoots != null && !configuredRoots.isBlank()) {
-            return java.util.Arrays.stream(configuredRoots.split(";"))
-                    .map(String::strip)
-                    .filter(value -> !value.isBlank())
-                    .map(Path::of)
-                    .toList();
-        }
-        String home = System.getProperty("user.home");
-        List<Path> roots = new ArrayList<>();
-        roots.add(Path.of("D:/program"));
-        for (String directory : List.of("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Music")) {
-            roots.add(Path.of(home, directory));
-        }
-        return List.copyOf(roots);
+            EsEverythingSearchGateway everythingEsClient) {
+        return new EverythingResourceSearchGateway(everythingEsClient);
     }
 }

@@ -9,6 +9,7 @@ import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.dto.VoiceStyle;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 import reactor.core.publisher.Mono;
 
@@ -20,6 +21,11 @@ public class MockLlmProvider implements LlmProvider {
     public Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
                                      List<String> canon, List<String> memories,
                                      List<String> recentContext) {
+        if (request.attachments().stream().anyMatch(MockLlmProvider::requiresMultimodalRead)) {
+            return Mono.error(new LlmProviderException(
+                    "Multimodal attachments require a configured openai-compatible model and "
+                            + "MEGURI_LLM_MULTIMODAL_FALLBACK_MODEL; the local Core is running in mock mode."));
+        }
         String message = request.getMessage().trim();
         ExpressionTag tag;
         Intensity intensity;
@@ -53,5 +59,11 @@ public class MockLlmProvider implements LlmProvider {
     @Override
     public String providerName() {
         return "mock";
+    }
+
+    private static boolean requiresMultimodalRead(Map<String, Object> attachment) {
+        if (attachment == null) return false;
+        Object access = attachment.get("content_access");
+        return "multimodal_read".equals(access) || "document_read".equals(access);
     }
 }

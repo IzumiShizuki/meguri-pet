@@ -94,6 +94,11 @@
     "type": "string",
     "default": "data/plugin_data/astrbot_plugin_meguri_gateway/daily-report-state.json"
   },
+  "daily_report_render_directory": {
+    "description": "Persistent directory for rendered daily report images",
+    "type": "string",
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/rendered-reports"
+  },
   "allowed_senders": {
     "description": "Optional sender allowlist using platform:bot_account:sender_id",
     "type": "list",

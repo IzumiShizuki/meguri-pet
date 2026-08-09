@@ -17,6 +17,7 @@ import com.meguri.core.memory.NoopMemoryGateway;
 import com.meguri.core.runtime.ExpressionResolver;
 import com.meguri.core.runtime.RuntimeStateMachine;
 import com.meguri.core.runtime.TurnOrchestrator;
+import com.meguri.core.harness.retrieval.RetrievalMode;
 import com.meguri.core.training.TrainingFeedbackService;
 import com.meguri.core.websearch.NoopWebSearchGateway;
 import org.junit.jupiter.api.Test;
@@ -26,10 +27,14 @@ import reactor.core.publisher.Mono;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -85,6 +90,35 @@ class WeatherConversationServiceTest {
 
         assertThat(context.intent()).isEqualTo(WeatherConversationService.Intent.NONE);
         assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void tomorrowWeatherMessageRequestsTomorrowsForecast() {
+        AtomicReference<LocalDate> requestedDate = new AtomicReference<>();
+        WeatherGateway gateway = new WeatherGateway() {
+            @Override
+            public Mono<WeatherBriefing> fetch(WeatherLocation location) {
+                return Mono.error(new AssertionError("dated forecast should be used"));
+            }
+
+            @Override
+            public Mono<WeatherBriefing> fetch(WeatherLocation location, LocalDate targetDate) {
+                requestedDate.set(targetDate);
+                return Mono.just(briefing(location));
+            }
+        };
+        WeatherService weather = new WeatherService(
+                gateway, MAPPER, true, tempDir.resolve("tomorrow-weather-location.json"),
+                QIANTANG, Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC),
+                8, 18);
+        WeatherConversationService conversation = new WeatherConversationService(weather);
+
+        var context = conversation.contextFor("明天天气怎么样？").block();
+        LlmResponse response = context.directResponse("zh_ja_pairs");
+
+        assertThat(requestedDate).hasValue(LocalDate.parse("2026-07-22"));
+        assertThat(response.reply()).contains("钱塘区目前多云").contains("の予報は");
+        assertThat(response.expressionTag()).isEqualTo(ExpressionTag.NEUTRAL);
     }
 
     @Test
@@ -159,6 +193,45 @@ class WeatherConversationServiceTest {
         assertThat(result.response()).isEqualTo(candidateResponses.getFirst());
         assertThat(orchestrator.sessionMessages("user-a", "desktop_pet", "weather-session").getLast().content())
                 .isEqualTo(result.response().reply());
+    }
+
+    @Test
+    void fastWeatherTurnUsesTheWeatherCapabilityWithoutCallingTheLlm() {
+        AtomicInteger weatherCalls = new AtomicInteger();
+        WeatherService weather = weather(location -> {
+            weatherCalls.incrementAndGet();
+            return Mono.just(briefing(location));
+        });
+        AtomicInteger llmCalls = new AtomicInteger();
+        LlmProvider llm = new LlmProvider() {
+            @Override
+            public Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
+                                              List<String> canon, List<String> memories,
+                                              List<String> recentContext) {
+                llmCalls.incrementAndGet();
+                return Mono.error(new AssertionError("explicit weather should not call the LLM"));
+            }
+        };
+        TurnOrchestrator orchestrator = new TurnOrchestrator(
+                llm, (query, state, limit) -> List.of(), new RuntimeStateMachine(), new ExpressionResolver(),
+                Duration.ZERO, MAPPER, new NoopMemoryGateway(), new NoopWebSearchGateway(),
+                new TrainingFeedbackService(MAPPER, tempDir.resolve("fast-weather-feedback.jsonl"),
+                        1, 0, () -> 0),
+                new WeatherConversationService(weather));
+        TurnRequest request = new TurnRequest(
+                "user-a", "desktop_pet", "fast-weather-session", null, "今天天气怎么样？",
+                List.of(), new ClientCapabilities(), null, null, false, false,
+                "zh_ja_pairs", RetrievalMode.FAST);
+
+        var result = orchestrator.runInline(request).block();
+
+        assertThat(weatherCalls).hasValue(1);
+        assertThat(llmCalls).hasValue(0);
+        assertThat(result.response().reply()).contains("钱塘区目前多云");
+        assertThat(result.response().expressionTag()).isEqualTo(ExpressionTag.NEUTRAL);
+        assertThat(orchestrator.eventsFor("fast-weather-session"))
+                .extracting(event -> event.type())
+                .contains("tool.started", "tool.completed");
     }
 
     private WeatherService weather(WeatherGateway gateway) {

@@ -10,6 +10,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
+from .bilibili_daily_card import DATE_PATTERN, render_bilibili_daily_card
 from .bridge import MessageRoutePolicy, is_meguri_command, platform_message_from_event
 from .client import HttpMeguriCoreClient
 from .daily_reports import DailyReportPoller
@@ -23,7 +24,7 @@ from .turn_checkpoints import TurnCheckpointStore
     "astrbot_plugin_meguri_gateway",
     "IzumiShizuki",
     "Routes AstrBot messages to the shared Meguri Core runtime.",
-    "0.4.0",
+    "0.5.0",
 )
 class MeguriGatewayPlugin(Star):
     """Routes selected AstrBot events into the authoritative Meguri services."""
@@ -121,6 +122,14 @@ class MeguriGatewayPlugin(Star):
             ),
         )
         self._daily_report_task: asyncio.Task | None = None
+        self._daily_report_render_directory = Path(
+            str(
+                config.get(
+                    "daily_report_render_directory",
+                    "data/plugin_data/astrbot_plugin_meguri_gateway/rendered-reports",
+                )
+            )
+        )
         self._daily_report_poll_seconds = max(
             30, int(config.get("daily_report_poll_seconds", 60))
         )
@@ -186,10 +195,30 @@ class MeguriGatewayPlugin(Star):
         await self.gateway.close()
         logger.info("Meguri AstrBot gateway terminated")
 
-    async def _send_daily_report(self, target: str, text: str) -> bool:
+    async def _send_daily_report(
+        self, target: str, text: str, render_payload: dict | None
+    ) -> bool:
         from astrbot.api.event import MessageChain
 
-        chain = MessageChain().message(text)
+        chain = MessageChain()
+        if render_payload is not None:
+            report_date = str(render_payload.get("date") or "")
+            if not DATE_PATTERN.fullmatch(report_date):
+                logger.warning("Meguri daily report render payload has an invalid date")
+                return False
+            output = self._daily_report_render_directory / f"bilibili-{report_date}.png"
+            try:
+                rendered = await asyncio.to_thread(
+                    render_bilibili_daily_card, render_payload, output
+                )
+            except (OSError, ValueError) as error:
+                logger.warning(
+                    "Meguri daily report image rendering failed: %s",
+                    type(error).__name__,
+                )
+                return False
+            chain.file_image(str(rendered))
+        chain.message(text)
         return bool(await self.context.send_message(target, chain))
 
     async def _daily_report_loop(self) -> None:

@@ -23,6 +23,20 @@ class PlanningFusionAndAssemblyTest {
     }
 
     @Test
+    void deterministicGateRecognizesRealChineseAndJapaneseGreetings() {
+        RetrievalGate gate = new RetrievalGate();
+
+        assertThat(gate.classify("你好！", RetrievalMode.FAST))
+                .isEqualTo(RetrievalMode.NONE);
+        assertThat(gate.classify("おはよう！", RetrievalMode.FAST))
+                .isEqualTo(RetrievalMode.NONE);
+        assertThat(gate.classify("你好，请解释一下 Meguri 的架构", RetrievalMode.FAST))
+                .isEqualTo(RetrievalMode.FAST);
+        assertThat(gate.classify("你好，请联网查一下今天的新闻", RetrievalMode.SLOW))
+                .isEqualTo(RetrievalMode.SLOW);
+    }
+
+    @Test
     void ordinaryQuestionDoesNotEnableGraphButRelationshipQuestionDoes() {
         DefaultRetrievalPlanner planner = new DefaultRetrievalPlanner();
 

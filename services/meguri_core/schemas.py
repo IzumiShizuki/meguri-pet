@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
-from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -41,10 +40,11 @@ class TurnRequest(BaseModel):
     formal_memory_allowed: bool = True
     reply_format: Literal["default", "zh_ja_pairs"] = "default"
     retrieval_mode: Literal["NONE", "FAST", "SLOW"] = "SLOW"
+    execution_mode: Literal["FAST", "THINK", "AGENT"] | None = None
 
-    @field_validator("retrieval_mode", mode="before")
+    @field_validator("retrieval_mode", "execution_mode", mode="before")
     @classmethod
-    def normalize_retrieval_mode(cls, value: object) -> object:
+    def normalize_modes(cls, value: object) -> object:
         return value.strip().upper() if isinstance(value, str) else value
 
 

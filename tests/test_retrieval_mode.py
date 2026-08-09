@@ -43,6 +43,25 @@ class StubLlm:
         return LlmResponse(reply="ok")
 
 
+def test_execution_mode_is_optional_and_normalized_for_adapter_binding() -> None:
+    default_request = TurnRequest(
+        user_id="execution-user",
+        client_id="website",
+        session_id="execution-default",
+        message="hello",
+    )
+    agent_request = TurnRequest(
+        user_id="execution-user",
+        client_id="website",
+        session_id="execution-agent",
+        message="analyze repository",
+        execution_mode=" agent ",
+    )
+
+    assert default_request.execution_mode is None
+    assert agent_request.execution_mode == "AGENT"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("mode", "expected_rag", "expected_memory", "expected_weather"),

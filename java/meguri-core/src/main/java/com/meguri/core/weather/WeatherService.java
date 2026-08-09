@@ -15,13 +15,22 @@ import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** Owns persisted location, the 02:00 refresh and bounded rain polling. */
 @Service
 public final class WeatherService {
+    private static final Pattern ISO_DATE =
+            Pattern.compile("(?<!\\d)(\\d{4})-(\\d{1,2})-(\\d{1,2})(?!\\d)");
+    private static final Pattern CHINESE_DATE =
+            Pattern.compile("(?<!\\d)(\\d{1,2})月(\\d{1,2})日?");
+
     private final WeatherGateway gateway;
     private final ObjectMapper mapper;
     private final boolean enabled;
@@ -79,6 +88,34 @@ public final class WeatherService {
     public WeatherLocation location() { return location.get(); }
     public WeatherBriefing latest() { return latest.get(); }
     public WeatherNotice latestNotice() { return latestNotice.get(); }
+    public LocalDate today() {
+        WeatherLocation selected = location.get();
+        return ZonedDateTime.now(clock.withZone(ZoneId.of(selected.timezone()))).toLocalDate();
+    }
+
+    /** Resolves bounded user date language in the saved location timezone. */
+    public LocalDate resolveForecastDate(String expression) {
+        LocalDate today = today();
+        if (expression == null || expression.isBlank()) return today;
+        String normalized = expression.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+
+        // An explicit calendar date wins over relative language in the same request.
+        Matcher iso = ISO_DATE.matcher(normalized);
+        if (iso.find()) {
+            return LocalDate.of(Integer.parseInt(iso.group(1)),
+                    Integer.parseInt(iso.group(2)), Integer.parseInt(iso.group(3)));
+        }
+        Matcher chinese = CHINESE_DATE.matcher(normalized);
+        if (chinese.find()) {
+            LocalDate candidate = LocalDate.of(today.getYear(),
+                    Integer.parseInt(chinese.group(1)), Integer.parseInt(chinese.group(2)));
+            return candidate.isBefore(today) ? candidate.plusYears(1) : candidate;
+        }
+        if (normalized.contains("大后天")) return today.plusDays(3);
+        if (normalized.contains("后天") || normalized.contains("day after tomorrow")) return today.plusDays(2);
+        if (normalized.contains("明天") || normalized.contains("tomorrow")) return today.plusDays(1);
+        return today;
+    }
 
     public WeatherLocation saveLocation(WeatherLocation requested) {
         try {
@@ -124,6 +161,21 @@ public final class WeatherService {
             inFlight.set(created);
             return created;
         }
+    }
+
+    /** Fetches today or one of the provider's supported future forecast days. */
+    public Mono<WeatherBriefing> forecast(LocalDate targetDate, boolean forceRefresh) {
+        Objects.requireNonNull(targetDate, "targetDate");
+        if (!enabled) return Mono.error(new WeatherDisabledException());
+        LocalDate today = today();
+        if (targetDate.isBefore(today)) {
+            return Mono.error(new IllegalArgumentException("weather date cannot be in the past"));
+        }
+        if (targetDate.isAfter(today.plusDays(15))) {
+            return Mono.error(new IllegalArgumentException("weather date must be within 16 days"));
+        }
+        if (targetDate.equals(today)) return current(forceRefresh);
+        return gateway.fetch(location.get(), targetDate);
     }
 
     /** Uses the saved location timezone, so a timezone change takes effect without restart. */

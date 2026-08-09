@@ -20,10 +20,13 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -259,6 +262,18 @@ class LangChain4jLlmProviderTest {
     }
 
     @Test
+    void modelTraceUsesConfiguredProviderModelRatherThanTokenizerModel() {
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
+                successfulModel(new AtomicReference<>()), null, new ObjectMapper(), "system",
+                "json_schema", 1, Map.of(), PromptCacheMetricsRecorder.noop(),
+                new OpenAiProviderTokenizer("gpt-4o-mini"), 256,
+                AgentPlannerRoute.compatibilityDefault(successfulModel(new AtomicReference<>())),
+                "deepseek-v4-flash");
+
+        assertEquals("deepseek-v4-flash", provider.modelId());
+    }
+
+    @Test
     void canonicalPromptDigestIgnoresVolatileIdsButChangesWithSemanticContent() {
         ProviderRequest first = typedRequest(
                 "same user", "same context", "same skill", "same external",
@@ -300,6 +315,164 @@ class LangChain4jLlmProviderTest {
         assertEquals(0, calls.get());
     }
 
+    @Test
+    void agentPlannerUsesItsDedicatedRouteAndNoAgentIsNormal() {
+        AtomicInteger ordinaryCalls = new AtomicInteger();
+        AtomicInteger plannerCalls = new AtomicInteger();
+        ChatModel ordinary = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest ignored) {
+                ordinaryCalls.incrementAndGet();
+                throw new AssertionError("ordinary generation model must not plan agents");
+            }
+        };
+        ChatModel planner = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest ignored) {
+                plannerCalls.incrementAndGet();
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"invoke_agent":false,"agent_id":null,"task_brief":null,
+                         "execution_preference":"AWAIT"}
+                        """)).build();
+            }
+        };
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
+                ordinary, null, new ObjectMapper(), "system", "json_schema", 1, Map.of(),
+                PromptCacheMetricsRecorder.noop(), new OpenAiProviderTokenizer("gpt-4o-mini"), 12_000,
+                new AgentPlannerRoute(planner, 1, Duration.ZERO));
+
+        StepVerifier.create(provider.planAgent(planningRequest()))
+                .verifyComplete();
+
+        assertEquals(0, ordinaryCalls.get());
+        assertEquals(1, plannerCalls.get());
+    }
+
+    @Test
+    void agentPlannerIsNotQueuedBehindSaturatedOrdinaryGeneration() throws Exception {
+        CountDownLatch ordinaryStarted = new CountDownLatch(1);
+        CountDownLatch allowOrdinaryToFinish = new CountDownLatch(1);
+        CountDownLatch ordinaryFinished = new CountDownLatch(1);
+        AtomicInteger plannerCalls = new AtomicInteger();
+        ChatModel ordinary = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest ignored) {
+                ordinaryStarted.countDown();
+                try {
+                    if (!allowOrdinaryToFinish.await(2, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test ordinary generation was not released");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("test ordinary generation interrupted", interrupted);
+                } finally {
+                    ordinaryFinished.countDown();
+                }
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"reply":"ok","expression_tag":"neutral","expression_intensity":"low",
+                         "voice_style":"neutral","memory_candidates":[]}
+                        """)).build();
+            }
+        };
+        ChatModel planner = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest ignored) {
+                plannerCalls.incrementAndGet();
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"invoke_agent":false,"agent_id":null,"task_brief":null,
+                         "execution_preference":"AWAIT"}
+                        """)).build();
+            }
+        };
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
+                ordinary, null, new ObjectMapper(), "system", "json_schema", 1, Map.of(),
+                PromptCacheMetricsRecorder.noop(), new OpenAiProviderTokenizer("gpt-4o-mini"), 12_000,
+                new AgentPlannerRoute(planner, 1, Duration.ZERO));
+        provider.respond(typedRequest(
+                "ordinary generation", "context", "trusted", "untrusted", "ordinary",
+                Instant.parse("2026-08-01T00:02:00Z"))).subscribe();
+        try {
+            assertTrue(ordinaryStarted.await(1, TimeUnit.SECONDS));
+
+            StepVerifier.create(provider.planAgent(planningRequest()))
+                    .verifyComplete();
+
+            assertEquals(1, plannerCalls.get());
+        } finally {
+            allowOrdinaryToFinish.countDown();
+            if (ordinaryStarted.getCount() == 0) {
+                assertTrue(ordinaryFinished.await(1, TimeUnit.SECONDS));
+            }
+        }
+    }
+
+    @Test
+    void saturatedPlannerRouteReturnsSanitizedFailureWithoutWaitingForGeneration() throws Exception {
+        CountDownLatch plannerStarted = new CountDownLatch(1);
+        CountDownLatch allowPlannerToFinish = new CountDownLatch(1);
+        ChatModel planner = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest ignored) {
+                plannerStarted.countDown();
+                try {
+                    if (!allowPlannerToFinish.await(2, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("test planner was not released");
+                    }
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("test planner interrupted", interrupted);
+                }
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"invoke_agent":false,"agent_id":null,"task_brief":null,
+                         "execution_preference":"AWAIT"}
+                        """)).build();
+            }
+        };
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
+                successfulModel(new AtomicReference<>()), null, new ObjectMapper(), "system",
+                "json_schema", 1, Map.of(), PromptCacheMetricsRecorder.noop(),
+                new OpenAiProviderTokenizer("gpt-4o-mini"), 12_000,
+                new AgentPlannerRoute(planner, 1, Duration.ZERO));
+        try {
+            provider.planAgent(planningRequest()).subscribe();
+            assertTrue(plannerStarted.await(1, TimeUnit.SECONDS));
+
+            StepVerifier.create(provider.planAgent(planningRequest()))
+                    .expectErrorSatisfies(error -> {
+                        assertTrue(error instanceof AgentPlannerException);
+                        assertEquals(AgentPlannerException.Reason.QUEUE_SATURATED,
+                                ((AgentPlannerException) error).reason());
+                    })
+                    .verify();
+        } finally {
+            allowPlannerToFinish.countDown();
+        }
+    }
+
+    @Test
+    void invalidAgentPlannerJsonIsClassifiedWithoutProviderPayload() {
+        ChatModel planner = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest ignored) {
+                return ChatResponse.builder().aiMessage(AiMessage.from("{\"invoke_agent\":false}"))
+                        .build();
+            }
+        };
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
+                successfulModel(new AtomicReference<>()), null, new ObjectMapper(), "system",
+                "json_schema", 1, Map.of(), PromptCacheMetricsRecorder.noop(),
+                new OpenAiProviderTokenizer("gpt-4o-mini"), 12_000,
+                new AgentPlannerRoute(planner, 1, Duration.ZERO));
+
+        StepVerifier.create(provider.planAgent(planningRequest()))
+                .expectErrorSatisfies(error -> {
+                    assertTrue(error instanceof AgentPlannerException);
+                    assertEquals(AgentPlannerException.Reason.INVALID_RESPONSE,
+                            ((AgentPlannerException) error).reason());
+                })
+                .verify();
+    }
+
     private static ChatModel successfulModel(AtomicReference<ChatRequest> captured) {
         return new ChatModel() {
             @Override
@@ -311,6 +484,15 @@ class LangChain4jLlmProviderTest {
                         """)).build();
             }
         };
+    }
+
+    private static AgentPlanningRequest planningRequest() {
+        return new AgentPlanningRequest(
+                typedRequest("need bounded research", "context", "trusted", "untrusted",
+                        "planner", Instant.parse("2026-08-01T00:01:00Z")),
+                List.of(new AgentPlanningRequest.AgentCandidate(
+                        "local-agent", Set.of("agent.invoke"), "local-result-v1")),
+                "AGENT");
     }
 
     private static ProviderRequest typedRequest(

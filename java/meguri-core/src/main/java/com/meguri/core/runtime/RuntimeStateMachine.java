@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Resolves the deterministic runtime state used by the text model and renderer.
  *
  * <p>The state rules intentionally mirror {@code services/meguri_core/runtime.py}:
- * night hours use outfit 04/sleep, daytime weekends use outfit 02/private, normal
+ * late-night hours (02:00-08:00) use outfit 04/sleep, daytime weekends use outfit 02/private, normal
  * work hours use outfit 01/work, and evening uses outfit 03/private. Temporal mode
  * never changes the user-level relationship. Presentation overrides may be scoped
  * by user or user:client, while relationship overrides are accepted only at the
@@ -106,10 +106,10 @@ public final class RuntimeStateMachine {
 
         String candidateOutfit;
         String candidateMode;
-        if (hour >= 22.0d || hour < 8.0d) {
+        if (hour >= 2.0d && hour < 8.0d) {
             candidateOutfit = "04";
             candidateMode = "sleep";
-        } else if (hour < 18.0d) {
+        } else if (hour >= 8.0d && hour < 18.0d) {
             candidateOutfit = holiday ? "02" : "01";
             candidateMode = holiday ? "private" : "work";
         } else {

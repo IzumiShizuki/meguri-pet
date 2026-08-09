@@ -8,7 +8,7 @@ import reactor.core.publisher.FluxSink;
 import reactor.core.Disposable;
 import reactor.core.scheduler.Schedulers;
 
-/** Batches provider tokens without delaying the first visible text beyond the flush interval. */
+/** Emits the first provider token immediately, then batches subsequent text deltas. */
 public final class NativeTextDeltaAggregator {
     private NativeTextDeltaAggregator() { }
 
@@ -29,6 +29,7 @@ public final class NativeTextDeltaAggregator {
             Object lock = new Object();
             StringBuilder pending = new StringBuilder(maxCharacters);
             AtomicBoolean terminated = new AtomicBoolean();
+            AtomicBoolean firstToken = new AtomicBoolean(true);
 
             Runnable flush = () -> {
                 synchronized (lock) {
@@ -46,6 +47,11 @@ public final class NativeTextDeltaAggregator {
                 synchronized (lock) {
                     if (terminated.get()) return;
                     int offset = 0;
+                    if (firstToken.compareAndSet(true, false)) {
+                        int copied = Math.min(maxCharacters, token.length());
+                        sink.next(token.substring(0, copied));
+                        offset = copied;
+                    }
                     while (offset < token.length()) {
                         int copied = Math.min(maxCharacters - pending.length(), token.length() - offset);
                         pending.append(token, offset, offset + copied);

@@ -47,7 +47,12 @@ D:\environment\anaconda3\envs\py314\python.exe `
 
 The archive contains a top-level `astrbot_plugin_meguri_gateway/` directory
 with `main.py`, metadata, configuration schema, requirements, and supporting
-modules. Packaging does not read or include local configuration, tokens, or
+modules. It also includes the Bilibili daily-card template and the OFL-licensed
+Noto Sans SC font under `assets/`; `bilibili_daily_card.py` performs bounded
+Pillow layout and writes rendered cards to `daily_report_render_directory`.
+Rendering failures leave delivery pending for a later retry, while older
+reports without `render_payload` continue to use text-only delivery.
+Packaging does not read or include local configuration, tokens, or
 AstrBot data. This upload package intentionally has no repository update source:
 do not use AstrBot's update action until the plugin has a dedicated repository
 or release download URL whose archive root is the plugin itself.

@@ -2,12 +2,15 @@ package com.meguri.core.runtime;
 
 import com.meguri.core.dto.ChatResponse;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.ExecutionModeDecision;
 import com.meguri.core.harness.HarnessManifest;
 import com.meguri.core.harness.persona.PersonaRuntime;
 import com.meguri.core.capability.CapabilityRuntimeFacade;
 import com.meguri.core.agent.CancellationToken;
 import com.meguri.core.context.CompanionContextRuntime;
 import com.meguri.core.llm.ProviderRequest;
+import com.meguri.core.observability.TurnLatencyTrace;
+import com.meguri.core.observability.TurnLatencyTraceRecorder;
 import com.meguri.core.persona.runtime.EffectivePersonaState;
 import com.meguri.core.retrieval.RetrievalBundle;
 
@@ -31,6 +34,8 @@ public final class TurnRecord {
     private volatile TurnStatus status = TurnStatus.ACCEPTED;
     private volatile TurnStage stage = TurnStage.CREATED;
     private volatile HarnessManifest manifest;
+    private volatile ExecutionModeDecision executionModeDecision;
+    private volatile TurnLatencyTraceRecorder latencyTraceRecorder;
     private volatile PersonaRuntime.PersonaSnapshot personaSnapshot;
     private volatile CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities;
     private volatile EffectivePersonaState effectivePersonaState;
@@ -134,6 +139,35 @@ public final class TurnRecord {
             throw new IllegalStateException("turn manifest is already frozen");
         }
         this.manifest = manifest;
+    }
+
+    public ExecutionModeDecision getExecutionModeDecision() {
+        return executionModeDecision;
+    }
+
+    public synchronized void freezeExecutionModeDecision(ExecutionModeDecision decision) {
+        Objects.requireNonNull(decision, "decision");
+        if (executionModeDecision != null && !executionModeDecision.equals(decision)) {
+            throw new IllegalStateException("execution mode decision is already frozen");
+        }
+        executionModeDecision = decision;
+    }
+
+    public TurnLatencyTraceRecorder getLatencyTraceRecorder() {
+        return latencyTraceRecorder;
+    }
+
+    public TurnLatencyTrace getLatencyTrace() {
+        TurnLatencyTraceRecorder recorder = latencyTraceRecorder;
+        return recorder == null ? null : recorder.snapshot();
+    }
+
+    public synchronized void freezeLatencyTraceRecorder(TurnLatencyTraceRecorder recorder) {
+        Objects.requireNonNull(recorder, "recorder");
+        if (latencyTraceRecorder != null && latencyTraceRecorder != recorder) {
+            throw new IllegalStateException("turn latency trace recorder is already frozen");
+        }
+        latencyTraceRecorder = recorder;
     }
 
     public PersonaRuntime.PersonaSnapshot getPersonaSnapshot() {

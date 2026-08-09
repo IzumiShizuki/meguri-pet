@@ -9,6 +9,7 @@ import com.meguri.core.context.ContextBundle;
 import com.meguri.core.dto.LlmResponse;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.TurnExecutionMode;
 import com.meguri.core.harness.retrieval.RetrievalMode;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.AgentPlanningRequest;
@@ -26,6 +27,7 @@ import reactor.core.publisher.Mono;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,7 +43,7 @@ class TurnCanonicalRemoteAgentIntegrationTest {
     }
 
     @Test
-    void fastDoesNotInvokeButApprovedSlowPlannerInjectsUntrustedAgentResult()
+    void fastDoesNotInvokeButApprovedAgentPlannerInjectsUntrustedAgentResult()
             throws Exception {
         AtomicReference<ProviderRequest> captured = new AtomicReference<>();
         AtomicReference<AgentPlanningRequest> planning = new AtomicReference<>();
@@ -53,6 +55,7 @@ class TurnCanonicalRemoteAgentIntegrationTest {
         InMemoryRemoteAgentGateway gateway = new InMemoryRemoteAgentGateway(Duration.ZERO, 0);
         CapabilityRuntimeFacade capabilities = new CapabilityRuntimeFacade(32);
         orchestrator = runtime(captured, planning, decision, capabilities);
+        orchestrator.configurePerformanceFeatures(true, false, false);
         agents = AgentRuntimeFactory.create(
                 AgentRuntimeFactory.Config.defaults(), orchestrator::recordAgentLifecycle,
                 Clock.systemUTC(), gateway);
@@ -70,7 +73,9 @@ class TurnCanonicalRemoteAgentIntegrationTest {
 
         TurnRecord slow = orchestrator.start(new TurnRequest(
                 "agent-user", "website", "agent-slow",
-                "Research this with the bounded remote agent", RetrievalMode.SLOW));
+                "Research this with the bounded remote agent", RetrievalMode.SLOW)
+                .withAuthorizedCapabilityScopes(Set.of("capability:read"))
+                .withRequestedExecutionMode(TurnExecutionMode.AGENT));
         approveNext(capabilities);
         slow.getDone().join();
 
@@ -118,6 +123,7 @@ class TurnCanonicalRemoteAgentIntegrationTest {
         InMemoryRemoteAgentGateway gateway = new InMemoryRemoteAgentGateway(Duration.ZERO, 0);
         CapabilityRuntimeFacade capabilities = new CapabilityRuntimeFacade(32);
         orchestrator = runtime(captured, planning, decision, capabilities);
+        orchestrator.configurePerformanceFeatures(true, false, false);
         capabilities.disable("agent.invoke");
         agents = AgentRuntimeFactory.create(
                 AgentRuntimeFactory.Config.defaults(), orchestrator::recordAgentLifecycle,
@@ -126,7 +132,9 @@ class TurnCanonicalRemoteAgentIntegrationTest {
 
         TurnRecord turn = orchestrator.start(new TurnRequest(
                 "agent-user", "website", "agent-denied", "try remote research",
-                RetrievalMode.SLOW));
+                RetrievalMode.SLOW)
+                .withAuthorizedCapabilityScopes(Set.of("capability:read"))
+                .withRequestedExecutionMode(TurnExecutionMode.AGENT));
         turn.getDone().join();
 
         assertThat(turn.getStatus()).isEqualTo(TurnStatus.COMPLETED);
@@ -215,6 +223,57 @@ class TurnCanonicalRemoteAgentIntegrationTest {
                 .doesNotContain("agent.failed");
     }
 
+    @Test
+    void plannerDeadlineFallsBackAndEmitsTheTimeoutReasonCode() {
+        AtomicReference<ProviderRequest> captured = new AtomicReference<>();
+        CapabilityRuntimeFacade capabilities = new CapabilityRuntimeFacade(32);
+        orchestrator = timeoutPlannerRuntime(captured, capabilities);
+        agents = AgentRuntimeFactory.create(
+                AgentRuntimeFactory.Config.defaults(), orchestrator::recordAgentLifecycle,
+                Clock.systemUTC(), new InMemoryRemoteAgentGateway(Duration.ZERO, 0));
+        orchestrator.configureAgentRuntime(agents.runtime(), agents.config());
+        orchestrator.configurePerformanceFeatures(true, false, false, 25L);
+
+        TurnRecord turn = orchestrator.start(new TurnRequest(
+                "agent-user", "website", "agent-planner-timeout", "research this",
+                RetrievalMode.SLOW)
+                .withAuthorizedCapabilityScopes(Set.of("capability:read"))
+                .withRequestedExecutionMode(TurnExecutionMode.AGENT));
+        turn.getDone().join();
+
+        assertThat(turn.getStatus()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(captured.get()).isNotNull();
+        assertThat(orchestrator.eventsFor("agent-planner-timeout"))
+                .filteredOn(event -> event.getType().equals("agent.failed"))
+                .singleElement()
+                .satisfies(event -> assertThat(event.getData())
+                        .containsEntry("error_code", "AGENT_PLANNER_TIMEOUT"));
+    }
+
+    @Test
+    void slowRetrievalWithoutAnAgentDecisionDoesNotCallThePlanner() {
+        AtomicReference<ProviderRequest> captured = new AtomicReference<>();
+        AtomicReference<AgentPlanningRequest> planning = new AtomicReference<>();
+        CapabilityRuntimeFacade capabilities = new CapabilityRuntimeFacade(32);
+        orchestrator = runtime(captured, planning, new AtomicReference<>(), capabilities);
+        agents = AgentRuntimeFactory.create(
+                AgentRuntimeFactory.Config.defaults(), orchestrator::recordAgentLifecycle,
+                Clock.systemUTC(), new InMemoryRemoteAgentGateway(Duration.ZERO, 0));
+        orchestrator.configureAgentRuntime(agents.runtime(), agents.config());
+
+        TurnRecord turn = orchestrator.start(new TurnRequest(
+                "agent-user", "website", "ordinary-slow", "answer from current context",
+                RetrievalMode.SLOW));
+        turn.getDone().join();
+
+        assertThat(turn.getStatus()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(captured.get()).isNotNull();
+        assertThat(planning.get()).isNull();
+        assertThat(orchestrator.eventsFor("ordinary-slow"))
+                .extracting(event -> event.getType())
+                .noneMatch(type -> type.startsWith("agent."));
+    }
+
     private static TurnOrchestrator runtime(
             AtomicReference<ProviderRequest> captured,
             AtomicReference<AgentPlanningRequest> planning,
@@ -246,6 +305,38 @@ class TurnCanonicalRemoteAgentIntegrationTest {
         return new TurnOrchestrator(
                 provider, rag, new RuntimeStateMachine(), new ExpressionResolver(),
                 Duration.ofMillis(1), mapper, new NoopMemoryGateway(),
+                new NoopWebSearchGateway(), TrainingFeedbackService.disabled(mapper),
+                WeatherConversationService.disabled(), new InMemoryTurnJournal(mapper),
+                new NoopSessionContextPersistence(), capabilities);
+    }
+
+    private static TurnOrchestrator timeoutPlannerRuntime(
+            AtomicReference<ProviderRequest> captured,
+            CapabilityRuntimeFacade capabilities) {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        LlmProvider provider = new LlmProvider() {
+            @Override
+            public Mono<LlmResponse> respond(ProviderRequest request) {
+                captured.set(request);
+                return Mono.just(new LlmResponse("provider reply"));
+            }
+
+            @Override
+            public Mono<AgentPlanningRequest.Decision> planAgent(
+                    AgentPlanningRequest request) {
+                return Mono.never();
+            }
+
+            @Override
+            public Mono<LlmResponse> respond(
+                    TurnRequest request, RuntimeState state, List<String> canon,
+                    List<String> memories, List<String> recentContext) {
+                throw new AssertionError("canonical provider request must be used");
+            }
+        };
+        return new TurnOrchestrator(
+                provider, (query, state, limit) -> List.of(), new RuntimeStateMachine(),
+                new ExpressionResolver(), Duration.ofMillis(1), mapper, new NoopMemoryGateway(),
                 new NoopWebSearchGateway(), TrainingFeedbackService.disabled(mapper),
                 WeatherConversationService.disabled(), new InMemoryTurnJournal(mapper),
                 new NoopSessionContextPersistence(), capabilities);

@@ -18,6 +18,10 @@ server:
 meguri:
   build-id: ${MEGURI_BUILD_ID:}
   public-origin: ${MEGURI_CORE_PUBLIC_ORIGIN:http://127.0.0.1:18080}
+  performance:
+    execution-mode-enabled: ${MEGURI_EXECUTION_MODE_ENABLED:false}
+    fast-path-enabled: ${MEGURI_FAST_PATH_ENABLED:false}
+    limited-react-enabled: ${MEGURI_LIMITED_REACT_ENABLED:false}
   data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
   turn-journal:
     mode: ${MEGURI_TURN_JOURNAL_MODE:in-memory}
@@ -78,7 +82,6 @@ meguri:
       es-path: ${MEGURI_EVERYTHING_ES_PATH:D:/Program Files/Everything/es.exe}
       timeout-ms: ${MEGURI_EVERYTHING_TIMEOUT_MS:1800}
       query-result-cap: ${MEGURI_EVERYTHING_QUERY_RESULT_CAP:200}
-      allowed-roots: ${MEGURI_EVERYTHING_ALLOWED_ROOTS:}
   bilibili-report:
     enabled: ${MEGURI_BILIBILI_REPORT_ENABLED:true}
     python: ${MEGURI_BILIBILI_REPORT_PYTHON:D:/environment/anaconda3/envs/py314/python.exe}
@@ -107,6 +110,16 @@ meguri:
     tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
     thinking: ${MEGURI_LLM_THINKING:auto}
   agent:
+    planner:
+      deadline-ms: ${MEGURI_AGENT_PLANNER_DEADLINE_MS:5000}
+      provider-timeout-ms: ${MEGURI_AGENT_PLANNER_PROVIDER_TIMEOUT_MS:4000}
+      queue-timeout-ms: ${MEGURI_AGENT_PLANNER_QUEUE_TIMEOUT_MS:250}
+      max-concurrency: ${MEGURI_AGENT_PLANNER_MAX_CONCURRENCY:1}
+      max-tokens: ${MEGURI_AGENT_PLANNER_MAX_TOKENS:128}
+      model: ${MEGURI_AGENT_PLANNER_MODEL:${MEGURI_LLM_MODEL:}}
+      # Omit this to reuse MEGURI_LLM_API_KEY_FILE; never use an inline key.
+      api-key-file: ${MEGURI_AGENT_PLANNER_API_KEY_FILE:}
+      thinking: ${MEGURI_AGENT_PLANNER_THINKING:disabled}
     gateway-mode: ${MEGURI_AGENT_GATEWAY_MODE:unavailable}
     remote:
       endpoint: ${MEGURI_AGENT_REMOTE_ENDPOINT:https://127.0.0.1/}

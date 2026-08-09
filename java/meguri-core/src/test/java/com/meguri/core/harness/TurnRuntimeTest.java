@@ -3,6 +3,13 @@ package com.meguri.core.harness;
 import com.meguri.core.dto.ClientCapabilities;
 import com.meguri.core.dto.EventEnvelope;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.TurnExecutionMode;
+import com.meguri.core.react.ReactDecision;
+import com.meguri.core.react.ReactPlannerDecision;
+import com.meguri.core.react.TestSubagentSkill;
+import com.meguri.core.observability.TurnLatencyMissingReason;
+import com.meguri.core.observability.TurnLatencyPoint;
+import com.meguri.core.retrieval.RetrievalMode;
 import com.meguri.core.runtime.TurnEventTypes;
 import com.meguri.core.runtime.TurnOrchestrator;
 import com.meguri.core.harness.capability.EffectLedger;
@@ -12,6 +19,7 @@ import reactor.test.StepVerifier;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -51,10 +59,102 @@ class TurnRuntimeTest {
         assertThat(completed.result()).isNotNull();
         assertThat(runtime.effectReceipts(accepted.turnId()))
                 .extracting(EffectLedger.Receipt::capabilityId)
-                .containsExactly("weather.read");
+                .isEmpty();
         assertThat(runtime.effectReceipts(accepted.turnId()))
                 .allSatisfy(receipt -> assertThat(receipt.status())
                         .isEqualTo(EffectLedger.Status.COMPLETED));
+    }
+
+    @Test
+    void optInFastPathFreezesDecisionAndOmitsRetrievalAndToolSchemasForGreeting() {
+        runtime.configurePerformanceFeatures(true, true, false);
+        TurnRequest request = request("fast-greeting-session", "你好！");
+
+        TurnSnapshot accepted = runtime.submit(new TurnCommand.Start(
+                request, "operation-fast", Instant.now().plusSeconds(10))).block();
+
+        assertThat(accepted).isNotNull();
+        assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().mode())
+                .isEqualTo(TurnExecutionMode.FAST);
+        assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().reactEligible())
+                .isFalse();
+        assertThat(accepted.manifest().grantedCapabilities()).isEmpty();
+
+        runtime.turn(accepted.turnId()).getDone().join();
+        assertThat(runtime.turn(accepted.turnId()).getRetrievalBundle().plan().mode())
+                .isEqualTo(RetrievalMode.NONE);
+        assertThat(runtime.effectReceipts(accepted.turnId())).isEmpty();
+        assertThat(runtime.turn(accepted.turnId()).getLatencyTrace()
+                .timestamp(TurnLatencyPoint.FIRST_DELTA_PERSISTED)).isNotNull();
+        assertThat(runtime.turn(accepted.turnId()).getLatencyTrace()
+                .missingReason(TurnLatencyPoint.CLIENT_FIRST_RENDER))
+                .isEqualTo(TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
+        assertThat(runtime.events(new EventCursor(request.getSessionId(), 0L))
+                        .filter(event -> "turn.started".equals(event.getType()))
+                        .single().block().getData())
+                .containsEntry("execution_mode", "FAST");
+        assertThat(runtime.events(new EventCursor(request.getSessionId(), 0L))
+                        .filter(event -> TurnEventTypes.isTerminal(event.getType()))
+                        .single().block().getData())
+                .containsKey("latency_trace");
+    }
+
+    @Test
+    void limitedReactIsEligibleOnlyForAgentAndCanFinalizeWithinTheFrozenBudget() {
+        runtime.configurePerformanceFeatures(true, true, true);
+        runtime.configureLimitedReactPlanner(context -> reactor.core.publisher.Mono.just(
+                new ReactPlannerDecision(
+                        ReactDecision.FINALIZE,
+                        context.goal(),
+                        "ENOUGH_WITHOUT_ACTION",
+                        null,
+                        "bounded planner context")));
+        TurnRequest request = request("agent-session", "请进行仓库分析")
+                .withAuthorizedCapabilityScopes(Set.of("capability:read"))
+                .withRequestedExecutionMode(TurnExecutionMode.AGENT);
+
+        TurnSnapshot accepted = runtime.submit(new TurnCommand.Start(
+                request, "operation-agent", Instant.now().plusSeconds(10))).block();
+
+        assertThat(accepted).isNotNull();
+        assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().mode())
+                .isEqualTo(TurnExecutionMode.AGENT);
+        assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().reactEligible())
+                .isTrue();
+        assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().budget().maxRounds())
+                .isLessThanOrEqualTo(3);
+
+        runtime.turn(accepted.turnId()).getDone().join();
+        assertThat(runtime.snapshot(accepted.turnId()).block().status()).isEqualTo("completed");
+    }
+
+    @Test
+    void thinkModeAnswersOrdinaryAndHardPromptsWithoutInvokingTheTestSubagentSkill() {
+        runtime.configurePerformanceFeatures(true, true, true);
+        TestSubagentSkill skill = new TestSubagentSkill();
+        runtime.configureLimitedReactPlanner(skill);
+        List<TurnRequest> requests = List.of(
+                request("think-ordinary", "你好，今天怎么样？")
+                        .withRequestedExecutionMode(TurnExecutionMode.THINK),
+                request("think-hard", "困难题：证明任意树有 n-1 条边，并简述归纳思路。")
+                        .withRequestedExecutionMode(TurnExecutionMode.THINK));
+
+        List<TurnSnapshot> accepted = requests.stream()
+                .map(request -> runtime.submit(new TurnCommand.Start(
+                        request, "operation-" + request.getSessionId(),
+                        Instant.now().plusSeconds(10))).block())
+                .toList();
+        accepted.forEach(turn -> runtime.turn(turn.turnId()).getDone().join());
+
+        assertThat(accepted).allSatisfy(turn -> {
+            assertThat(runtime.turn(turn.turnId()).getExecutionModeDecision().mode())
+                    .isEqualTo(TurnExecutionMode.THINK);
+            assertThat(runtime.snapshot(turn.turnId()).block().status()).isEqualTo("completed");
+            assertThat(runtime.snapshot(turn.turnId()).block().result().response().reply())
+                    .isNotBlank();
+        });
+        assertThat(skill.plannerCalls()).isZero();
+        assertThat(skill.actionCalls()).isZero();
     }
 
     @Test

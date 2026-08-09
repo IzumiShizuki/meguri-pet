@@ -138,6 +138,7 @@
         "training_mode": { "type": "boolean" },
         "reply_format": { "type": "string", "enum": ["default", "zh_ja_pairs"] },
         "retrieval_mode": { "type": "string", "enum": ["NONE", "FAST", "SLOW"] },
+        "execution_mode": { "type": "string", "enum": ["FAST", "THINK", "AGENT"] },
         "required_extensions": {
           "type": "array",
           "items": { "$ref": "#/$defs/NonEmptyString" }

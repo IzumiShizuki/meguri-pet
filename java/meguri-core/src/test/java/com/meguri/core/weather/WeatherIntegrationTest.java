@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZoneId;
@@ -65,6 +66,102 @@ class WeatherIntegrationTest {
         assertThat(result.nextRainProbability()).isEqualTo(70);
         assertThat(result.briefing()).contains("上海目前多云").contains("今天整体有雷雨")
                 .contains("湿度78%").contains("风速12.4公里/小时").contains("9点前后可能下雨");
+    }
+
+    @Test
+    void selectsTheRequestedFutureDateInsteadOfAlwaysReturningToday() throws Exception {
+        Clock clock = Clock.fixed(Instant.parse("2026-07-21T00:30:00Z"), ZoneOffset.UTC);
+        OpenMeteoWeatherGateway gateway = new OpenMeteoWeatherGateway(
+                WebClient.create(), "https://api.open-meteo.com/v1/forecast", clock, 50, 2);
+        JsonNode json = MAPPER.readTree("""
+                {
+                  "daily": {
+                    "time": ["2026-07-21", "2026-07-22"],
+                    "weather_code": [0, 61],
+                    "temperature_2m_max": [31.6, 29.2],
+                    "temperature_2m_min": [26.4, 24.1],
+                    "precipitation_probability_max": [10, 80]
+                  },
+                  "hourly": {
+                    "time": ["2026-07-22T08:00"],
+                    "precipitation_probability": [70],
+                    "weather_code": [61],
+                    "temperature_2m": [25.0],
+                    "relative_humidity_2m": [82],
+                    "wind_speed_10m": [12.0]
+                  }
+                }
+                """);
+
+        WeatherBriefing result =
+                gateway.parse(SHANGHAI, json, LocalDate.parse("2026-07-22"));
+
+        assertThat(result.date()).isEqualTo("2026-07-22");
+        assertThat(result.summary()).isEqualTo("有雨");
+        assertThat(result.currentTemperatureC()).isNull();
+        assertThat(result.briefing()).contains("上海明天整体有雨").contains("24～29℃")
+                .contains("最高降雨概率80%");
+    }
+
+    @Test
+    void rejectsAMissingRequestedDateInsteadOfUsingTodaysForecast() throws Exception {
+        Clock clock = Clock.fixed(Instant.parse("2026-07-21T00:30:00Z"), ZoneOffset.UTC);
+        OpenMeteoWeatherGateway gateway = new OpenMeteoWeatherGateway(
+                WebClient.create(), "https://api.open-meteo.com/v1/forecast", clock, 50, 2);
+        JsonNode json = MAPPER.readTree("""
+                {
+                  "daily": {
+                    "time": ["2026-07-21"], "weather_code": [0],
+                    "temperature_2m_max": [31.6], "temperature_2m_min": [26.4],
+                    "precipitation_probability_max": [10]
+                  },
+                  "hourly": {
+                    "time": ["2026-07-21T08:00"], "precipitation_probability": [10],
+                    "weather_code": [0], "temperature_2m": [28.2],
+                    "relative_humidity_2m": [78], "wind_speed_10m": [12.4]
+                  }
+                }
+                """);
+
+        assertThatThrownBy(() -> gateway.parse(SHANGHAI, json, LocalDate.parse("2026-07-22")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("requested date 2026-07-22");
+    }
+
+    @Test
+    void controllerResolvesFutureWeatherDatesInTheSavedLocationTimezone() {
+        AtomicReference<LocalDate> requestedDate = new AtomicReference<>();
+        WeatherGateway gateway = new WeatherGateway() {
+            @Override
+            public Mono<WeatherBriefing> fetch(WeatherLocation location) {
+                return Mono.just(briefing("晴朗", false, 10, 27.0, 8.0));
+            }
+
+            @Override
+            public Mono<WeatherBriefing> fetch(WeatherLocation location, LocalDate targetDate) {
+                requestedDate.set(targetDate);
+                return Mono.just(briefing("有雨", false, 80, 24.0, 10.0));
+            }
+        };
+        WeatherService service = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("dated-location.json"), SHANGHAI,
+                Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC));
+        WeatherController controller = new WeatherController(service);
+
+        WeatherBriefing result = controller.briefing("明天", true).block();
+
+        assertThat(requestedDate).hasValue(LocalDate.parse("2026-07-22"));
+        assertThat(result).isNotNull();
+        assertThat(service.resolveForecastDate("tomorrow")).isEqualTo(LocalDate.parse("2026-07-22"));
+        assertThat(service.resolveForecastDate("day after tomorrow")).isEqualTo(LocalDate.parse("2026-07-23"));
+        assertThat(service.resolveForecastDate("明天 2026-07-24")).isEqualTo(LocalDate.parse("2026-07-24"));
+        assertThat(service.resolveForecastDate(null)).isEqualTo(LocalDate.parse("2026-07-21"));
+
+        WeatherService atShanghaiDateBoundary = new WeatherService(gateway, MAPPER, true,
+                temporaryDirectory.resolve("timezone-boundary-location.json"), SHANGHAI,
+                Clock.fixed(Instant.parse("2026-07-21T16:30:00Z"), ZoneOffset.UTC));
+        assertThat(atShanghaiDateBoundary.resolveForecastDate("tomorrow"))
+                .isEqualTo(LocalDate.parse("2026-07-23"));
     }
 
     @Test

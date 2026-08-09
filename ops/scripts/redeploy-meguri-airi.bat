@@ -1,11 +1,18 @@
 @echo off
 setlocal
-rem Rebuild/redeploy Meguri Java staging and restart the local AIRI frontend.
-rem The PowerShell script contains the guarded candidate, smoke, switch, and rollback flow.
+chcp 65001 >nul
+title Meguri + AIRI Build and Start
+
+rem Build Java and AIRI, optionally replace the remote staging image,
+rem then start the local Java/AIRI stack. No tests or health/smoke checks.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0redeploy-meguri-airi.ps1"
 set "exit_code=%ERRORLEVEL%"
-if not "%exit_code%"=="0" (
-  echo.
-  echo Redeploy failed with exit code %exit_code%.
+
+echo.
+if "%exit_code%"=="0" (
+  echo Build/start command completed.
+) else (
+  echo Build/start failed with exit code %exit_code%.
 )
+pause
 exit /b %exit_code%

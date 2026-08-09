@@ -59,6 +59,7 @@ export interface TurnCreateRequest {
   training_mode?: boolean
   reply_format?: 'default' | 'zh_ja_pairs'
   retrieval_mode?: 'NONE' | 'FAST' | 'SLOW'
+  execution_mode?: 'FAST' | 'THINK' | 'AGENT'
   required_extensions?: string[]
 }
 

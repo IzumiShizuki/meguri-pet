@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { collectRecentArtifacts } from './artifact-feed.mjs'
 import { desktopOrigin } from './desktop-origin.mjs'
+import { matchesDesktopRequestIdentity } from './desktop-request-identity.mjs'
 
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const webRoot = resolve(root, 'apps/desktop-airi/web')
@@ -14,17 +15,20 @@ const reportRoot = resolve(root, 'reports')
 const outputRoot = resolve(root, 'output')
 const port = Number(process.env.MEGURI_DESKTOP_PORT ?? 5173)
 const coreUrl = process.env.MEGURI_CORE_URL ?? 'https://bot.shizuki.online/meguri-core'
-// The Everything resource gate is a loopback-only feature: the remote Core runs
-// on Linux and cannot see this machine's files or the Windows es.exe client, so
-// /v1/resources/* is always routed to the local Java Core instead of coreUrl.
+// Everything and user-approved multimodal attachments are loopback-only: the
+// remote Core cannot read this machine's files. A selected session stays local
+// after its first multimodal turn so its Core-side conversation remains intact.
 const localCoreUrl = process.env.MEGURI_LOCAL_CORE_URL ?? 'http://127.0.0.1:18080'
 const coreTokenFile = process.env.MEGURI_CORE_AUTH_TOKEN_FILE ?? 'D:\\environment\\secrets\\meguri\\desktop-core-token.txt'
 let coreToken = ''
 try { coreToken = readFileSync(coreTokenFile, 'utf8').trim() } catch { /* local-only Core keeps working without a token */ }
 
-const contentTypes = { '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' }
+const contentTypes = { '.html': 'text/html; charset=utf-8', '.json': 'application/json; charset=utf-8', '.md': 'text/markdown; charset=utf-8', '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.txt': 'text/plain; charset=utf-8', '.csv': 'text/csv; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8' }
 const coreProxyPrefix = '/core'
 const maxProxyBodyBytes = 1024 * 1024
+const maxMultimodalProxyBodyBytes = 12 * 1024 * 1024
+const localMultimodalSessions = new Map()
+const localMultimodalSessionTtlMs = 30 * 60 * 1000
 
 function safeAssetPath(pathname) {
   const relative = decodeURIComponent(pathname.slice('/assets/'.length)).replaceAll('/', sep)
@@ -48,21 +52,40 @@ function applyDesktopCors(request, response) {
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   response.setHeader(
     'Access-Control-Allow-Headers',
-    'Accept, Content-Type, Idempotency-Key, X-Meguri-Desktop-Client, X-Meguri-Desktop-Session',
+    'Accept, Content-Type, Idempotency-Key, X-Meguri-Desktop-Client, X-Meguri-Desktop-Session, X-Meguri-Multimodal',
   )
   return true
 }
 
-async function readProxyBody(request) {
+async function readProxyBody(request, maximumBytes) {
   const chunks = []
   let bytes = 0
   for await (const chunk of request) {
     bytes += chunk.length
-    if (bytes > maxProxyBodyBytes)
+    if (bytes > maximumBytes)
       throw new Error('Proxy request body is too large')
     chunks.push(chunk)
   }
   return chunks.length ? Buffer.concat(chunks) : undefined
+}
+
+function sessionUsesLocalMultimodalCore(sessionId) {
+  const expiresAt = localMultimodalSessions.get(sessionId)
+  if (!expiresAt)
+    return false
+  if (expiresAt <= Date.now()) {
+    localMultimodalSessions.delete(sessionId)
+    return false
+  }
+  return true
+}
+
+function hasMultimodalAttachment(payload) {
+  return Array.isArray(payload?.attachments)
+    && payload.attachments.some(attachment => attachment
+      && typeof attachment === 'object'
+      && (attachment.content_access === 'multimodal_read'
+        || attachment.content_access === 'document_read'))
 }
 
 async function proxyCoreRequest(request, response, requestUrl) {
@@ -81,29 +104,44 @@ async function proxyCoreRequest(request, response, requestUrl) {
     response.writeHead(403); response.end('Valid desktop session required'); return
   }
   const corePath = requestUrl.pathname.slice(coreProxyPrefix.length)
-  const useLocalCore = corePath === '/v1/resources' || corePath.startsWith('/v1/resources/')
+  const resourceRequest = corePath === '/v1/resources' || corePath.startsWith('/v1/resources/')
+  const documentEditRequest = corePath === '/v1/documents' || corePath.startsWith('/v1/documents/')
+  const multimodalRequested = request.headers['x-meguri-multimodal'] === 'true'
+  const controller = new AbortController()
+  const abortUpstream = () => {
+    if (!controller.signal.aborted)
+      controller.abort()
+  }
+  request.once('aborted', abortUpstream)
+  const body = request.method === 'GET' || request.method === 'HEAD'
+    ? undefined
+    : await readProxyBody(request, multimodalRequested
+      ? maxMultimodalProxyBodyBytes
+      : maxProxyBodyBytes)
+  let hasMultimodalContent = false
+  if (body && ['/v1/turns', '/v1/chat/respond'].includes(corePath)) {
+    let payload
+    try { payload = JSON.parse(body.toString('utf8')) } catch {
+      response.writeHead(400); response.end('Invalid JSON body'); return
+    }
+    if (!matchesDesktopRequestIdentity(payload, desktopSession)) {
+      response.writeHead(403); response.end('Desktop request identity mismatch'); return
+    }
+    hasMultimodalContent = hasMultimodalAttachment(payload)
+    if (multimodalRequested !== hasMultimodalContent) {
+      response.writeHead(400); response.end('Multimodal request marker does not match attachments'); return
+    }
+    if (hasMultimodalContent) {
+      localMultimodalSessions.set(desktopSession, Date.now() + localMultimodalSessionTtlMs)
+    }
+  }
+  const useLocalCore = resourceRequest || documentEditRequest || sessionUsesLocalMultimodalCore(desktopSession)
   if (!coreToken && !useLocalCore) {
     response.writeHead(503); response.end('Meguri Core token is not configured'); return
   }
 
   const suffix = `${corePath}${requestUrl.search}`
   const upstreamUrl = `${(useLocalCore ? localCoreUrl : coreUrl).replace(/\/+$/, '')}${suffix}`
-  const controller = new AbortController()
-  request.once('aborted', () => controller.abort())
-  const body = request.method === 'GET' || request.method === 'HEAD'
-    ? undefined
-    : await readProxyBody(request)
-  if (body && ['/v1/turns', '/v1/chat/respond'].includes(corePath)) {
-    let payload
-    try { payload = JSON.parse(body.toString('utf8')) } catch {
-      response.writeHead(400); response.end('Invalid JSON body'); return
-    }
-    if (payload?.user_id !== 'local-airi-user'
-      || payload?.client_id !== 'airi'
-      || payload?.session_id !== desktopSession) {
-      response.writeHead(403); response.end('Desktop request identity mismatch'); return
-    }
-  }
   const upstreamHeaders = {
     'Accept': String(request.headers.accept ?? 'application/json'),
     'Content-Type': String(request.headers['content-type'] ?? 'application/json'),
@@ -131,7 +169,30 @@ async function proxyCoreRequest(request, response, requestUrl) {
     response.end()
     return
   }
-  Readable.fromWeb(upstream.body).pipe(response)
+  // An SSE consumer may navigate away or cancel its reader. `fetch` then
+  // rejects the Web stream with AbortError; without an error listener Node
+  // treats that as an unhandled stream error and kills the whole desktop
+  // gateway. Treat client disconnect as normal cleanup, while preserving a
+  // non-abort upstream failure for the response stream.
+  const upstreamStream = Readable.fromWeb(upstream.body)
+  const cleanup = () => {
+    request.off('aborted', abortUpstream)
+    response.off('close', closeUpstream)
+  }
+  const closeUpstream = () => {
+    abortUpstream()
+    if (!upstreamStream.destroyed)
+      upstreamStream.destroy()
+  }
+  upstreamStream.once('end', cleanup)
+  upstreamStream.once('close', cleanup)
+  upstreamStream.on('error', error => {
+    cleanup()
+    if (error?.name !== 'AbortError' && !response.destroyed)
+      response.destroy(error)
+  })
+  response.once('close', closeUpstream)
+  upstreamStream.pipe(response)
 }
 
 function serveRecentArtifacts(request, response, requestUrl) {

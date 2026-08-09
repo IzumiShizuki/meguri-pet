@@ -20,15 +20,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RuntimeStateMachineTest {
     @Test
-    void switchesToSleepModeAutomaticallyAtNight() {
-        Clock atElevenPmShanghai = Clock.fixed(Instant.parse("2026-07-21T15:00:00Z"), ZoneOffset.UTC);
-        RuntimeStateMachine machine = new RuntimeStateMachine(atElevenPmShanghai);
+    void switchesToSleepModeAutomaticallyAfterTheLateBedtime() {
+        Clock atThreeAmShanghai = Clock.fixed(Instant.parse("2026-07-21T19:00:00Z"), ZoneOffset.UTC);
+        RuntimeStateMachine machine = new RuntimeStateMachine(atThreeAmShanghai);
 
         var state = machine.stateFor(new TurnRequest("u-test", "desktop_pet", "s-test", "晚安"));
 
         assertThat(state.getMode()).isEqualTo(Mode.SLEEP);
         assertThat(state.getOutfitCode()).isEqualTo("04");
         assertThat(state.getRelationshipProfile()).isEqualTo(Relationship.SIBLING);
+    }
+
+    @Test
+    void staysInPrivateModeAtHalfPastMidnightForALateSleepSchedule() {
+        Clock atHalfPastMidnightShanghai =
+                Clock.fixed(Instant.parse("2026-07-21T16:30:00Z"), ZoneOffset.UTC);
+        RuntimeStateMachine machine = new RuntimeStateMachine(atHalfPastMidnightShanghai);
+
+        var state = machine.stateFor(new TurnRequest("u-test", "desktop_pet", "s-test", "还不困"));
+
+        assertThat(state.getMode()).isEqualTo(Mode.PRIVATE);
+        assertThat(state.getOutfitCode()).isEqualTo("03");
     }
 
     @Test
@@ -67,18 +79,18 @@ class RuntimeStateMachineTest {
 
     @Test
     void debouncesAndCoolsDownTemporalBoundaryChanges() {
-        MutableClock clock = new MutableClock(Instant.parse("2026-07-21T13:59:00Z"));
+        MutableClock clock = new MutableClock(Instant.parse("2026-07-21T17:59:00Z"));
         RuntimeStateMachine machine = new RuntimeStateMachine(
                 clock, RuntimeStateMachine.DEFAULT_ZONE,
                 Duration.ofSeconds(30), Duration.ofMinutes(2));
         TurnRequest request = new TurnRequest("u-test", "desktop_pet", "s-test", "hello");
 
         assertThat(machine.stateFor(request).getMode()).isEqualTo(Mode.PRIVATE);
-        clock.set(Instant.parse("2026-07-21T14:00:05Z"));
+        clock.set(Instant.parse("2026-07-21T18:00:05Z"));
         assertThat(machine.stateFor(request).getMode()).isEqualTo(Mode.PRIVATE);
-        clock.set(Instant.parse("2026-07-21T14:00:20Z"));
+        clock.set(Instant.parse("2026-07-21T18:00:20Z"));
         assertThat(machine.stateFor(request).getMode()).isEqualTo(Mode.PRIVATE);
-        clock.set(Instant.parse("2026-07-21T14:01:01Z"));
+        clock.set(Instant.parse("2026-07-21T18:01:01Z"));
         assertThat(machine.stateFor(request).getMode()).isEqualTo(Mode.SLEEP);
     }
 

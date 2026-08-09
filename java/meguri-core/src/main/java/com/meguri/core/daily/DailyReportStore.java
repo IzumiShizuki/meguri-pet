@@ -23,6 +23,7 @@ import java.util.regex.Pattern;
 @Service
 public final class DailyReportStore {
     private static final Pattern KIND = Pattern.compile("^[a-z0-9][a-z0-9_-]{0,31}$");
+    private static final int MAX_RENDER_PAYLOAD_BYTES = 32 * 1024;
 
     private final ObjectMapper mapper;
     private final Path root;
@@ -51,6 +52,14 @@ public final class DailyReportStore {
                 upload.markdownSha256().getBytes(StandardCharsets.US_ASCII))) {
             throw new IllegalArgumentException("markdown_sha256 does not match markdown");
         }
+        if (upload.renderPayload() != null) {
+            if (!upload.renderPayload().isObject()) {
+                throw new IllegalArgumentException("render_payload must be an object");
+            }
+            if (mapper.writeValueAsBytes(upload.renderPayload()).length > MAX_RENDER_PAYLOAD_BYTES) {
+                throw new IllegalArgumentException("render_payload is too large");
+            }
+        }
 
         Files.createDirectories(root);
         DailyReportReceipt receipt = new DailyReportReceipt(
@@ -58,6 +67,7 @@ public final class DailyReportStore {
                 upload.title(), upload.summary(), upload.deliveryText(), upload.deliverySpeechText(),
                 upload.generatedAt(), upload.publishedAt(), OffsetDateTime.now(ZoneOffset.UTC),
                 upload.dataSource(), upload.syncStatus(), upload.uniqueVideos(), upload.totalVisits(),
+                upload.renderPayload(),
                 upload.markdownSha256(), markdownHref(upload.kind(), upload.date().toString()));
         String stem = upload.kind() + "-" + upload.date();
         atomicWrite(root.resolve(stem + ".md"), upload.markdown().getBytes(StandardCharsets.UTF_8));

@@ -706,6 +706,88 @@ class HttpCoreClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["response"]["reply"], "persisted reply")
             self.assertEqual(result["memory_status"], "pending")
 
+    async def test_http_client_reconciles_terminal_snapshot_after_sse_reconnect_exhaustion(self):
+        requested_after = []
+        snapshot_requests = 0
+
+        def event(sequence, kind, data, *, required=False):
+            return {
+                "protocol_version": "1.0",
+                "event_id": f"reconnect-event-{sequence}",
+                "required": required,
+                "replay_policy": _expected_replay_policy(kind, data),
+                "type": kind,
+                "turn_id": "turn-reconnect",
+                "session_id": "session-reconnect",
+                "sequence": sequence,
+                "created_at": "2026-08-01T00:00:00Z",
+                "data": data,
+                "metadata": {
+                    "trace_id": "trace-reconnect",
+                    "source": "meguri-core",
+                    "created_at": "2026-08-01T00:00:00Z",
+                    "build_id": "build-reconnect",
+                },
+            }
+
+        def stream(items):
+            return "".join(
+                f"id: {item['sequence']}\nevent: {item['type']}\n"
+                f"data: {json.dumps(item)}\n\n"
+                for item in items
+            )
+
+        async def handler(request):
+            nonlocal snapshot_requests
+            if request.url.path == "/v1/hello":
+                return httpx.Response(200, json=hello_response())
+            if request.url.path == "/v1/turns":
+                return httpx.Response(202, json={
+                    "turn_id": "turn-reconnect",
+                    "session_id": "session-reconnect",
+                    "build_id": "build-reconnect",
+                    "status": "accepted",
+                })
+            if request.url.path.endswith("/events"):
+                requested_after.append(request.url.params.get("after_sequence"))
+                replay = {
+                    "0": [event(1, "turn.started", {
+                        "runtime_state": {"mode": "work", "outfit_code": "01"},
+                    }, required=True)],
+                    "1": [event(2, "text.delta", {"delta": "partial"})],
+                    "2": [],
+                }
+                return httpx.Response(200, text=stream(replay[requested_after[-1]]))
+            if request.url.path.endswith("/snapshot"):
+                snapshot_requests += 1
+                return httpx.Response(200, json={
+                    "protocol_version": "1.0",
+                    "session_id": "session-reconnect",
+                    "sequence": 3,
+                    "turns": [{
+                        "turn_id": "turn-reconnect",
+                        "status": "completed",
+                        "text": "completed while SSE was disconnected",
+                    }],
+                    "processed_event_ids": [],
+                    "processed_once_event_ids": [],
+                    "created_at": "2026-08-01T00:00:00Z",
+                })
+            return httpx.Response(500)
+
+        client = HttpMeguriCoreClient(transport=httpx.MockTransport(handler))
+        self.addAsyncCleanup(client.close)
+        result = await client.respond({
+            "user_id": "user-1",
+            "client_id": "astrbot",
+            "session_id": "session-reconnect",
+            "message": "hello",
+        })
+
+        self.assertEqual(requested_after, ["0", "1", "2"])
+        self.assertEqual(snapshot_requests, 1)
+        self.assertEqual(result["response"]["reply"], "completed while SSE was disconnected")
+
     async def test_http_client_restores_410_snapshot_then_resumes(self):
         requests = []
 

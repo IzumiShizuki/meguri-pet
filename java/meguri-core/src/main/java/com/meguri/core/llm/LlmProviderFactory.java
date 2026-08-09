@@ -11,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /** Environment-driven provider selection matching the Python runtime flags. */
 public final class LlmProviderFactory {
@@ -46,7 +47,7 @@ public final class LlmProviderFactory {
         if (!inlineApiKey.isBlank() && !keyFile.isBlank()) {
             throw new LlmConfigurationException("use MEGURI_LLM_API_KEY_FILE instead of inline MEGURI_LLM_API_KEY");
         }
-        String apiKey = readApiKey(keyFile);
+        String apiKey = readApiKey(keyFile, "MEGURI_LLM_API_KEY_FILE");
         if (apiKey.isBlank() && !inlineApiKey.isBlank()) {
             throw new LlmConfigurationException("MEGURI_LLM_API_KEY must not be used; configure MEGURI_LLM_API_KEY_FILE");
         }
@@ -57,14 +58,49 @@ public final class LlmProviderFactory {
         int maxTokens = parseInt("MEGURI_LLM_MAX_TOKENS", 1200);
         int promptTokenBudget = parseInt("MEGURI_LLM_PROMPT_TOKEN_BUDGET", 12000);
         String thinking = env("MEGURI_LLM_THINKING", "auto").trim().toLowerCase();
+        String plannerModel = env("MEGURI_AGENT_PLANNER_MODEL", model).trim();
+        String plannerKeyFile = env("MEGURI_AGENT_PLANNER_API_KEY_FILE", "").trim();
+        String plannerApiKey = resolvePlannerApiKey(plannerKeyFile, apiKey);
+        int plannerMaxTokens = parseInt("MEGURI_AGENT_PLANNER_MAX_TOKENS", 128);
+        int plannerMaxConcurrency = parseInt("MEGURI_AGENT_PLANNER_MAX_CONCURRENCY", 1);
+        int plannerQueueTimeoutMs = parseInt("MEGURI_AGENT_PLANNER_QUEUE_TIMEOUT_MS", 250);
+        int plannerProviderTimeoutMs = parseInt("MEGURI_AGENT_PLANNER_PROVIDER_TIMEOUT_MS", 4000);
+        int plannerDeadlineMs = parseInt("MEGURI_AGENT_PLANNER_DEADLINE_MS", 5000);
+        String plannerThinking = env("MEGURI_AGENT_PLANNER_THINKING", "disabled").trim().toLowerCase();
+        String multimodalFallbackModel = env("MEGURI_LLM_MULTIMODAL_FALLBACK_MODEL", "").trim();
+        String multimodalFallbackBaseUrl = env(
+                "MEGURI_LLM_MULTIMODAL_FALLBACK_BASE_URL", baseUrl).trim();
+        String multimodalFallbackKeyFile = env(
+                "MEGURI_LLM_MULTIMODAL_FALLBACK_API_KEY_FILE", "").trim();
+        String multimodalFallbackThinking = env(
+                "MEGURI_LLM_MULTIMODAL_FALLBACK_THINKING", thinking).trim().toLowerCase();
         if (timeout <= 0 || maxConcurrency <= 0 || maxTokens <= 0 || promptTokenBudget < 256) {
             throw new LlmConfigurationException("LLM timeout/concurrency/max tokens must be positive");
+        }
+        if (plannerModel.isBlank() || plannerMaxTokens <= 0 || plannerMaxConcurrency <= 0
+                || plannerQueueTimeoutMs < 0 || plannerProviderTimeoutMs <= 0
+                || plannerDeadlineMs <= plannerProviderTimeoutMs) {
+            throw new LlmConfigurationException(
+                    "planner model/concurrency/tokens/timeouts must be valid and provider timeout below deadline");
+        }
+        if (!loopback && plannerApiKey.isBlank()) {
+            throw new LlmConfigurationException(
+                    "remote planner endpoints require MEGURI_AGENT_PLANNER_API_KEY_FILE or MEGURI_LLM_API_KEY_FILE");
         }
         if (!Set.of("auto", "enabled", "disabled").contains(thinking)) {
             throw new LlmConfigurationException("MEGURI_LLM_THINKING must be auto, enabled or disabled");
         }
+        if (!Set.of("auto", "enabled", "disabled").contains(plannerThinking)) {
+            throw new LlmConfigurationException(
+                    "MEGURI_AGENT_PLANNER_THINKING must be auto, enabled or disabled");
+        }
+        if (!Set.of("auto", "enabled", "disabled").contains(multimodalFallbackThinking)) {
+            throw new LlmConfigurationException(
+                    "MEGURI_LLM_MULTIMODAL_FALLBACK_THINKING must be auto, enabled or disabled");
+        }
         String format = env("MEGURI_LLM_RESPONSE_FORMAT", "json_schema");
         String effectiveKey = apiKey.isBlank() ? "meguri-loopback" : apiKey;
+        String effectivePlannerKey = plannerApiKey.isBlank() ? "meguri-loopback" : plannerApiKey;
         var modelBuilder = OpenAiChatModel.builder()
                 .baseUrl(baseUrl)
                 .apiKey(effectiveKey)
@@ -76,6 +112,17 @@ public final class LlmProviderFactory {
             modelBuilder.customParameters(Map.of("thinking", Map.of("type", thinking)));
         }
         OpenAiChatModel modelClient = modelBuilder.build();
+        var plannerBuilder = OpenAiChatModel.builder()
+                .baseUrl(baseUrl)
+                .apiKey(effectivePlannerKey)
+                .modelName(plannerModel)
+                .maxTokens(plannerMaxTokens)
+                .timeout(Duration.ofMillis(plannerProviderTimeoutMs))
+                .strictJsonSchema(false);
+        if (!plannerThinking.equals("auto")) {
+            plannerBuilder.customParameters(Map.of("thinking", Map.of("type", plannerThinking)));
+        }
+        OpenAiChatModel plannerClient = plannerBuilder.build();
         var streamingBuilder = OpenAiStreamingChatModel.builder()
                 .baseUrl(baseUrl)
                 .apiKey(effectiveKey)
@@ -86,11 +133,74 @@ public final class LlmProviderFactory {
             streamingBuilder.customParameters(Map.of("thinking", Map.of("type", thinking)));
         }
         OpenAiStreamingChatModel streamingClient = streamingBuilder.build();
+        MultimodalModelRoute multimodalRoute = createMultimodalRoute(
+                apiKey, timeout, maxTokens, format, multimodalFallbackModel, multimodalFallbackBaseUrl,
+                multimodalFallbackKeyFile, multimodalFallbackThinking);
+        int multimodalAttachmentBytes = parseInt(
+                "MEGURI_MULTIMODAL_MAX_ATTACHMENT_BYTES", 5 * 1024 * 1024);
+        int multimodalTotalBytes = parseInt(
+                "MEGURI_MULTIMODAL_MAX_TOTAL_BYTES", 10 * 1024 * 1024);
+        MultimodalAttachmentResolver multimodalAttachments;
+        try {
+            multimodalAttachments = new MultimodalAttachmentResolver(
+                    multimodalAttachmentBytes, multimodalTotalBytes);
+        } catch (IllegalArgumentException error) {
+            throw new LlmConfigurationException("multimodal attachment limits are invalid", error);
+        }
         String prompt = readPrompt();
         metrics.registerPrompt("openai-compatible/langchain4j", model, prompt);
         String tokenizerModel = env("MEGURI_LLM_TOKENIZER_MODEL", "gpt-4o-mini").trim();
         return new LangChain4jLlmProvider(modelClient, streamingClient, mapper, prompt, format, maxConcurrency,
-                releaseHeaders(), metrics, new OpenAiProviderTokenizer(tokenizerModel), promptTokenBudget);
+                releaseHeaders(), metrics, new OpenAiProviderTokenizer(tokenizerModel), promptTokenBudget,
+                new AgentPlannerRoute(plannerClient, plannerMaxConcurrency,
+                        Duration.ofMillis(plannerQueueTimeoutMs)), model,
+                multimodalRoute, multimodalAttachments);
+    }
+
+    private static MultimodalModelRoute createMultimodalRoute(
+            String primaryApiKey,
+            double timeout,
+            int maxTokens,
+            String format,
+            String fallbackModelId,
+            String fallbackBaseUrl,
+            String fallbackKeyFile,
+            String fallbackThinking) {
+        Set<String> primaryMultimodalModels = csvSet(
+                env("MEGURI_LLM_MULTIMODAL_PRIMARY_MODELS", ""));
+        if (fallbackModelId.isBlank()) {
+            return new MultimodalModelRoute(primaryMultimodalModels, null, null, "");
+        }
+        validateUrl(fallbackBaseUrl);
+        String fallbackApiKey = resolveFallbackApiKey(fallbackKeyFile, primaryApiKey);
+        if (!isLoopback(fallbackBaseUrl) && fallbackApiKey.isBlank()) {
+            throw new LlmConfigurationException(
+                    "multimodal fallback requires MEGURI_LLM_MULTIMODAL_FALLBACK_API_KEY_FILE "
+                            + "or MEGURI_LLM_API_KEY_FILE");
+        }
+        String effectiveFallbackKey = fallbackApiKey.isBlank() ? "meguri-loopback" : fallbackApiKey;
+        var fallbackBuilder = OpenAiChatModel.builder()
+                .baseUrl(fallbackBaseUrl)
+                .apiKey(effectiveFallbackKey)
+                .modelName(fallbackModelId)
+                .maxTokens(maxTokens)
+                .timeout(Duration.ofMillis((long) (timeout * 1000)))
+                .strictJsonSchema(format.trim().equalsIgnoreCase("json_schema"));
+        if (!fallbackThinking.equals("auto")) {
+            fallbackBuilder.customParameters(Map.of("thinking", Map.of("type", fallbackThinking)));
+        }
+        var fallbackStreamingBuilder = OpenAiStreamingChatModel.builder()
+                .baseUrl(fallbackBaseUrl)
+                .apiKey(effectiveFallbackKey)
+                .modelName(fallbackModelId)
+                .maxTokens(maxTokens)
+                .timeout(Duration.ofMillis((long) (timeout * 1000)));
+        if (!fallbackThinking.equals("auto")) {
+            fallbackStreamingBuilder.customParameters(
+                    Map.of("thinking", Map.of("type", fallbackThinking)));
+        }
+        return new MultimodalModelRoute(primaryMultimodalModels,
+                fallbackBuilder.build(), fallbackStreamingBuilder.build(), fallbackModelId);
     }
 
     private static String readPrompt() {
@@ -173,23 +283,45 @@ public final class LlmProviderFactory {
     }
     private static String env(String key, String fallback) { String value = System.getenv(key); return value == null ? fallback : value; }
     private static String optional(String value) { return value == null || value.isBlank() || value.equalsIgnoreCase("none") || value.equalsIgnoreCase("null") ? null : value.trim(); }
-    private static String readApiKey(String keyFile) {
+    static String resolvePlannerApiKey(String plannerKeyFile, String outerApiKey) {
+        if (plannerKeyFile == null || plannerKeyFile.isBlank()) {
+            return outerApiKey == null ? "" : outerApiKey;
+        }
+        return readApiKey(plannerKeyFile, "MEGURI_AGENT_PLANNER_API_KEY_FILE");
+    }
+
+    static String resolveFallbackApiKey(String fallbackKeyFile, String outerApiKey) {
+        if (fallbackKeyFile == null || fallbackKeyFile.isBlank()) {
+            return outerApiKey == null ? "" : outerApiKey;
+        }
+        return readApiKey(fallbackKeyFile, "MEGURI_LLM_MULTIMODAL_FALLBACK_API_KEY_FILE");
+    }
+
+    private static Set<String> csvSet(String value) {
+        if (value == null || value.isBlank()) return Set.of();
+        return java.util.Arrays.stream(value.split(","))
+                .map(item -> item.trim().toLowerCase(java.util.Locale.ROOT))
+                .filter(item -> !item.isBlank())
+                .collect(Collectors.toUnmodifiableSet());
+    }
+
+    private static String readApiKey(String keyFile, String settingName) {
         if (keyFile == null || keyFile.isBlank()) return "";
         try {
             Path path = Path.of(keyFile);
             if (!path.isAbsolute() || !Files.isRegularFile(path)) {
-                throw new LlmConfigurationException("MEGURI_LLM_API_KEY_FILE is unreadable or must be absolute");
+                throw new LlmConfigurationException(settingName + " is unreadable or must be absolute");
             }
             if (Files.size(path) > 8192) {
-                throw new LlmConfigurationException("MEGURI_LLM_API_KEY_FILE is unexpectedly large");
+                throw new LlmConfigurationException(settingName + " is unexpectedly large");
             }
             String value = Files.readString(path).trim();
-            if (value.isBlank()) throw new LlmConfigurationException("MEGURI_LLM_API_KEY_FILE must not be empty");
+            if (value.isBlank()) throw new LlmConfigurationException(settingName + " must not be empty");
             return value;
         } catch (LlmConfigurationException ex) {
             throw ex;
         } catch (Exception ex) {
-            throw new LlmConfigurationException("MEGURI_LLM_API_KEY_FILE is unavailable", ex);
+            throw new LlmConfigurationException(settingName + " is unavailable", ex);
         }
     }
     private static double parseDouble(String key, double fallback) { try { return Double.parseDouble(env(key, String.valueOf(fallback))); } catch (NumberFormatException ex) { throw new LlmConfigurationException(key + " must be a number", ex); } }

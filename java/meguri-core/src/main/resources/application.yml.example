@@ -16,7 +16,22 @@ server:
   shutdown: graceful
 
 meguri:
+  performance:
+    execution-mode-enabled: ${MEGURI_EXECUTION_MODE_ENABLED:false}
+    fast-path-enabled: ${MEGURI_FAST_PATH_ENABLED:false}
+    limited-react-enabled: ${MEGURI_LIMITED_REACT_ENABLED:false}
   agent:
+    planner:
+      # Control-plane only: preserve ordinary-response quality while bounding planning work.
+      deadline-ms: ${MEGURI_AGENT_PLANNER_DEADLINE_MS:5000}
+      provider-timeout-ms: ${MEGURI_AGENT_PLANNER_PROVIDER_TIMEOUT_MS:4000}
+      queue-timeout-ms: ${MEGURI_AGENT_PLANNER_QUEUE_TIMEOUT_MS:250}
+      max-concurrency: ${MEGURI_AGENT_PLANNER_MAX_CONCURRENCY:1}
+      max-tokens: ${MEGURI_AGENT_PLANNER_MAX_TOKENS:128}
+      model: ${MEGURI_AGENT_PLANNER_MODEL:${MEGURI_LLM_MODEL:}}
+      # Omit this to reuse MEGURI_LLM_API_KEY_FILE; never use an inline key.
+      api-key-file: ${MEGURI_AGENT_PLANNER_API_KEY_FILE:}
+      thinking: ${MEGURI_AGENT_PLANNER_THINKING:disabled}
     gateway-mode: ${MEGURI_AGENT_GATEWAY_MODE:unavailable}
     remote:
       endpoint: ${MEGURI_AGENT_REMOTE_ENDPOINT:https://127.0.0.1/}
@@ -62,6 +77,17 @@ meguri:
     prompt-token-budget: ${MEGURI_LLM_PROMPT_TOKEN_BUDGET:12000}
     tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
     thinking: ${MEGURI_LLM_THINKING:auto}
+    multimodal:
+      # Attachment content is allowed only for declared primary models. If the
+      # active model is absent, a configured dsv4p-compatible fallback is used.
+      primary-models: ${MEGURI_LLM_MULTIMODAL_PRIMARY_MODELS:}
+      fallback-model: ${MEGURI_LLM_MULTIMODAL_FALLBACK_MODEL:}
+      fallback-base-url: ${MEGURI_LLM_MULTIMODAL_FALLBACK_BASE_URL:}
+      # Omit this to reuse MEGURI_LLM_API_KEY_FILE.
+      fallback-api-key-file: ${MEGURI_LLM_MULTIMODAL_FALLBACK_API_KEY_FILE:}
+      fallback-thinking: ${MEGURI_LLM_MULTIMODAL_FALLBACK_THINKING:auto}
+      max-attachment-bytes: ${MEGURI_MULTIMODAL_MAX_ATTACHMENT_BYTES:5242880}
+      max-total-bytes: ${MEGURI_MULTIMODAL_MAX_TOTAL_BYTES:10485760}
 
 management:
   endpoints:

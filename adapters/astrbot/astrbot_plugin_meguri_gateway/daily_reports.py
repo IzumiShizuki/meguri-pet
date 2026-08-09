@@ -14,6 +14,7 @@ from .client import MeguriCoreClient
 
 REPORT_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}:[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 TARGET = re.compile(r"^[^:\s]{1,64}:(?:FriendMessage|GroupMessage|GuildMessage):[^\r\n]{1,512}$")
+MAX_RENDER_PAYLOAD_BYTES = 32 * 1024
 
 
 class DailyReportDeliveryStore:
@@ -66,7 +67,7 @@ class DailyReportPoller:
     def __init__(
         self,
         core: MeguriCoreClient,
-        send: Callable[[str, str], Awaitable[bool] | bool],
+        send: Callable[[str, str, dict[str, Any] | None], Awaitable[bool] | bool],
         *,
         targets: Sequence[str],
         kinds: Sequence[str],
@@ -88,7 +89,7 @@ class DailyReportPoller:
             report = await self.core.latest_daily_report(kind)
             if report is None:
                 continue
-            report_id, text = self._delivery(report, kind)
+            report_id, text, render_payload = self._delivery(report, kind)
             stats["reports"] += 1
             if self._is_stale(report):
                 stats["skipped"] += len(self.targets)
@@ -97,7 +98,7 @@ class DailyReportPoller:
                 if self.state.delivered(target, kind) == report_id:
                     stats["skipped"] += 1
                     continue
-                sent = self.send(target, text)
+                sent = self.send(target, text, render_payload)
                 if inspect.isawaitable(sent):
                     sent = await sent
                 if sent:
@@ -105,14 +106,23 @@ class DailyReportPoller:
                     stats["sent"] += 1
         return stats
 
-    def _delivery(self, report: dict[str, Any], kind: str) -> tuple[str, str]:
+    def _delivery(
+        self, report: dict[str, Any], kind: str
+    ) -> tuple[str, str, dict[str, Any] | None]:
         report_id = str(report.get("report_id", ""))
         text = str(report.get("delivery_text", "")).strip()
         if not REPORT_ID.fullmatch(report_id) or not report_id.startswith(kind + ":"):
             raise ValueError("Core returned an invalid daily report ID")
         if not text or len(text) > 8000:
             raise ValueError("Core returned invalid daily report delivery text")
-        return report_id, text
+        render_payload = report.get("render_payload")
+        if render_payload is not None:
+            if not isinstance(render_payload, dict):
+                raise ValueError("Core returned a non-object daily report render payload")
+            encoded = json.dumps(render_payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            if len(encoded) > MAX_RENDER_PAYLOAD_BYTES:
+                raise ValueError("Core returned an oversized daily report render payload")
+        return report_id, text, render_payload
 
     def _is_stale(self, report: dict[str, Any]) -> bool:
         value = str(report.get("published_at", ""))

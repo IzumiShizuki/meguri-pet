@@ -101,6 +101,33 @@ test('SSE unsupported falls back to polling the authoritative snapshot', async (
   assert.equal(reducer.turns.get('turn-1')?.text, 'complete')
 })
 
+test('SSE reconnect exhaustion reconciles a terminal turn from the authoritative snapshot', async () => {
+  const requestedAfter: string[] = []
+  let eventAttempts = 0
+  let snapshotAttempts = 0
+  const fetchImpl: FetchLike = async (input) => {
+    const url = new URL(String(input))
+    if (url.pathname.endsWith('/snapshot')) {
+      snapshotAttempts += 1
+      return jsonResponse(snapshot(3, 'completed', 'completed while SSE was disconnected'))
+    }
+    requestedAfter.push(url.searchParams.get('after_sequence') ?? '')
+    eventAttempts += 1
+    return streamResponse(eventAttempts === 1
+      ? [sse(envelope(1, 'turn.started'))]
+      : [sse(envelope(2, 'text.delta', { delta: 'partial' }))])
+  }
+
+  const reducer = new SessionTurnReducer()
+  await new MeguriApiClient('http://127.0.0.1:8000', fetchImpl, { pollIntervalMs: 0 })
+    .subscribe('session-1', reducer, { untilTurnId: 'turn-1', maxReconnects: 1 })
+
+  assert.deepEqual(requestedAfter, ['0', '1'])
+  assert.equal(snapshotAttempts, 1)
+  assert.equal(reducer.turns.get('turn-1')?.text, 'completed while SSE was disconnected')
+  assert.equal(reducer.turns.get('turn-1')?.status, 'completed')
+})
+
 test('getTurn, cancel, and synchronous helper use one asynchronous turn resource', async () => {
   const calls: string[] = []
   let getAttempt = 0

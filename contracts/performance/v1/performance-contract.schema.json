@@ -1,0 +1,607 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.local/contracts/performance/v1/performance-contract.schema.json",
+  "title": "Meguri Performance Contract v1 Fixtures",
+  "oneOf": [
+    { "$ref": "#/$defs/CanonicalTurnFixture" },
+    { "$ref": "#/$defs/ModeDecisionsFixture" },
+    { "$ref": "#/$defs/DeltaFlowFixture" },
+    { "$ref": "#/$defs/LatencyTraceFixture" }
+  ],
+  "$defs": {
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Instant": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "NullableInstant": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "ContractRevision": {
+      "type": "string",
+      "const": "performance.v1"
+    },
+    "TurnExecutionMode": {
+      "type": "string",
+      "enum": ["FAST", "THINK", "AGENT"]
+    },
+    "RetrievalMode": {
+      "type": "string",
+      "enum": ["NONE", "FAST", "SLOW"]
+    },
+    "NullableTurnExecutionMode": {
+      "oneOf": [
+        { "$ref": "#/$defs/TurnExecutionMode" },
+        { "type": "null" }
+      ]
+    },
+    "ExecutionBudget": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "max_pre_provider_stages",
+        "max_model_calls",
+        "max_retrieval_calls",
+        "max_tool_calls",
+        "max_remote_agents",
+        "max_agent_depth",
+        "max_rounds",
+        "repeated_action_limit",
+        "max_tokens",
+        "max_cost_units",
+        "deadline_at"
+      ],
+      "properties": {
+        "max_pre_provider_stages": { "type": "integer", "minimum": 0 },
+        "max_model_calls": { "type": "integer", "minimum": 0 },
+        "max_retrieval_calls": { "type": "integer", "minimum": 0 },
+        "max_tool_calls": { "type": "integer", "minimum": 0 },
+        "max_remote_agents": { "type": "integer", "minimum": 0 },
+        "max_agent_depth": { "type": "integer", "minimum": 0 },
+        "max_rounds": { "type": "integer", "minimum": 0 },
+        "repeated_action_limit": { "type": "integer", "minimum": 0 },
+        "max_tokens": { "type": "integer", "minimum": 0 },
+        "max_cost_units": { "type": "integer", "minimum": 0 },
+        "deadline_at": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "CurrentTurnSignals": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "user_requested_mode",
+        "skill_required_mode",
+        "classifier_candidate_mode",
+        "intent_tags",
+        "external_observation_required",
+        "multi_step_execution_required",
+        "tool_capable_client",
+        "remote_agent_capable_client",
+        "remaining_deadline_millis"
+      ],
+      "properties": {
+        "user_requested_mode": { "$ref": "#/$defs/NullableTurnExecutionMode" },
+        "skill_required_mode": { "$ref": "#/$defs/NullableTurnExecutionMode" },
+        "classifier_candidate_mode": { "$ref": "#/$defs/NullableTurnExecutionMode" },
+        "intent_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "external_observation_required": { "type": "boolean" },
+        "multi_step_execution_required": { "type": "boolean" },
+        "tool_capable_client": { "type": "boolean" },
+        "remote_agent_capable_client": { "type": "boolean" },
+        "remaining_deadline_millis": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ExecutionModeDecision": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "reason_codes", "budget", "user_explicit", "react_eligible"],
+      "properties": {
+        "mode": { "$ref": "#/$defs/TurnExecutionMode" },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "budget": { "$ref": "#/$defs/ExecutionBudget" },
+        "user_explicit": { "type": "boolean" },
+        "react_eligible": { "type": "boolean" }
+      }
+    },
+    "PersonaBaseSnapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "contract_revision",
+        "snapshot_id",
+        "user_id",
+        "character_id",
+        "persona_revision",
+        "relationship_version",
+        "stable_scene_version",
+        "preference_version",
+        "override_watermark",
+        "exemplar_collection_revision",
+        "built_at",
+        "stable_state"
+      ],
+      "properties": {
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "snapshot_id": { "$ref": "#/$defs/NonEmptyString" },
+        "user_id": { "$ref": "#/$defs/NonEmptyString" },
+        "character_id": { "$ref": "#/$defs/NonEmptyString" },
+        "persona_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "relationship_version": { "$ref": "#/$defs/NonEmptyString" },
+        "stable_scene_version": { "$ref": "#/$defs/NonEmptyString" },
+        "preference_version": { "$ref": "#/$defs/NonEmptyString" },
+        "override_watermark": { "$ref": "#/$defs/NonEmptyString" },
+        "exemplar_collection_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "built_at": { "$ref": "#/$defs/Instant" },
+        "stable_state": { "type": "object" }
+      }
+    },
+    "EffectivePersonaState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "contract_revision",
+        "base_snapshot_id",
+        "temporal_mode",
+        "scene_delta_version",
+        "runtime_override_revision",
+        "client_capability_revision",
+        "policy_revision",
+        "resolution_trace_id",
+        "effective_state"
+      ],
+      "properties": {
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "base_snapshot_id": { "$ref": "#/$defs/NonEmptyString" },
+        "temporal_mode": { "$ref": "#/$defs/NonEmptyString" },
+        "scene_delta_version": { "type": ["string", "null"] },
+        "runtime_override_revision": { "type": ["string", "null"] },
+        "client_capability_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "policy_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "resolution_trace_id": { "$ref": "#/$defs/NonEmptyString" },
+        "effective_state": { "type": "object" }
+      }
+    },
+    "ConversationMessage": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["message_id", "role", "content", "token_count", "created_at"],
+      "properties": {
+        "message_id": { "$ref": "#/$defs/NonEmptyString" },
+        "parent_message_id": { "type": ["string", "null"] },
+        "role": { "$ref": "#/$defs/NonEmptyString" },
+        "content": { "type": "string" },
+        "token_count": { "type": "integer", "minimum": 0 },
+        "created_at": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "ConversationContextReadModel": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "contract_revision",
+        "conversation_id",
+        "active_leaf_message_id",
+        "active_topic_segment_id",
+        "latest_stable_summary_id",
+        "recent_message_window",
+        "open_loops",
+        "reference_index",
+        "token_count",
+        "version"
+      ],
+      "properties": {
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "conversation_id": { "$ref": "#/$defs/NonEmptyString" },
+        "active_leaf_message_id": { "type": ["string", "null"] },
+        "active_topic_segment_id": { "type": ["string", "null"] },
+        "latest_stable_summary_id": { "type": ["string", "null"] },
+        "recent_message_window": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ConversationMessage" }
+        },
+        "open_loops": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "reference_index": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "token_count": { "type": "integer", "minimum": 0 },
+        "version": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "RetrievalLane": {
+      "type": "string",
+      "enum": ["LORE", "MEMORY", "KNOWLEDGE", "REPOSITORY", "GRAPH", "WEB"]
+    },
+    "EvidenceSeat": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["lane", "min_items", "required_states", "minimum_trust"],
+      "properties": {
+        "lane": { "$ref": "#/$defs/RetrievalLane" },
+        "min_items": { "type": "integer", "minimum": 0 },
+        "required_states": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "minimum_trust": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "EvidenceQuorum": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["policy_id", "minimum_total_items", "required_seats"],
+      "properties": {
+        "policy_id": { "$ref": "#/$defs/NonEmptyString" },
+        "minimum_total_items": { "type": "integer", "minimum": 0 },
+        "required_seats": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/EvidenceSeat" }
+        }
+      }
+    },
+    "RetrievalDecision": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["mode", "lanes", "reason_codes", "quorum"],
+      "properties": {
+        "mode": { "$ref": "#/$defs/RetrievalMode" },
+        "lanes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/RetrievalLane" }
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "quorum": { "$ref": "#/$defs/EvidenceQuorum" }
+      }
+    },
+    "RetrievalItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "source_type",
+        "source_id",
+        "content",
+        "citation",
+        "trust",
+        "token_count",
+        "valid_at",
+        "evidence_chunk_ids",
+        "trace_id"
+      ],
+      "properties": {
+        "source_type": { "$ref": "#/$defs/RetrievalLane" },
+        "source_id": { "$ref": "#/$defs/NonEmptyString" },
+        "content": { "$ref": "#/$defs/NonEmptyString" },
+        "citation": { "type": "object" },
+        "trust": { "type": "number", "minimum": 0, "maximum": 1 },
+        "token_count": { "type": "integer", "minimum": 0 },
+        "valid_at": { "$ref": "#/$defs/Instant" },
+        "evidence_chunk_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "trace_id": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "RetrievalLaneResult": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["lane", "status", "provider", "result_count", "degradations"],
+      "properties": {
+        "lane": { "$ref": "#/$defs/RetrievalLane" },
+        "status": {
+          "type": "string",
+          "enum": ["OK", "DEGRADED", "UNAVAILABLE", "SKIPPED", "CANCELLED", "LATE"]
+        },
+        "provider": { "$ref": "#/$defs/NonEmptyString" },
+        "result_count": { "type": "integer", "minimum": 0 },
+        "degradations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      }
+    },
+    "RetrievalBundle": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "contract_revision",
+        "trace_id",
+        "decision",
+        "completed_at",
+        "minimum_ready_at",
+        "all_settled_at",
+        "quorum_satisfied",
+        "items",
+        "lanes",
+        "degradations"
+      ],
+      "properties": {
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "trace_id": { "$ref": "#/$defs/NonEmptyString" },
+        "decision": { "$ref": "#/$defs/RetrievalDecision" },
+        "completed_at": { "$ref": "#/$defs/Instant" },
+        "minimum_ready_at": { "$ref": "#/$defs/Instant" },
+        "all_settled_at": { "$ref": "#/$defs/NullableInstant" },
+        "quorum_satisfied": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RetrievalItem" }
+        },
+        "lanes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/RetrievalLaneResult" }
+        },
+        "degradations": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      }
+    },
+    "CapabilitySnapshotVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "DeltaPolicy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["max_delay_millis", "max_characters", "flush_first_token_immediately"],
+      "properties": {
+        "max_delay_millis": { "type": "integer", "minimum": 1 },
+        "max_characters": { "type": "integer", "minimum": 1 },
+        "flush_first_token_immediately": { "const": true }
+      }
+    },
+    "TextDeltaChunk": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "delta",
+        "chunk_index",
+        "first_chunk",
+        "coalesced",
+        "provider_token_count",
+        "flush_reason",
+        "created_at"
+      ],
+      "properties": {
+        "delta": { "$ref": "#/$defs/NonEmptyString" },
+        "chunk_index": { "type": "integer", "minimum": 1 },
+        "first_chunk": { "type": "boolean" },
+        "coalesced": { "type": "boolean" },
+        "provider_token_count": { "type": "integer", "minimum": 1 },
+        "flush_reason": {
+          "type": "string",
+          "enum": ["FIRST_TOKEN", "MAX_DELAY", "MAX_CHARACTERS", "STREAM_COMPLETED"]
+        },
+        "created_at": { "$ref": "#/$defs/Instant" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "first_chunk": { "const": true } }, "required": ["first_chunk"] },
+          "then": {
+            "properties": {
+              "chunk_index": { "const": 1 },
+              "coalesced": { "const": false },
+              "provider_token_count": { "const": 1 },
+              "flush_reason": { "const": "FIRST_TOKEN" }
+            }
+          }
+        }
+      ]
+    },
+    "TurnEventEnvelope": {
+      "$ref": "https://meguri.local/contracts/adapter-protocol/v1/adapter-protocol.schema.json#/$defs/EventEnvelope"
+    },
+    "TimestampMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "turn.received_at": { "$ref": "#/$defs/Instant" },
+        "turn.persisted_at": { "$ref": "#/$defs/Instant" },
+        "persona.started_at": { "$ref": "#/$defs/Instant" },
+        "persona.ready_at": { "$ref": "#/$defs/Instant" },
+        "retrieval_gate.started_at": { "$ref": "#/$defs/Instant" },
+        "retrieval_gate.ready_at": { "$ref": "#/$defs/Instant" },
+        "query_rewrite.started_at": { "$ref": "#/$defs/Instant" },
+        "query_rewrite.ready_at": { "$ref": "#/$defs/Instant" },
+        "retrieval.started_at": { "$ref": "#/$defs/Instant" },
+        "retrieval.minimum_ready_at": { "$ref": "#/$defs/Instant" },
+        "retrieval.all_settled_at": { "$ref": "#/$defs/Instant" },
+        "context_build.started_at": { "$ref": "#/$defs/Instant" },
+        "context.ready_at": { "$ref": "#/$defs/Instant" },
+        "capability_exposure.started_at": { "$ref": "#/$defs/Instant" },
+        "capability_exposure.ready_at": { "$ref": "#/$defs/Instant" },
+        "provider.request_sent_at": { "$ref": "#/$defs/Instant" },
+        "provider.first_byte_at": { "$ref": "#/$defs/Instant" },
+        "provider.first_token_at": { "$ref": "#/$defs/Instant" },
+        "first_delta.persisted_at": { "$ref": "#/$defs/Instant" },
+        "first_delta.sse_flushed_at": { "$ref": "#/$defs/Instant" },
+        "client.first_delta_received_at": { "$ref": "#/$defs/Instant" },
+        "client.first_render.at": { "$ref": "#/$defs/Instant" }
+      }
+    },
+    "DurationMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "turn_persist_latency": { "type": "integer", "minimum": 0 },
+        "persona_latency": { "type": "integer", "minimum": 0 },
+        "retrieval_gate_latency": { "type": "integer", "minimum": 0 },
+        "retrieval_wait_before_provider": { "type": "integer", "minimum": 0 },
+        "context_build_latency": { "type": "integer", "minimum": 0 },
+        "capability_exposure_latency": { "type": "integer", "minimum": 0 },
+        "pre_provider_latency": { "type": "integer", "minimum": 0 },
+        "provider_queue_latency": { "type": "integer", "minimum": 0 },
+        "provider_first_token_latency": { "type": "integer", "minimum": 0 },
+        "event_persist_latency": { "type": "integer", "minimum": 0 },
+        "sse_transport_latency": { "type": "integer", "minimum": 0 },
+        "client_render_latency": { "type": "integer", "minimum": 0 },
+        "end_to_end_ttft": { "type": "integer", "minimum": 0 },
+        "first_platform_message_latency": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "TurnLatencyTrace": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "contract_revision",
+        "trace_id",
+        "turn_id",
+        "release_id",
+        "git_commit",
+        "image_digest",
+        "response_contract_revision",
+        "prompt_revision",
+        "execution_mode",
+        "retrieval_mode",
+        "client_type",
+        "provider",
+        "model",
+        "timestamps",
+        "durations_millis",
+        "missing_timestamp_reason_codes"
+      ],
+      "properties": {
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "trace_id": { "$ref": "#/$defs/NonEmptyString" },
+        "turn_id": { "$ref": "#/$defs/NonEmptyString" },
+        "release_id": { "$ref": "#/$defs/NonEmptyString" },
+        "git_commit": { "$ref": "#/$defs/NonEmptyString" },
+        "image_digest": { "$ref": "#/$defs/NonEmptyString" },
+        "response_contract_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "prompt_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "execution_mode": { "$ref": "#/$defs/TurnExecutionMode" },
+        "retrieval_mode": { "$ref": "#/$defs/RetrievalMode" },
+        "client_type": { "$ref": "#/$defs/NonEmptyString" },
+        "provider": { "$ref": "#/$defs/NonEmptyString" },
+        "model": { "$ref": "#/$defs/NonEmptyString" },
+        "timestamps": { "$ref": "#/$defs/TimestampMap" },
+        "durations_millis": { "$ref": "#/$defs/DurationMap" },
+        "missing_timestamp_reason_codes": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      }
+    },
+    "CanonicalTurnFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixture_type",
+        "contract_revision",
+        "signals",
+        "execution_mode_decision",
+        "persona_base_snapshot",
+        "effective_persona_state",
+        "conversation_context_read_model",
+        "retrieval_decision",
+        "retrieval_bundle",
+        "capability_snapshot_version",
+        "delta_policy",
+        "text_delta_chunks",
+        "turn_event_envelopes",
+        "turn_latency_trace"
+      ],
+      "properties": {
+        "fixture_type": { "const": "canonical_turn" },
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "signals": { "$ref": "#/$defs/CurrentTurnSignals" },
+        "execution_mode_decision": { "$ref": "#/$defs/ExecutionModeDecision" },
+        "persona_base_snapshot": { "$ref": "#/$defs/PersonaBaseSnapshot" },
+        "effective_persona_state": { "$ref": "#/$defs/EffectivePersonaState" },
+        "conversation_context_read_model": { "$ref": "#/$defs/ConversationContextReadModel" },
+        "retrieval_decision": { "$ref": "#/$defs/RetrievalDecision" },
+        "retrieval_bundle": { "$ref": "#/$defs/RetrievalBundle" },
+        "capability_snapshot_version": { "$ref": "#/$defs/CapabilitySnapshotVersion" },
+        "delta_policy": { "$ref": "#/$defs/DeltaPolicy" },
+        "text_delta_chunks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/TextDeltaChunk" }
+        },
+        "turn_event_envelopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/TurnEventEnvelope" }
+        },
+        "turn_latency_trace": { "$ref": "#/$defs/TurnLatencyTrace" }
+      }
+    },
+    "ModeDecisionsFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture_type", "contract_revision", "decisions"],
+      "properties": {
+        "fixture_type": { "const": "mode_decisions" },
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "decisions": {
+          "type": "array",
+          "minItems": 3,
+          "items": { "$ref": "#/$defs/ExecutionModeDecision" }
+        }
+      }
+    },
+    "DeltaFlowFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture_type", "contract_revision", "policy", "chunks", "events", "expected_text"],
+      "properties": {
+        "fixture_type": { "const": "delta_flow" },
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "policy": { "$ref": "#/$defs/DeltaPolicy" },
+        "chunks": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/TextDeltaChunk" }
+        },
+        "events": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/TurnEventEnvelope" }
+        },
+        "expected_text": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "LatencyTraceFixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fixture_type", "contract_revision", "trace"],
+      "properties": {
+        "fixture_type": { "const": "latency_trace" },
+        "contract_revision": { "$ref": "#/$defs/ContractRevision" },
+        "trace": { "$ref": "#/$defs/TurnLatencyTrace" }
+      }
+    }
+  }
+}

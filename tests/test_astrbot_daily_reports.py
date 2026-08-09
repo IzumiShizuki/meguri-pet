@@ -20,11 +20,16 @@ class AstrBotDailyReportTests(unittest.IsolatedAsyncioTestCase):
             "report_id": "bilibili:2026-07-24",
             "published_at": "2026-07-25T02:37:00+08:00",
             "delivery_text": "【中文】\n【日本語】",
+            "render_payload": {
+                "schema_version": 1,
+                "template": "bilibili_daily_v1",
+                "date": "2026-07-24",
+            },
         }
         sent = []
 
-        async def send(target, text):
-            sent.append((target, text))
+        async def send(target, text, render_payload):
+            sent.append((target, text, render_payload))
             return True
 
         with tempfile.TemporaryDirectory() as directory:
@@ -40,7 +45,16 @@ class AstrBotDailyReportTests(unittest.IsolatedAsyncioTestCase):
             restarted = DailyReportPoller(_Core(report), send, **kwargs)
             self.assertEqual((await restarted.poll_once())["sent"], 0)
 
-        self.assertEqual(sent, [("meguri:FriendMessage:user-openid", "【中文】\n【日本語】")])
+        self.assertEqual(
+            sent,
+            [
+                (
+                    "meguri:FriendMessage:user-openid",
+                    "【中文】\n【日本語】",
+                    report["render_payload"],
+                )
+            ],
+        )
 
     async def test_failed_target_remains_pending(self):
         report = {
@@ -49,7 +63,7 @@ class AstrBotDailyReportTests(unittest.IsolatedAsyncioTestCase):
             "delivery_text": "fixture",
         }
 
-        async def send(_target, _text):
+        async def send(_target, _text, _render_payload):
             return False
 
         with tempfile.TemporaryDirectory() as directory:
@@ -74,7 +88,10 @@ class AstrBotDailyReportTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             poller = DailyReportPoller(
                 _Core(report),
-                lambda target, text: sent.append((target, text)) or True,
+                lambda target, text, render_payload: sent.append(
+                    (target, text, render_payload)
+                )
+                or True,
                 targets=["meguri:FriendMessage:user-openid"],
                 kinds=["bilibili"],
                 state_file=Path(directory) / "state.json",
@@ -83,3 +100,22 @@ class AstrBotDailyReportTests(unittest.IsolatedAsyncioTestCase):
             stats = await poller.poll_once()
         self.assertEqual(stats["skipped"], 1)
         self.assertEqual(sent, [])
+
+    async def test_rejects_an_oversized_render_payload_before_sending(self):
+        report = {
+            "report_id": "bilibili:2026-07-24",
+            "published_at": "2026-07-25T02:37:00+08:00",
+            "delivery_text": "fixture",
+            "render_payload": {"text": "x" * (33 * 1024)},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            poller = DailyReportPoller(
+                _Core(report),
+                lambda _target, _text, _payload: True,
+                targets=["meguri:FriendMessage:user-openid"],
+                kinds=["bilibili"],
+                state_file=Path(directory) / "state.json",
+                now=lambda: datetime(2026, 7, 25, 3, tzinfo=timezone.utc),
+            )
+            with self.assertRaisesRegex(ValueError, "oversized"):
+                await poller.poll_once()

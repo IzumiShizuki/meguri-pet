@@ -74,7 +74,7 @@ public final class InputResolver {
         if (command.equals("search") && arguments.isBlank()) {
             return InputResolution.error(raw, command, "#搜索 需要提供关键词，例如：#搜索 LangChain4j 文档");
         }
-        if ((command.equals("weather") || command.equals("billing") || command.equals("bilibili"))
+        if ((command.equals("billing") || command.equals("bilibili"))
                 && !arguments.isBlank()) {
             return InputResolution.error(raw, command, "该快捷指令当前不接受额外参数。");
         }

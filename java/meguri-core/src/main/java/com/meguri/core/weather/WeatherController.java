@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
+import java.time.LocalDate;
 import java.util.Map;
 
 /** Loopback desktop API for saved location, startup briefing and manual refresh. */
@@ -46,15 +47,17 @@ public final class WeatherController {
 
     @GetMapping(path = "/briefing", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<WeatherBriefing> briefing(
+            @RequestParam(name = "date", required = false) String date,
             @RequestParam(name = "refresh", defaultValue = "false") boolean refresh) {
-        return service.current(refresh).onErrorMap(WeatherService.WeatherDisabledException.class,
+        LocalDate requestedDate = service.resolveForecastDate(date);
+        return service.forecast(requestedDate, refresh).onErrorMap(WeatherService.WeatherDisabledException.class,
                 ignored -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                         "weather integration is disabled; set MEGURI_WEATHER_ENABLED=true"));
     }
 
     @PostMapping(path = "/refresh", produces = MediaType.APPLICATION_JSON_VALUE)
     public Mono<WeatherBriefing> refresh() {
-        return briefing(true);
+        return briefing(null, true);
     }
 
     /** Desktop polling boundary for work-hour changes; unchanged notices return 204. */

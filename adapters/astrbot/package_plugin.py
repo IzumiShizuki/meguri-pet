@@ -7,7 +7,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 PLUGIN_NAME = "astrbot_plugin_meguri_gateway"
 PLUGIN_ROOT = Path(__file__).resolve().parent / PLUGIN_NAME
-INCLUDED_SUFFIXES = {".py", ".json", ".yaml", ".txt"}
+INCLUDED_SUFFIXES = {".py", ".json", ".yaml", ".txt", ".png", ".ttf", ".otf"}
 
 
 def build_plugin_archive(output: Path) -> Path:
@@ -17,8 +17,10 @@ def build_plugin_archive(output: Path) -> Path:
     resolved_output.parent.mkdir(parents=True, exist_ok=True)
     files = sorted(
         path
-        for path in PLUGIN_ROOT.iterdir()
-        if path.is_file() and path.suffix in INCLUDED_SUFFIXES
+        for path in PLUGIN_ROOT.rglob("*")
+        if path.is_file()
+        and path.suffix in INCLUDED_SUFFIXES
+        and "__pycache__" not in path.parts
     )
     required = {"main.py", "metadata.yaml", "_conf_schema.json", "requirements.txt"}
     missing = required.difference(path.name for path in files)
@@ -27,7 +29,8 @@ def build_plugin_archive(output: Path) -> Path:
 
     with ZipFile(resolved_output, "w", compression=ZIP_DEFLATED) as archive:
         for path in files:
-            entry = ZipInfo(f"{PLUGIN_NAME}/{path.name}")
+            relative = path.relative_to(PLUGIN_ROOT).as_posix()
+            entry = ZipInfo(f"{PLUGIN_NAME}/{relative}")
             entry.date_time = (2026, 1, 1, 0, 0, 0)
             entry.compress_type = ZIP_DEFLATED
             entry.external_attr = 0o100644 << 16

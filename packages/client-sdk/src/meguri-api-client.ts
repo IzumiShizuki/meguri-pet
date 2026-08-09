@@ -197,8 +197,13 @@ export class MeguriApiClient {
           if (!options.untilTurnId || reducer.isTerminal(options.untilTurnId))
             return
         }
-        if (reconnects >= maxReconnects)
+        if (reconnects >= maxReconnects) {
+          if (maxReconnects > 0 && options.untilTurnId && isRetryableSseFailure(error)) {
+            await this.pollSnapshots(sessionId, reducer, options)
+            return
+          }
           throw error
+        }
         reconnects += 1
       }
     }
@@ -363,6 +368,10 @@ function isSseUnsupported(error: unknown): boolean {
 
 function isCursorExpired(error: unknown): boolean {
   return error instanceof MeguriApiError && (error.status === 410 || error.code === 'CURSOR_EXPIRED')
+}
+
+function isRetryableSseFailure(error: unknown): boolean {
+  return !(error instanceof MeguriApiError) || error.retryable
 }
 
 function isRetryableHttpStatus(status: number | undefined): boolean {

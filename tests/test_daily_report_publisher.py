@@ -19,11 +19,17 @@ class DailyReportPublisherTests(unittest.TestCase):
                 "unique_videos": 64,
                 "total_visits": 64,
                 "summary": "fixture summary",
+                "visual_payload": {
+                    "schema_version": 1,
+                    "template": "bilibili_daily_v1",
+                    "statistics": {"video_count": 64},
+                },
             },
             "# fixture\n",
         )
 
         self.assertEqual(envelope["report_id"], "bilibili:2026-07-24")
+        self.assertEqual(envelope["render_payload"]["statistics"]["video_count"], 64)
         self.assertEqual(
             envelope["delivery_text"].splitlines(),
             [
@@ -73,4 +79,22 @@ class DailyReportPublisherTests(unittest.TestCase):
                     "summary": "unavailable",
                 },
                 "# unavailable\n",
+            )
+
+    def test_rejects_unknown_visual_payload_contract(self):
+        with self.assertRaises(PublishError):
+            build_envelope(
+                "bilibili",
+                {
+                    "status": "ready",
+                    "date": "2026-07-24",
+                    "generated_at": "2026-07-25T02:36:47+08:00",
+                    "data_source": "account_mcp",
+                    "sync_status": "success",
+                    "unique_videos": 1,
+                    "total_visits": 1,
+                    "summary": "fixture",
+                    "visual_payload": {"schema_version": 99, "template": "unknown"},
+                },
+                "# fixture\n",
             )
