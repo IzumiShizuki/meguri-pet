@@ -71,6 +71,141 @@ class LimitedReActRuntimeTest {
     }
 
     @Test
+    void promptSkillCanBeSelectedAfterAnEarlierObservation() {
+        ReactAction read = new ReactAction("repository.search", Map.of("query", "weather"));
+        ReactAction skill = new ReactAction("skill.weather.advice", Map.of());
+        AtomicInteger plannerIndex = new AtomicInteger();
+        List<ReactPlannerDecision> decisions = List.of(
+                continueWith(read), continueWith(skill), finalizeDecision());
+        AtomicInteger executions = new AtomicInteger();
+        InMemoryReactTraceRepository traces = new InMemoryReactTraceRepository();
+        LimitedReActRuntime runtime = runtime(
+                context -> {
+                    assertThat(context.observations()).hasSize(plannerIndex.get());
+                    assertThat(context.exposedCapabilities())
+                            .extracting(ReactCapability::id)
+                            .containsExactly("repository.search", "skill.weather.advice");
+                    return Mono.just(decisions.get(plannerIndex.getAndIncrement()));
+                },
+                (validated, context) -> {
+                    executions.incrementAndGet();
+                    return Mono.just(success(validated.descriptor().kind()
+                            == CapabilityDescriptor.Kind.PROMPT_SKILL
+                            ? "bounded skill content" : "weather evidence"));
+                }, traces);
+
+        ReactRunResult result = runtime.run(request(
+                TurnExecutionMode.AGENT, budget(6, 4, 2, 100, 100),
+                List.of(read("repository.search"), promptSkill("skill.weather.advice")),
+                new CancellationToken())).block();
+
+        assertThat(result.terminationReason()).isEqualTo(ReactTerminationReason.MODEL_FINALIZED);
+        assertThat(result.rounds()).isEqualTo(3);
+        assertThat(result.toolCalls()).isEqualTo(2);
+        assertThat(result.observations()).extracting(NormalizedReactObservation::summary)
+                .containsExactly("weather evidence", "bounded skill content");
+        assertThat(executions).hasValue(2);
+        assertThat(traces.traces("turn-react"))
+                .filteredOn(trace -> "skill.weather.advice".equals(trace.capabilityId()))
+                .extracting(ReactRoundTrace::observationSummary)
+                .containsExactly("[bounded Skill observation redacted]");
+        assertThat(traces.traces("turn-react").toString())
+                .doesNotContain("arguments", "bounded skill content");
+    }
+
+    @Test
+    void externalSkillBodyCanGuideTheNextRoundWithoutEnteringTrace() {
+        String skillBody = "Use repository.search query=meguri-context. TOP_SECRET";
+        ReactAction view = new ReactAction("meguri.skill.view", Map.of(
+                "skill_id", "modelscope:context-audit", "path", "SKILL.md"));
+        ReactAction followUp = new ReactAction(
+                "repository.search", Map.of("query", "meguri-context"));
+        AtomicInteger plannerIndex = new AtomicInteger();
+        AtomicInteger actionIndex = new AtomicInteger();
+        InMemoryReactTraceRepository traces = new InMemoryReactTraceRepository();
+        LimitedReActRuntime runtime = runtime(
+                context -> {
+                    int round = plannerIndex.getAndIncrement();
+                    assertThat(context.skillCandidates())
+                            .extracting(ReactSkillCandidate::skillId)
+                            .containsExactly("modelscope:context-audit");
+                    if (round == 0) return Mono.just(continueWith(view));
+                    assertThat(context.observations().getFirst().summary())
+                            .isEqualTo(skillBody);
+                    assertThat(context.observations().getFirst().trustLabel())
+                            .isEqualTo(ObservationTrustLabel.UNTRUSTED_EXTERNAL_SKILL);
+                    if (round == 1) return Mono.just(continueWith(followUp));
+                    return Mono.just(finalizeDecision());
+                },
+                (validated, context) -> {
+                    int call = actionIndex.getAndIncrement();
+                    if (call == 0) {
+                        return Mono.just(new RawReactObservation(
+                                RawReactObservation.Status.SUCCESS,
+                                Map.of("content_digest", "digest-only"),
+                                skillBody, null,
+                                ObservationTrustLabel.UNTRUSTED_EXTERNAL_SKILL,
+                                false, false, 8, 0));
+                    }
+                    return Mono.just(success("repository evidence"));
+                }, traces);
+
+        ReactRunResult result = runtime.run(request(
+                TurnExecutionMode.AGENT, budget(8, 8, 2, 200, 100),
+                List.of(read("meguri.skill.view"), read("repository.search")),
+                List.of(new ReactSkillCandidate(
+                        "modelscope:context-audit", "Context Audit",
+                        "Audits context behavior", List.of("context"))),
+                new CancellationToken())).block();
+
+        assertThat(result.terminationReason()).isEqualTo(ReactTerminationReason.MODEL_FINALIZED);
+        assertThat(result.rounds()).isEqualTo(3);
+        assertThat(result.toolCalls()).isEqualTo(2);
+        assertThat(actionIndex).hasValue(2);
+        assertThat(traces.traces("turn-react"))
+                .filteredOn(trace -> "meguri.skill.view".equals(trace.capabilityId()))
+                .extracting(ReactRoundTrace::observationSummary)
+                .containsExactly("[bounded Skill observation redacted]");
+        assertThat(traces.traces("turn-react").toString())
+                .doesNotContain("TOP_SECRET", "query=meguri-context");
+    }
+
+    @Test
+    void limitedReactCeilingsNeverExpandAParentBudget() {
+        ReactRunRequest broad = request(
+                TurnExecutionMode.AGENT, budget(10, 10, 2, 100, 100),
+                List.of(read("repository.search")), new CancellationToken());
+        ReactRunRequest narrow = request(
+                TurnExecutionMode.AGENT, budget(2, 1, 1, 100, 100),
+                List.of(read("repository.search")), new CancellationToken());
+
+        assertThat(broad.budget().maxModelCalls()).isEqualTo(6);
+        assertThat(broad.budget().maxRounds()).isEqualTo(6);
+        assertThat(broad.budget().maxToolCalls()).isEqualTo(4);
+        assertThat(narrow.budget().maxModelCalls()).isEqualTo(2);
+        assertThat(narrow.budget().maxRounds()).isEqualTo(2);
+        assertThat(narrow.budget().maxToolCalls()).isEqualTo(1);
+    }
+
+    @Test
+    void unsafeOrUnexposedPromptSkillIsRejectedBeforeExecution() {
+        AtomicInteger executions = new AtomicInteger();
+        LimitedReActRuntime runtime = runtime(
+                context -> Mono.just(continueWith(new ReactAction("skill.hidden", Map.of()))),
+                (validated, context) -> {
+                    executions.incrementAndGet();
+                    return Mono.just(success("must not run"));
+                }, new InMemoryReactTraceRepository());
+
+        ReactRunResult result = runtime.run(request(
+                TurnExecutionMode.AGENT, budget(6, 4, 2, 100, 100),
+                List.of(promptSkill("skill.visible")), new CancellationToken())).block();
+
+        assertThat(result.terminationReason()).isEqualTo(ReactTerminationReason.ACTION_REJECTED);
+        assertThat(executions).hasValue(0);
+    }
+
+    @Test
     void repeatedSuccessfulActionReusesNormalizedObservationWithoutExecutingAgain() {
         ReactAction action = new ReactAction(
                 "repository.search", Map.of("query", "UserCenterClient"));
@@ -163,7 +298,7 @@ class LimitedReActRuntimeTest {
         assertThat(result.toolCalls()).isZero();
         assertThat(toolCalls).hasValue(0);
         assertThat(traces.traces("turn-react").getFirst().reasonCode())
-                .isEqualTo("READ_ONLY_MVP_KIND_REJECTED");
+                .isEqualTo("WRITE_TOOL_APPROVAL_REQUIRED");
     }
 
     @Test
@@ -285,6 +420,15 @@ class LimitedReActRuntimeTest {
             ExecutionBudget budget,
             List<CapabilityDescriptor> descriptors,
             CancellationToken cancellation) {
+        return request(mode, budget, descriptors, List.of(), cancellation);
+    }
+
+    private ReactRunRequest request(
+            TurnExecutionMode mode,
+            ExecutionBudget budget,
+            List<CapabilityDescriptor> descriptors,
+            List<ReactSkillCandidate> skillCandidates,
+            CancellationToken cancellation) {
         return new ReactRunRequest(
                 new ReactInvocationScope(
                         "turn-react", "trace-react", "tenant", "user", "website",
@@ -293,6 +437,7 @@ class LimitedReActRuntimeTest {
                 mode,
                 budget,
                 descriptors,
+                skillCandidates,
                 cancellation,
                 "planner/v1");
     }
@@ -353,6 +498,12 @@ class LimitedReActRuntimeTest {
                 CapabilityDescriptor.ApprovalRequirement.ALWAYS);
     }
 
+    private static CapabilityDescriptor promptSkill(String id) {
+        return descriptor(id, CapabilityDescriptor.Kind.PROMPT_SKILL,
+                CapabilityDescriptor.SideEffect.NONE,
+                CapabilityDescriptor.ApprovalRequirement.NONE);
+    }
+
     private static CapabilityDescriptor descriptor(
             String id,
             CapabilityDescriptor.Kind kind,
@@ -375,7 +526,9 @@ class LimitedReActRuntimeTest {
                 new CapabilityDescriptor.ConcurrencyPolicy(1),
                 Set.of(CapabilityDescriptor.Mode.DEEP),
                 CapabilityDescriptor.DataClassification.INTERNAL,
-                CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL,
+                kind == CapabilityDescriptor.Kind.PROMPT_SKILL
+                        ? CapabilityDescriptor.ResultTrust.TRUSTED_LOCAL
+                        : CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL,
                 "test://" + id,
                 CapabilityDescriptor.Health.HEALTHY,
                 false,

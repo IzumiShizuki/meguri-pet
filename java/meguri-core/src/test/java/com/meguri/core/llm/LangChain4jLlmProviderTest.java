@@ -16,6 +16,15 @@ import com.meguri.core.persona.runtime.AllowedBehaviorEnvelope;
 import com.meguri.core.persona.runtime.ClientCapabilityState;
 import com.meguri.core.persona.runtime.EffectivePersonaState;
 import com.meguri.core.persona.runtime.InteractionState;
+import com.meguri.core.capability.CapabilityDescriptor;
+import com.meguri.core.react.NormalizedReactObservation;
+import com.meguri.core.react.ObservationTrustLabel;
+import com.meguri.core.react.RawReactObservation;
+import com.meguri.core.react.ReactCapability;
+import com.meguri.core.react.ReactDecision;
+import com.meguri.core.react.ReactInvocationScope;
+import com.meguri.core.react.ReactPlanningContext;
+import com.meguri.core.react.ReactSkillCandidate;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
@@ -259,6 +268,11 @@ class LangChain4jLlmProviderTest {
         assertTrue(!wirePrompt.contains("\"effective_persona\":"));
         assertTrue(!wirePrompt.contains("\"user_message\":"));
         assertTrue(!wirePrompt.contains("\"context_bundle\":"));
+        assertTrue(!wirePrompt.contains("\"provenance\":"));
+        assertTrue(!wirePrompt.contains("summary-1"));
+        assertTrue(!wirePrompt.contains("\"m1\""));
+        assertTrue(!wirePrompt.contains("\"trace_id\":"));
+        assertTrue(!wirePrompt.contains("canonical_prompt_digest"));
     }
 
     @Test
@@ -287,6 +301,21 @@ class LangChain4jLlmProviderTest {
 
         assertEquals(first.canonicalPromptDigest(), sameContent.canonicalPromptDigest());
         assertTrue(!first.canonicalPromptDigest().equals(changed.canonicalPromptDigest()));
+    }
+
+    @Test
+    void canonicalPromptDigestIgnoresPromptProvenanceIdentifiers() {
+        ProviderRequest first = typedRequest(
+                "same user", "same context", "same skill", "same external",
+                "trace-a", Instant.parse("2026-07-29T00:00:00Z"));
+        List<PromptPolicyComposer.PromptBlock> replaced = first.promptBlocks().stream()
+                .map(block -> new PromptPolicyComposer.PromptBlock(
+                        block.role(), block.source(), block.trust(),
+                        "volatile-source-" + block.provenance(), block.revision(), block.content()))
+                .toList();
+
+        assertEquals(first.canonicalPromptDigest(), first.withPromptBlocks(replaced)
+                .canonicalPromptDigest());
     }
 
     @Test
@@ -473,6 +502,72 @@ class LangChain4jLlmProviderTest {
                 .verify();
     }
 
+    @Test
+    void reactPlannerUsesRoundObservationsCapabilitiesAndFrozenSkillCandidates() {
+        AtomicReference<ChatRequest> captured = new AtomicReference<>();
+        ChatModel planner = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                captured.set(request);
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"decision":"CONTINUE","reason_code":"SKILL_REQUIRED","action":{
+                         "capability_id":"meguri.skill.view","arguments":{
+                           "skill_id":"modelscope:context-audit","path":"SKILL.md"},
+                         "operation_id":null,"idempotency_key":null,"approval_id":null},
+                         "final_answer":null}
+                        """)).build();
+            }
+        };
+        LangChain4jLlmProvider provider = reactProvider(planner);
+
+        StepVerifier.create(provider.planReact(reactPlanningContext()))
+                .assertNext(decision -> {
+                    assertEquals(ReactDecision.CONTINUE, decision.decision());
+                    assertEquals("meguri.skill.view", decision.action().capabilityId());
+                    assertEquals("modelscope:context-audit",
+                            decision.action().arguments().get("skill_id"));
+                    assertTrue(decision.tokensUsed() > 0);
+                })
+                .verifyComplete();
+
+        assertNotNull(captured.get());
+        assertNotNull(captured.get().responseFormat());
+        String serialized = captured.get().messages().get(1).toString();
+        assertTrue(serialized.contains("external_skill_candidates"));
+        assertTrue(serialized.contains("modelscope:context-audit"));
+        assertTrue(serialized.contains("exposed_capabilities"));
+        assertTrue(serialized.contains("meguri.skill.view"));
+        assertTrue(serialized.contains("observations_latest_first"));
+        assertTrue(serialized.contains("prior bounded observation"));
+        assertTrue(serialized.contains("UNTRUSTED_EXTERNAL_SKILL"));
+    }
+
+    @Test
+    void reactPlannerRejectsMalformedOrAdditionalFieldsAsInvalidResponse() {
+        for (String payload : List.of(
+                "not-json",
+                """
+                {"decision":"FINALIZE","reason_code":"DONE","action":null,
+                 "final_answer":"ok","private_reasoning":"must not be accepted"}
+                """)) {
+            LangChain4jLlmProvider provider = reactProvider(new ChatModel() {
+                @Override
+                public ChatResponse doChat(ChatRequest ignored) {
+                    return ChatResponse.builder().aiMessage(AiMessage.from(payload)).build();
+                }
+            });
+
+            StepVerifier.create(provider.planReact(reactPlanningContext()))
+                    .expectErrorSatisfies(error -> {
+                        assertTrue(error instanceof ReactPlannerException);
+                        assertEquals(ReactPlannerException.Reason.INVALID_RESPONSE,
+                                ((ReactPlannerException) error).reason());
+                        assertTrue(!error.getMessage().contains(payload));
+                    })
+                    .verify();
+        }
+    }
+
     private static ChatModel successfulModel(AtomicReference<ChatRequest> captured) {
         return new ChatModel() {
             @Override
@@ -484,6 +579,42 @@ class LangChain4jLlmProviderTest {
                         """)).build();
             }
         };
+    }
+
+    private static LangChain4jLlmProvider reactProvider(ChatModel planner) {
+        return new LangChain4jLlmProvider(
+                successfulModel(new AtomicReference<>()), null,
+                new ObjectMapper(), "system", "json_schema", 1, Map.of(),
+                PromptCacheMetricsRecorder.noop(),
+                new OpenAiProviderTokenizer("gpt-4o-mini"), 12_000,
+                new AgentPlannerRoute(planner, 1, Duration.ZERO));
+    }
+
+    private static ReactPlanningContext reactPlanningContext() {
+        return new ReactPlanningContext(
+                new ReactInvocationScope(
+                        "turn-react", "trace-react", "tenant", "user", "airi",
+                        Set.of("skill:read"), "snapshot-v1", false),
+                "Use the relevant Skill and inspect context",
+                2, 4, 3, 8_000, 1_000,
+                Instant.parse("2026-08-01T00:01:00Z"),
+                List.of(new NormalizedReactObservation(
+                        RawReactObservation.Status.SUCCESS,
+                        "prior bounded observation", "observation-digest",
+                        null, ObservationTrustLabel.UNTRUSTED_EXTERNAL_SKILL,
+                        false, false, 5, 0, false)),
+                List.of(new ReactCapability(
+                        "meguri.skill.view", "1", CapabilityDescriptor.Kind.READ_TOOL,
+                        Map.of("skill_id", CapabilityDescriptor.ValueType.STRING,
+                                "path", CapabilityDescriptor.ValueType.STRING),
+                        Set.of("skill_id"), false,
+                        CapabilityDescriptor.SideEffect.READ,
+                        CapabilityDescriptor.ApprovalRequirement.NONE,
+                        CapabilityDescriptor.Health.HEALTHY,
+                        false, false, false, 0)),
+                List.of(new ReactSkillCandidate(
+                        "modelscope:context-audit", "Context Audit",
+                        "Audits context behavior", List.of("context", "audit"))));
     }
 
     private static AgentPlanningRequest planningRequest() {

@@ -2,7 +2,10 @@ package com.meguri.core.lifecycle;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meguri.core.context.ContextPrecompressionWorker;
+import com.meguri.core.context.ContextRefactoringStrategy;
 import com.meguri.core.context.ContextRuntimePersistence;
+import com.meguri.core.context.DeterministicContextRefactoringStrategy;
+import com.meguri.core.context.FallbackContextRefactoringStrategy;
 import com.meguri.core.memory.MemoryGateway;
 import com.meguri.core.memory.job.InMemoryPostReplyMemoryJobStore;
 import com.meguri.core.memory.job.JdbcPostReplyMemoryJobStore;
@@ -35,7 +38,7 @@ import java.util.UUID;
 
 /** Independent lifecycle assembly for durable Turn delivery and post-reply memory work. */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(MeguriBackgroundWorkerProperties.class)
+@EnableConfigurationProperties({MeguriBackgroundWorkerProperties.class, MeguriContextProperties.class})
 public class MeguriBackgroundWorkerConfiguration {
 
     @Bean
@@ -115,12 +118,24 @@ public class MeguriBackgroundWorkerConfiguration {
             SessionContextStore sessions,
             ContextRuntimePersistence persistence,
             ObjectProvider<Clock> clockProvider,
-            MeguriBackgroundWorkerProperties properties) {
+            MeguriBackgroundWorkerProperties properties,
+            MeguriContextProperties contextProperties,
+            ObjectProvider<ContextRefactoringStrategy> strategyProvider) {
         var config = properties.getContext();
+        ContextRefactoringStrategy deterministic =
+                new DeterministicContextRefactoringStrategy(config.getMaximumSummaryCharacters());
+        ContextRefactoringStrategy strategy = deterministic;
+        if (contextProperties.isSemanticCompressionEnabled()) {
+            ContextRefactoringStrategy optional = strategyProvider.getIfAvailable();
+            if (optional != null) {
+                strategy = new FallbackContextRefactoringStrategy(optional, deterministic);
+            }
+        }
         return new ContextPrecompressionWorker(
                 sessions, persistence, clockProvider.getIfAvailable(Clock::systemUTC),
                 config.getLease(), config.getRetryBackoff(), config.getBatchSize(),
-                config.getMaxAttempts(), config.getMaximumSummaryCharacters());
+                config.getMaxAttempts(), config.getMaximumSummaryCharacters(), strategy,
+                contextProperties.isStructuredCompressionEnabled());
     }
 
     @Bean

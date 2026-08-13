@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.meguri.core.context.StructuredContextSummary;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -12,6 +13,80 @@ import java.util.List;
 import java.util.Map;
 
 class SessionContextStoreTest {
+    @Test
+    void structuredSummaryRoundTripsWithFactLevelProvenance() throws Exception {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        SessionContextStore store = new SessionContextStore(8);
+        SessionContextStore.MessageNode message = store.appendNode(
+                "user", "website", "structured", null,
+                new SessionContextStore.Message("user", "sleep after twenty minutes"));
+        StructuredContextSummary.Fact fact = new StructuredContextSummary.Fact(
+                "fact-1", "Idle sleep threshold is twenty minutes", List.of(message.messageId()),
+                StructuredContextSummary.Importance.HIGH, StructuredContextSummary.FactStatus.ACTIVE, List.of());
+        StructuredContextSummary structured = StructuredContextSummary.builder(
+                        "Meguri sleep behavior")
+                .fact(fact)
+                .currentState(fact.factId())
+                .constraint(fact.factId())
+                .exactItem(fact.factId())
+                .operation(new StructuredContextSummary.Operation(
+                        StructuredContextSummary.OperationType.KEEP_EXACT,
+                        List.of(fact.factId()), List.of(message.messageId()), fact.factId()))
+                .build();
+        store.addSummary("user", "website", "structured", List.of(message.messageId()),
+                "legacy projection", "model-r1", structured);
+
+        SessionContextStore.GraphSnapshot restored = mapper.readValue(
+                mapper.writeValueAsString(store.graph("user", "website", "structured")),
+                SessionContextStore.GraphSnapshot.class);
+
+        assertThat(restored.summaries()).singleElement().satisfies(summary -> {
+            assertThat(summary.structured()).isEqualTo(structured);
+            assertThat(summary.structured().facts()).singleElement()
+                    .extracting(StructuredContextSummary.Fact::sourceIds)
+                    .isEqualTo(List.of(message.messageId()));
+        });
+    }
+
+    @Test
+    void legacySummaryRemainsReadableWithoutStructuredRecoveryMetadata() {
+        SessionContextStore store = new SessionContextStore(8);
+        SessionContextStore.MessageNode message = store.appendNode(
+                "user", "website", "legacy-structured", null,
+                new SessionContextStore.Message("user", "legacy"));
+
+        SessionContextStore.DerivedSummary summary = store.addSummary(
+                "user", "website", "legacy-structured", List.of(message.messageId()),
+                "legacy summary", "model-r1");
+
+        assertThat(summary.structured()).isNull();
+        assertThat(store.activeSummaries("user", "website", "legacy-structured"))
+                .containsExactly(summary);
+    }
+
+    @Test
+    void structuredSummaryRejectsUnknownOrInactiveFactSources() {
+        SessionContextStore store = new SessionContextStore(8);
+        SessionContextStore.MessageNode root = store.appendNode(
+                "user", "website", "invalid-structured", null,
+                new SessionContextStore.Message("user", "root"));
+        SessionContextStore.MessageNode branch = store.appendNode(
+                "user", "website", "invalid-structured", null,
+                new SessionContextStore.Message("assistant", "branch"));
+        StructuredContextSummary.Fact fact = new StructuredContextSummary.Fact(
+                "fact-1", "inactive", List.of(branch.messageId()),
+                StructuredContextSummary.Importance.NORMAL, StructuredContextSummary.FactStatus.ACTIVE, List.of());
+        StructuredContextSummary structured = new StructuredContextSummary(
+                StructuredContextSummary.CURRENT_SCHEMA, "invalid", List.of(fact),
+                List.of(fact.factId()), List.of(), List.of(), List.of(), List.of(), List.of());
+
+        assertThatThrownBy(() -> store.addSummary(
+                "user", "website", "invalid-structured", List.of(root.messageId()),
+                "invalid", "model-r1", structured))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("outside the summary active range");
+    }
+
     @Test
     void restoresCompleteGraphFromPersistence() {
         RecordingPersistence persistence = new RecordingPersistence();

@@ -14,7 +14,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * Read-only, at-most-three-round ReAct core. It never invokes a capability
+ * Bounded ReAct core. It never invokes a capability
  * directly: production wiring must use {@link ReactActionExecutor} to delegate
  * to the existing frozen Capability Runtime.
  */
@@ -67,7 +67,11 @@ public final class LimitedReActRuntime {
                 remaining(request.budget().maxToolCalls(), state.toolCalls),
                 remaining(request.budget().maxTokens(), state.tokensUsed),
                 remaining(request.budget().maxCostUnits(), state.costUnitsUsed),
-                request.budget().deadlineAt(), state.observations);
+                request.budget().deadlineAt(), state.observations,
+                request.exposedCapabilities().stream()
+                        .map(ReactCapability::from)
+                        .toList(),
+                request.skillCandidates());
 
         return Mono.defer(() -> planner.plan(planningContext))
                 .map(PlannerOutcome::success)
@@ -273,13 +277,26 @@ public final class LimitedReActRuntime {
                 action == null
                         ? proposed == null ? null : proposed.capabilityId()
                         : action.descriptor().id(),
-                observation == null ? null : observation.summary(),
+                traceObservationSummary(observation, action),
                 observation == null ? null : observation.informationDigest(),
                 observation != null && observation.reused(),
                 observation == null ? null : observation.successful(),
                 terminationReason,
                 startedAt,
                 clock.instant());
+    }
+
+    private static String traceObservationSummary(
+            NormalizedReactObservation observation,
+            ValidatedReactAction action) {
+        if (observation == null) return null;
+        if (action != null
+                && (action.descriptor().kind()
+                        == com.meguri.core.capability.CapabilityDescriptor.Kind.PROMPT_SKILL
+                || action.descriptor().id().startsWith("meguri.skill."))) {
+            return "[bounded Skill observation redacted]";
+        }
+        return observation.summary();
     }
 
     private static ReactDecision decisionFor(ReactTerminationReason reason) {

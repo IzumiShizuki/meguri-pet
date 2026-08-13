@@ -67,8 +67,10 @@ class DeterministicExecutionModeResolverTest {
 
         assertThat(decision.mode()).isEqualTo(TurnExecutionMode.AGENT);
         assertThat(decision.reasonCodes()).containsExactly("DETERMINISTIC_AGENT_SIGNAL");
-        assertThat(decision.budget().maxRounds()).isEqualTo(3);
-        assertThat(decision.budget().maxToolCalls()).isEqualTo(5);
+        // The AGENT mode profile is smaller than the ReAct v1 ceiling here.
+        assertThat(decision.budget().maxModelCalls()).isEqualTo(4);
+        assertThat(decision.budget().maxRounds()).isEqualTo(6);
+        assertThat(decision.budget().maxToolCalls()).isEqualTo(4);
         assertThat(decision.budget().deadlineAt()).isEqualTo(parent.deadlineAt());
         assertThat(decision.reactEligible()).isTrue();
     }
@@ -106,13 +108,15 @@ class DeterministicExecutionModeResolverTest {
     }
 
     @Test
-    void safeBootstrapFactoryKeepsFastAndThinkToolFreeAndAgentAtThreeRounds() {
+    void safeBootstrapFactoryKeepsFastAndThinkToolFreeAndAgentAtSixFourCeiling() {
         ExecutionBudgetPolicy defaults = ExecutionBudgetPolicy.safeBootstrapDefaults(clock);
         ExecutionBudget parent = budget(100, NOW.plusSeconds(600));
 
         assertThat(defaults.clip(TurnExecutionMode.FAST, parent, parent).maxToolCalls()).isZero();
         assertThat(defaults.clip(TurnExecutionMode.THINK, parent, parent).maxToolCalls()).isZero();
-        assertThat(defaults.clip(TurnExecutionMode.AGENT, parent, parent).maxRounds()).isEqualTo(3);
+        assertThat(defaults.clip(TurnExecutionMode.AGENT, parent, parent).maxModelCalls()).isEqualTo(6);
+        assertThat(defaults.clip(TurnExecutionMode.AGENT, parent, parent).maxRounds()).isEqualTo(6);
+        assertThat(defaults.clip(TurnExecutionMode.AGENT, parent, parent).maxToolCalls()).isEqualTo(4);
         assertThat(defaults.clip(TurnExecutionMode.AGENT, parent, parent).maxRemoteAgents()).isZero();
     }
 

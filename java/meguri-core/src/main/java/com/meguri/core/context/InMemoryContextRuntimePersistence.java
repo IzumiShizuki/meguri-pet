@@ -71,6 +71,7 @@ public final class InMemoryContextRuntimePersistence implements ContextRuntimePe
         PrecompressionJob claimed = new PrecompressionJob(
                 job.jobId(), job.idempotencyKey(), job.userId(), job.clientId(),
                 job.conversationId(), job.graphRevision(), job.sourceMessageIds(), job.modelId(),
+                job.strategyRevision(),
                 JobStatus.RUNNING, job.attempts() + 1, job.availableAt(), leaseUntil,
                 job.summaryId(), job.createdAt());
         jobs.put(jobId, claimed);
@@ -129,6 +130,7 @@ public final class InMemoryContextRuntimePersistence implements ContextRuntimePe
         return new PrecompressionJob(
                 job.jobId(), job.idempotencyKey(), job.userId(), job.clientId(),
                 job.conversationId(), job.graphRevision(), job.sourceMessageIds(), job.modelId(),
+                job.strategyRevision(),
                 status, job.attempts(), availableAt, leaseUntil,
                 summaryId, job.createdAt());
     }

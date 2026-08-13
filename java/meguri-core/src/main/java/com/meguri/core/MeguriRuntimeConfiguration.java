@@ -16,7 +16,10 @@ import com.meguri.core.capability.PersistingCapabilityCatalog;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
 import com.meguri.core.llm.ProviderTokenizer;
+import com.meguri.core.react.ReactPlanner;
 import com.meguri.core.context.CompanionContextRuntime;
+import com.meguri.core.context.ConversationContextReadModelProvider;
+import com.meguri.core.context.InMemoryConversationContextReadModelProvider;
 import com.meguri.core.context.ContextBundle;
 import com.meguri.core.context.ContextProfile;
 import com.meguri.core.context.ContextRuntimePersistence;
@@ -67,6 +70,17 @@ public class MeguriRuntimeConfiguration {
     @Bean
     public ProviderTokenizer meguriProviderTokenizer(LlmProvider provider) {
         return provider.tokenizer();
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "meguri.performance", name = "limited-react-enabled",
+            havingValue = "true")
+    public ReactPlanner meguriReactPlanner(LlmProvider provider) {
+        if (!provider.supportsReactPlanning()) {
+            throw new IllegalStateException(
+                    "Limited ReAct requires a configured provider planner route");
+        }
+        return provider::planReact;
     }
 
     @Bean
@@ -159,11 +173,28 @@ public class MeguriRuntimeConfiguration {
     }
 
     @Bean
+    @org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean(
+            ConversationContextReadModelProvider.class)
+    public ConversationContextReadModelProvider meguriConversationContextReadModelProvider(
+            ProviderTokenizer tokenizer,
+            @Value("${meguri.context.strategy-revision:context-refactoring-v1-deterministic}")
+                    String strategyRevision) {
+        return new InMemoryConversationContextReadModelProvider(tokenizer, strategyRevision);
+    }
+
+    @Bean
     public CompanionContextRuntime meguriCompanionContextRuntime(
             SessionContextStore sessions,
             ContextRuntimePersistence persistence,
-            ProviderTokenizer tokenizer) {
-        return new CompanionContextRuntime(sessions, persistence, tokenizer);
+            ProviderTokenizer tokenizer,
+            com.meguri.core.lifecycle.MeguriContextProperties contextProperties,
+            ObjectProvider<ConversationContextReadModelProvider> readModelProvider) {
+        return new CompanionContextRuntime(sessions, persistence, tokenizer,
+                new com.meguri.core.context.DeterministicTopicDetector(),
+                contextProperties.isSelectiveRehydrationEnabled(),
+                contextProperties.isTopicDetectionEnabled(),
+                contextProperties.getStrategyRevision(),
+                readModelProvider.getIfAvailable(ConversationContextReadModelProvider::missing));
     }
 
     @Bean

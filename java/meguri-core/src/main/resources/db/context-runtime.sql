@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS context_precompression_job (
     graph_revision BIGINT NOT NULL CHECK (graph_revision >= 0),
     source_message_ids JSONB NOT NULL,
     model_id VARCHAR(255) NOT NULL,
+    strategy_revision VARCHAR(255) NOT NULL DEFAULT 'context-refactoring-v1-deterministic',
     status VARCHAR(32) NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     available_at TIMESTAMPTZ NOT NULL,
@@ -53,6 +54,9 @@ ALTER TABLE context_precompression_job
     ADD COLUMN IF NOT EXISTS claim_owner VARCHAR(255);
 ALTER TABLE context_precompression_job
     ADD COLUMN IF NOT EXISTS claim_token VARCHAR(128);
+ALTER TABLE context_precompression_job
+    ADD COLUMN IF NOT EXISTS strategy_revision VARCHAR(255)
+    NOT NULL DEFAULT 'context-refactoring-v1-deterministic';
 
 CREATE INDEX IF NOT EXISTS ix_context_precompression_recovery
     ON context_precompression_job (available_at, created_at)

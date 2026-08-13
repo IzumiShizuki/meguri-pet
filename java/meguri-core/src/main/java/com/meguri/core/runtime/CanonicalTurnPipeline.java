@@ -10,6 +10,10 @@ import com.meguri.core.context.CompanionContextRuntime;
 import com.meguri.core.context.ContextBuildRequest;
 import com.meguri.core.context.ContextBundle;
 import com.meguri.core.context.ContextProfile;
+import com.meguri.core.context.DeterministicTopicDetector;
+import com.meguri.core.context.RehydrationPolicy;
+import com.meguri.core.context.TopicDetector;
+import com.meguri.core.context.TopicSignal;
 import com.meguri.core.dto.ExpressionTag;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
@@ -49,6 +53,8 @@ public final class CanonicalTurnPipeline {
     private final ContextProfile contextProfile;
     private final CapabilityRuntimeFacade capabilityRuntime;
     private final McpContentResolver mcpContentResolver;
+    private final boolean selectiveRehydrationEnabled;
+    private final TopicDetector topicDetector;
 
     public CanonicalTurnPipeline(
             PersonaRuntimeFacade personaRuntime,
@@ -58,7 +64,8 @@ public final class CanonicalTurnPipeline {
             ContextProfile contextProfile,
             CapabilityRuntimeFacade capabilityRuntime) {
         this(personaRuntime, retrieval, contextRuntime, promptComposer,
-                contextProfile, capabilityRuntime, McpContentResolver.unavailable());
+                contextProfile, capabilityRuntime, McpContentResolver.unavailable(), false,
+                new DeterministicTopicDetector());
     }
 
     public CanonicalTurnPipeline(
@@ -69,6 +76,20 @@ public final class CanonicalTurnPipeline {
             ContextProfile contextProfile,
             CapabilityRuntimeFacade capabilityRuntime,
             McpContentResolver mcpContentResolver) {
+        this(personaRuntime, retrieval, contextRuntime, promptComposer, contextProfile,
+                capabilityRuntime, mcpContentResolver, false, new DeterministicTopicDetector());
+    }
+
+    public CanonicalTurnPipeline(
+            PersonaRuntimeFacade personaRuntime,
+            UnifiedRetrievalFacade retrieval,
+            CompanionContextRuntime contextRuntime,
+            PromptPolicyComposer promptComposer,
+            ContextProfile contextProfile,
+            CapabilityRuntimeFacade capabilityRuntime,
+            McpContentResolver mcpContentResolver,
+            boolean selectiveRehydrationEnabled,
+            TopicDetector topicDetector) {
         this.personaRuntime = Objects.requireNonNull(personaRuntime, "personaRuntime");
         this.retrieval = Objects.requireNonNull(retrieval, "retrieval");
         this.contextRuntime = Objects.requireNonNull(contextRuntime, "contextRuntime");
@@ -77,6 +98,8 @@ public final class CanonicalTurnPipeline {
         this.capabilityRuntime = Objects.requireNonNull(capabilityRuntime, "capabilityRuntime");
         this.mcpContentResolver = Objects.requireNonNull(
                 mcpContentResolver, "mcpContentResolver");
+        this.selectiveRehydrationEnabled = selectiveRehydrationEnabled;
+        this.topicDetector = Objects.requireNonNull(topicDetector, "topicDetector");
     }
 
     public EffectivePersonaState resolvePersona(
@@ -118,14 +141,15 @@ public final class CanonicalTurnPipeline {
     public CanonicalTurnPipeline withRetrieval(UnifiedRetrievalFacade replacement) {
         return new CanonicalTurnPipeline(
                 personaRuntime, replacement, contextRuntime, promptComposer, contextProfile,
-                capabilityRuntime, mcpContentResolver);
+                capabilityRuntime, mcpContentResolver, selectiveRehydrationEnabled, topicDetector);
     }
 
     public CanonicalTurnPipeline withMcpContentResolver(
             McpContentResolver replacement) {
         return new CanonicalTurnPipeline(
                 personaRuntime, retrieval, contextRuntime, promptComposer, contextProfile,
-                capabilityRuntime, Objects.requireNonNull(replacement, "replacement"));
+                capabilityRuntime, Objects.requireNonNull(replacement, "replacement"),
+                selectiveRehydrationEnabled, topicDetector);
     }
 
     public Prepared prepare(
@@ -206,12 +230,19 @@ public final class CanonicalTurnPipeline {
         List<ContextBuildRequest.ExternalBlock> external = new ArrayList<>();
         retrievalBundle.items().forEach(item -> external.add(toContextBlock(item)));
         external.addAll(adjacentBlocks);
+        ExecutionModeDecision execution = record.getExecutionModeDecision();
+        boolean think = execution != null && execution.mode() == TurnExecutionMode.THINK;
+        TopicSignal topicSignal = topicDetector.detect(request.getMessage(), List.of());
+        RehydrationPolicy rehydrationPolicy = think
+                ? RehydrationPolicy.thinkDefault() : RehydrationPolicy.disabled();
         mark(record, TurnLatencyPoint.CONTEXT_BUILD_STARTED);
+        // The legacy hint is retained only for the topic-detector-off compatibility path;
+        // enabled topic detection consumes the independent raw-input TopicSignal.
         CompanionContextRuntime.BuildResult contextBuild = contextRuntime.build(
                 new ContextBuildRequest(
                         request.getUserId(), request.getClientId(), request.getSessionId(),
-                        contextProfile, retrievalBundle.plan().query().rewrittenQuery(),
-                        0.75, external));
+                        contextProfile, retrievalBundle.plan().query().rewrittenQuery(), 0.75, external,
+                        request.getMessage(), topicSignal, rehydrationPolicy));
         mark(record, TurnLatencyPoint.CONTEXT_READY);
         List<PromptPolicyComposer.PromptBlock> promptBlocks =
                 promptComposer.compose(persona, contextBuild.bundle(), promptSkills.contexts());
@@ -275,7 +306,10 @@ public final class CanonicalTurnPipeline {
             CapabilityRuntimeFacade.TurnCapabilities capabilities) {
         TurnRequest request = record.getRequest();
         ExecutionModeDecision execution = record.getExecutionModeDecision();
-        if (execution != null && execution.mode() != TurnExecutionMode.AGENT) {
+        if (execution != null
+                && (execution.mode() != TurnExecutionMode.AGENT || execution.reactEligible())) {
+            // When ReAct is active, prompt skills are selected by the planner
+            // round-by-round. Do not eagerly execute every exposed skill here.
             return new PromptSkillBatch(List.of(), List.of());
         }
         List<PromptSkillContextContract.ContextInput> contexts = new ArrayList<>();

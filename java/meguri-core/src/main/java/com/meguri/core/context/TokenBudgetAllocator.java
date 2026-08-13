@@ -33,14 +33,17 @@ public final class TokenBudgetAllocator {
         while (total(kept) > hard) {
             Measured removable = kept.stream()
                     .filter(item -> !item.candidate.required())
-                    .filter(item -> sourceTokens(kept, item.candidate.type()) - item.tokens
+                    .filter(item -> item.candidate.automaticRehydration()
+                            || sourceTokens(kept, item.candidate.type()) - item.tokens
                             >= profile.sourceBudgets().get(item.candidate.type()).minTokens())
                     .min(removalOrder()).orElse(null);
             if (removable == null) {
                 throw new IllegalStateException("required context exceeds the model hard token threshold");
             }
             kept.remove(removable);
-            truncations.add(truncation(removable, "hard_threshold_low_priority_block"));
+            truncations.add(truncation(removable,
+                    removable.candidate.automaticRehydration()
+                            ? "automatic_rehydration_budget" : "hard_threshold_low_priority_block"));
         }
 
         EnumMap<ContextBundle.BlockType, Integer> bySource = new EnumMap<>(ContextBundle.BlockType.class);
@@ -60,11 +63,14 @@ public final class TokenBudgetAllocator {
         while (sourceTokens(kept, type) > max) {
             Measured removable = kept.stream()
                     .filter(item -> item.candidate.type() == type && !item.candidate.required())
-                    .filter(item -> sourceTokens(kept, type) - item.tokens >= min)
+                    .filter(item -> item.candidate.automaticRehydration()
+                            || sourceTokens(kept, type) - item.tokens >= min)
                     .min(Comparator.comparingInt(item -> item.candidate.recency())).orElse(null);
             if (removable == null) break;
             kept.remove(removable);
-            truncations.add(truncation(removable, "source_max_exceeded"));
+            truncations.add(truncation(removable,
+                    removable.candidate.automaticRehydration()
+                            ? "automatic_rehydration_source_max" : "source_max_exceeded"));
         }
         if (sourceTokens(kept, type) > max) {
             throw new IllegalStateException("required " + type + " context exceeds its source maximum");
@@ -72,7 +78,8 @@ public final class TokenBudgetAllocator {
     }
 
     private static Comparator<Measured> removalOrder() {
-        return Comparator.comparingInt((Measured item) -> priority(item.candidate.type()))
+        return Comparator.comparingInt((Measured item) -> item.candidate.automaticRehydration() ? -1 : 0)
+                .thenComparingInt(item -> priority(item.candidate.type()))
                 .thenComparingInt(item -> item.candidate.recency());
     }
 

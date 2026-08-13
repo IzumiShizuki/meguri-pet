@@ -12,5 +12,7 @@ spring:
       connection-timeout: ${MEGURI_POSTGRES_CONNECT_TIMEOUT_MS:5000}
 
 meguri:
+  skills:
+    store-mode: postgres
   turn-journal:
     mode: postgres

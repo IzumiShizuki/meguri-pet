@@ -22,16 +22,38 @@ public final class ActionProposalValidator {
         if (descriptor.health() == CapabilityDescriptor.Health.UNHEALTHY) {
             return ValidationResult.rejected("CAPABILITY_UNHEALTHY");
         }
-        if (descriptor.kind() != CapabilityDescriptor.Kind.READ_TOOL
-                && descriptor.kind() != CapabilityDescriptor.Kind.RESOURCE) {
+        boolean readCapability = descriptor.kind() == CapabilityDescriptor.Kind.READ_TOOL
+                || descriptor.kind() == CapabilityDescriptor.Kind.RESOURCE;
+        boolean promptSkill = descriptor.kind() == CapabilityDescriptor.Kind.PROMPT_SKILL;
+        boolean writeCapability = descriptor.kind() == CapabilityDescriptor.Kind.WRITE_TOOL;
+        if (!readCapability && !promptSkill && !writeCapability) {
             return ValidationResult.rejected("READ_ONLY_MVP_KIND_REJECTED");
         }
-        if (descriptor.sideEffect() != CapabilityDescriptor.SideEffect.NONE
+        if (promptSkill && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.NONE) {
+            return ValidationResult.rejected("PROMPT_SKILL_SIDE_EFFECT_REJECTED");
+        }
+        if (readCapability && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.NONE
                 && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.READ) {
             return ValidationResult.rejected("READ_ONLY_MVP_SIDE_EFFECT_REJECTED");
         }
-        if (descriptor.approval() != CapabilityDescriptor.ApprovalRequirement.NONE) {
-            return ValidationResult.rejected("READ_ONLY_MVP_APPROVAL_REJECTED");
+        if (writeCapability) {
+            if (descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE) {
+                return ValidationResult.rejected("WRITE_TOOL_SIDE_EFFECT_REJECTED");
+            }
+            if (descriptor.approval() == CapabilityDescriptor.ApprovalRequirement.NONE
+                    || action.approvalId() == null) {
+                return ValidationResult.rejected("WRITE_TOOL_APPROVAL_REQUIRED");
+            }
+            if (!descriptor.idempotency().supported()
+                    || !descriptor.idempotency().required()
+                    || action.operationId() == null
+                    || action.idempotencyKey() == null) {
+                return ValidationResult.rejected("WRITE_TOOL_IDEMPOTENCY_REQUIRED");
+            }
+        } else if (descriptor.approval() != CapabilityDescriptor.ApprovalRequirement.NONE) {
+            return ValidationResult.rejected(promptSkill
+                    ? "PROMPT_SKILL_APPROVAL_REJECTED"
+                    : "READ_ONLY_MVP_APPROVAL_REJECTED");
         }
         if (descriptor.cost().estimatedUnits() > remainingCostUnits) {
             return ValidationResult.rejected("COST_BUDGET_INSUFFICIENT");

@@ -111,6 +111,15 @@ public final class CoreIdentityVerifier implements WebFilter {
         return capabilityScopes;
     }
 
+    /** Administrative scopes are server configuration, never client-supplied authority. */
+    public Identity requireCapabilityScope(ServerWebExchange exchange, String scope) {
+        Identity identity = verifyScope(exchange, null, null, null);
+        if (required && !capabilityScopes.contains(scope)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "required capability scope is not configured");
+        }
+        return identity;
+    }
+
     public boolean formalMemoryAllowed(String userId, String clientId, boolean requested) {
         if (!requested) return false;
         if (!required) return true;

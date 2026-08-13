@@ -10,12 +10,33 @@ public record ContextBuildRequest(
         ContextProfile profile,
         String topicHint,
         double topicConfidence,
-        List<ExternalBlock> externalBlocks) {
+        List<ExternalBlock> externalBlocks,
+        String currentInput,
+        TopicSignal topicSignal,
+        RehydrationPolicy rehydrationPolicy) {
+    public ContextBuildRequest(
+            String userId,
+            String clientId,
+            String conversationId,
+            ContextProfile profile,
+            String topicHint,
+            double topicConfidence,
+            List<ExternalBlock> externalBlocks) {
+        this(userId, clientId, conversationId, profile, topicHint, topicConfidence,
+                externalBlocks, "", TopicSignal.fromLegacy(topicHint, topicConfidence),
+                RehydrationPolicy.disabled());
+    }
+
     public ContextBuildRequest {
         if (conversationId == null || conversationId.isBlank()) {
             throw new IllegalArgumentException("conversationId must not be blank");
         }
         externalBlocks = externalBlocks == null ? List.of() : List.copyOf(externalBlocks);
+        currentInput = currentInput == null ? "" : currentInput;
+        topicSignal = topicSignal == null
+                ? TopicSignal.fromLegacy(topicHint, topicConfidence) : topicSignal;
+        rehydrationPolicy = rehydrationPolicy == null
+                ? RehydrationPolicy.disabled() : rehydrationPolicy;
     }
 
     public record ExternalBlock(

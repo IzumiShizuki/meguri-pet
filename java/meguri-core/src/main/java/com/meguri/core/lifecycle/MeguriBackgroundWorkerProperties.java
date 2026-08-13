@@ -1,6 +1,7 @@
 package com.meguri.core.lifecycle;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import com.meguri.core.context.ContextRefactoringStrategy;
 
 import java.time.Duration;
 
@@ -80,6 +81,9 @@ public class MeguriBackgroundWorkerProperties {
         private int batchSize = 16;
         private int maxAttempts = 5;
         private int maximumSummaryCharacters = 4_000;
+        private boolean structuredCompressionEnabled = false;
+        private boolean semanticCompressionEnabled = false;
+        private String strategyRevision = ContextRefactoringStrategy.DEFAULT_REVISION;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -96,6 +100,18 @@ public class MeguriBackgroundWorkerProperties {
         public int getMaximumSummaryCharacters() { return maximumSummaryCharacters; }
         public void setMaximumSummaryCharacters(int value) {
             maximumSummaryCharacters = positive(value, "context.maximumSummaryCharacters");
+        }
+        public boolean isStructuredCompressionEnabled() { return structuredCompressionEnabled; }
+        public void setStructuredCompressionEnabled(boolean value) {
+            structuredCompressionEnabled = value;
+        }
+        public boolean isSemanticCompressionEnabled() { return semanticCompressionEnabled; }
+        public void setSemanticCompressionEnabled(boolean value) {
+            semanticCompressionEnabled = value;
+        }
+        public String getStrategyRevision() { return strategyRevision; }
+        public void setStrategyRevision(String value) {
+            strategyRevision = required(value, "context.strategyRevision");
         }
     }
 

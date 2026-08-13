@@ -40,8 +40,16 @@ public final class DefaultObservationNormalizer implements ObservationNormalizer
 
     private String sanitize(String value) {
         if (value == null) return "";
-        String normalized = value.replaceAll("\\s+", " ").trim();
-        return normalized.length() <= maximumSummaryCharacters
-                ? normalized : normalized.substring(0, maximumSummaryCharacters);
+        String normalized = value.replace("\r\n", "\n").replace('\r', '\n')
+                .replaceAll("[\\p{Z}\\t\\x0B\\f]+", " ")
+                .replaceAll(" *\\n *", "\n")
+                .replaceAll("\\n{3,}", "\n\n")
+                .trim();
+        if (normalized.codePointCount(0, normalized.length())
+                <= maximumSummaryCharacters) {
+            return normalized;
+        }
+        return normalized.substring(0, normalized.offsetByCodePoints(
+                0, maximumSummaryCharacters));
     }
 }

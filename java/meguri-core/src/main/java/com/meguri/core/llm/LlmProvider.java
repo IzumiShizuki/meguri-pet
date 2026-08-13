@@ -4,6 +4,8 @@ import com.meguri.core.dto.LlmResponse;
 import com.meguri.core.dto.MemoryCandidate;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.react.ReactPlannerDecision;
+import com.meguri.core.react.ReactPlanningContext;
 import java.util.List;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -28,6 +30,16 @@ public interface LlmProvider {
     default Mono<AgentPlanningRequest.Decision> planAgent(
             AgentPlanningRequest request) {
         return Mono.empty();
+    }
+
+    /** Optional bounded control-plane route for one Limited ReAct decision. */
+    default Mono<ReactPlannerDecision> planReact(ReactPlanningContext context) {
+        return Mono.empty();
+    }
+
+    /** True only when {@link #planReact(ReactPlanningContext)} has a real provider route. */
+    default boolean supportsReactPlanning() {
+        return false;
     }
 
     Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,

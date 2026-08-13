@@ -102,8 +102,6 @@ public record ProviderRequest(
             append(canonical, block.role().name());
             append(canonical, block.source().name());
             append(canonical, block.trust().name());
-            append(canonical, block.provenance());
-            append(canonical, block.revision());
             append(canonical, block.content());
         }
         capabilities.stream()

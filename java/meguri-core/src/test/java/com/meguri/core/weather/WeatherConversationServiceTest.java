@@ -16,6 +16,7 @@ import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.memory.NoopMemoryGateway;
 import com.meguri.core.runtime.ExpressionResolver;
 import com.meguri.core.runtime.RuntimeStateMachine;
+import com.meguri.core.runtime.SessionContextStore;
 import com.meguri.core.runtime.TurnOrchestrator;
 import com.meguri.core.harness.retrieval.RetrievalMode;
 import com.meguri.core.training.TrainingFeedbackService;
@@ -119,6 +120,59 @@ class WeatherConversationServiceTest {
         assertThat(requestedDate).hasValue(LocalDate.parse("2026-07-22"));
         assertThat(response.reply()).contains("钱塘区目前多云").contains("の予報は");
         assertThat(response.expressionTag()).isEqualTo(ExpressionTag.NEUTRAL);
+    }
+
+    @Test
+    void narrowFollowUpInheritsWeatherIntentAndTomorrowDateFromActivePath() {
+        AtomicReference<LocalDate> requestedDate = new AtomicReference<>();
+        WeatherGateway gateway = new WeatherGateway() {
+            @Override
+            public Mono<WeatherBriefing> fetch(WeatherLocation location) {
+                return Mono.error(new AssertionError("dated forecast should be used"));
+            }
+
+            @Override
+            public Mono<WeatherBriefing> fetch(WeatherLocation location, LocalDate targetDate) {
+                requestedDate.set(targetDate);
+                return Mono.just(briefing(location));
+            }
+        };
+        WeatherService weather = new WeatherService(
+                gateway, MAPPER, true, tempDir.resolve("followup-weather-location.json"),
+                QIANTANG, Clock.fixed(Instant.parse("2026-07-21T00:00:00Z"), ZoneOffset.UTC),
+                8, 18);
+        WeatherConversationService conversation = new WeatherConversationService(weather);
+        var resolution = conversation.resolveTurn(
+                "我问的是明天来着",
+                List.of(
+                        new SessionContextStore.Message("user", "明天天气怎么样？"),
+                        new SessionContextStore.Message("assistant", "会有阵雨。"),
+                        new SessionContextStore.Message("user", "我问的是明天来着")));
+
+        var context = conversation.contextFor(resolution).block();
+
+        assertThat(resolution.intent()).isEqualTo(WeatherConversationService.Intent.WEATHER);
+        assertThat(resolution.inherited()).isTrue();
+        assertThat(requestedDate).hasValue(LocalDate.parse("2026-07-22"));
+        assertThat(context.available()).isTrue();
+    }
+
+    @Test
+    void explicitFollowUpDateOverridesHistoryAndUnrelatedBranchesStayIsolated() {
+        WeatherConversationService conversation = new WeatherConversationService(
+                weather(location -> Mono.just(briefing(location))));
+        List<SessionContextStore.Message> activeWeatherPath = List.of(
+                new SessionContextStore.Message("user", "明天天气怎么样？"),
+                new SessionContextStore.Message("assistant", "会有阵雨。"));
+
+        var override = conversation.resolveTurn("那后天呢", activeWeatherPath);
+        var isolated = conversation.resolveTurn("我问的是明天来着", List.of(
+                new SessionContextStore.Message("user", "帮我看一下代码"),
+                new SessionContextStore.Message("assistant", "好的")));
+
+        assertThat(override.intent()).isEqualTo(WeatherConversationService.Intent.WEATHER);
+        assertThat(override.dateSource()).isEqualTo("那后天呢");
+        assertThat(isolated.intent()).isEqualTo(WeatherConversationService.Intent.NONE);
     }
 
     @Test

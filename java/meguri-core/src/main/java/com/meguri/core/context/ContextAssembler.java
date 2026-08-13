@@ -12,10 +12,25 @@ public final class ContextAssembler {
 
     Assembled assemble(String conversationId, String activeLeaf, String topicSegmentId,
                        String buildRevision, ContextProfile profile, List<ContextCandidate> candidates) {
+        return assemble(conversationId, activeLeaf, topicSegmentId, buildRevision, profile,
+                candidates, List.of());
+    }
+
+    Assembled assemble(String conversationId, String activeLeaf, String topicSegmentId,
+                       String buildRevision, ContextProfile profile, List<ContextCandidate> candidates,
+                       List<ContextBundle.RehydrationDecision> rehydrationDecisions) {
         TokenBudgetAllocator.Allocation allocation = allocator.allocate(profile, candidates);
+        List<ContextBundle.RehydrationDecision> decisions = rehydrationDecisions == null
+                ? List.of() : rehydrationDecisions.stream().map(decision ->
+                new ContextBundle.RehydrationDecision(
+                        decision.factId(), decision.sourceIds(), decision.reason(), decision.score(),
+                        decision.tokenCount(), decision.selected()
+                                && allocation.blocks().stream().anyMatch(block -> block.sourceIds().stream()
+                                .anyMatch(source -> source.equals("auto-fact:" + decision.factId())))))
+                .toList();
         ContextBundle bundle = new ContextBundle(
                 conversationId, activeLeaf, topicSegmentId, allocation.blocks(), allocation.budget(),
-                allocation.truncations(), buildRevision);
+                allocation.truncations(), buildRevision, decisions);
         return new Assembled(bundle, allocation.tokensBefore());
     }
 

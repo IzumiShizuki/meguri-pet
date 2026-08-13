@@ -13,6 +13,7 @@ import com.meguri.core.observability.TurnLatencyTrace;
 import com.meguri.core.observability.TurnLatencyTraceRecorder;
 import com.meguri.core.persona.runtime.EffectivePersonaState;
 import com.meguri.core.retrieval.RetrievalBundle;
+import com.meguri.core.skill.FrozenSkillSnapshot;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -42,6 +43,7 @@ public final class TurnRecord {
     private volatile RetrievalBundle retrievalBundle;
     private volatile CompanionContextRuntime.BuildResult contextBuild;
     private volatile ProviderRequest providerRequest;
+    private volatile FrozenSkillSnapshot skillSnapshot;
     private volatile ChatResponse result;
     private volatile String error;
     private volatile String failureCode;
@@ -241,6 +243,29 @@ public final class TurnRecord {
             throw new IllegalStateException("provider request is already frozen");
         }
         providerRequest = request;
+    }
+
+    public FrozenSkillSnapshot getSkillSnapshot() { return skillSnapshot; }
+
+    public synchronized void freezeSkillSnapshot(FrozenSkillSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (skillSnapshot != null && !skillSnapshot.equals(snapshot)) {
+            throw new IllegalStateException("Skill snapshot is already frozen");
+        }
+        skillSnapshot = snapshot;
+    }
+
+    public synchronized void updateSkillSnapshot(FrozenSkillSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (skillSnapshot == null || !skillSnapshot.turnId().equals(snapshot.turnId())
+                || !skillSnapshot.capabilitySnapshotId().equals(snapshot.capabilitySnapshotId())) {
+            throw new IllegalStateException("Skill snapshot authority mismatch");
+        }
+        skillSnapshot = snapshot;
+    }
+
+    synchronized void restoreSkillSnapshot(FrozenSkillSnapshot snapshot) {
+        skillSnapshot = snapshot;
     }
 
     public ChatResponse getResult() {

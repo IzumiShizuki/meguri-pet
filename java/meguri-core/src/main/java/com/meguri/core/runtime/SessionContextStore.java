@@ -2,6 +2,7 @@ package com.meguri.core.runtime;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.meguri.core.context.StructuredContextSummary;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -40,7 +41,7 @@ public final class SessionContextStore {
             String content,
             Instant createdAt) { }
 
-    public enum ReferenceType { QUOTE, RESUME_FROM, TOPIC_LINK }
+    public enum ReferenceType { QUOTE, RESUME_FROM, TOPIC_LINK, AUTO_FACT }
 
     public record ContextReference(
             String referenceId,
@@ -71,15 +72,30 @@ public final class SessionContextStore {
             @JsonProperty("source_revision_digest")
             @JsonAlias("sourceRevisionDigest")
             String sourceRevisionDigest,
-            SummaryStatus status) {
+            SummaryStatus status,
+            StructuredContextSummary structured) {
+        public DerivedSummary(
+                String summaryId,
+                List<String> sourceMessageIds,
+                String content,
+                String modelRevision,
+                long contextRevision,
+                Instant createdAt,
+                String sourceRevisionDigest,
+                SummaryStatus status) {
+            this(summaryId, sourceMessageIds, content, modelRevision, contextRevision,
+                    createdAt, sourceRevisionDigest, status, null);
+        }
+
         public DerivedSummary {
             sourceMessageIds = sourceMessageIds == null ? List.of() : List.copyOf(sourceMessageIds);
+            if (structured != null) structured.validate();
         }
 
         private DerivedSummary markStale() {
             if (status == SummaryStatus.STALE) return this;
             return new DerivedSummary(summaryId, sourceMessageIds, content, modelRevision,
-                    contextRevision, createdAt, sourceRevisionDigest, SummaryStatus.STALE);
+                    contextRevision, createdAt, sourceRevisionDigest, SummaryStatus.STALE, structured);
         }
     }
 
@@ -281,6 +297,12 @@ public final class SessionContextStore {
 
     public DerivedSummary addSummary(String userId, String clientId, String sessionId,
                                      List<String> sourceMessageIds, String content, String modelRevision) {
+        return addSummary(userId, clientId, sessionId, sourceMessageIds, content, modelRevision, null);
+    }
+
+    public DerivedSummary addSummary(String userId, String clientId, String sessionId,
+                                     List<String> sourceMessageIds, String content, String modelRevision,
+                                     StructuredContextSummary structured) {
         Scope scope = key(userId, clientId, sessionId);
         GraphState graph = sessions.computeIfAbsent(scope, ignored -> new GraphState());
         synchronized (graph) {
@@ -301,11 +323,13 @@ public final class SessionContextStore {
                             + sourceMessageId);
                 }
             }
+            validateStructuredSummary(graph, sources, structured);
             GraphState before = copyOf(graph);
             long summaryRevision = graph.revision.incrementAndGet();
             DerivedSummary summary = new DerivedSummary(
                     newId("summary"), sources, content, modelRevision,
-                    summaryRevision, Instant.now(), sourceRevisionDigest(graph, sources), SummaryStatus.ACTIVE);
+                    summaryRevision, Instant.now(), sourceRevisionDigest(graph, sources), SummaryStatus.ACTIVE,
+                    structured);
             graph.summaries.add(summary);
             persist(scope, graph, before);
             return summary;
@@ -544,8 +568,9 @@ public final class SessionContextStore {
                     || summary.sourceMessageIds().isEmpty() || summary.content() == null
                     || summary.modelRevision() == null || summary.createdAt() == null
                     || !graph.nodes.keySet().containsAll(summary.sourceMessageIds())) {
-                throw new IllegalStateException("persisted context summary source does not exist");
+                    throw new IllegalStateException("persisted context summary source does not exist");
             }
+            validateStructuredSummary(graph, summary.sourceMessageIds(), summary.structured());
         }
     }
 
@@ -562,7 +587,7 @@ public final class SessionContextStore {
                     summary.summaryId(), summary.sourceMessageIds(), summary.content(), summary.modelRevision(),
                     summary.contextRevision(), summary.createdAt(), digest,
                     missingDigest || status == SummaryStatus.STALE
-                            ? SummaryStatus.STALE : SummaryStatus.ACTIVE);
+                            ? SummaryStatus.STALE : SummaryStatus.ACTIVE, summary.structured());
             if (!hasCurrentSources(graph, normalized)) normalized = normalized.markStale();
             graph.summaries.set(index, normalized);
         }
@@ -585,6 +610,24 @@ public final class SessionContextStore {
         }
         return summary.sourceRevisionDigest().equals(
                 sourceRevisionDigest(graph, summary.sourceMessageIds()));
+    }
+
+    private static void validateStructuredSummary(
+            GraphState graph, List<String> summarySourceIds, StructuredContextSummary structured) {
+        if (structured == null) return;
+        structured.validate();
+        Set<String> activeIds = activeMessageIds(graph);
+        Set<String> allowed = new HashSet<>(summarySourceIds);
+        for (StructuredContextSummary.Fact fact : structured.facts()) {
+            if (!allowed.containsAll(fact.sourceIds()) || !activeIds.containsAll(fact.sourceIds())) {
+                throw new IllegalArgumentException("structured fact source is outside the summary active range");
+            }
+        }
+        for (StructuredContextSummary.Operation operation : structured.operations()) {
+            if (!allowed.containsAll(operation.sourceIds()) || !activeIds.containsAll(operation.sourceIds())) {
+                throw new IllegalArgumentException("structured operation source is outside the summary active range");
+            }
+        }
     }
 
     private static Set<String> activeMessageIds(GraphState graph) {

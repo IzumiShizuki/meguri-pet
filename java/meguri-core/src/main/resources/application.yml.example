@@ -16,6 +16,17 @@ server:
   shutdown: graceful
 
 meguri:
+  skills:
+    # External Skills are opt-in and remain untrusted even after activation.
+    store-mode: ${MEGURI_SKILL_STORE_MODE:memory}
+    data-root: ${MEGURI_SKILL_DATA_ROOT:${user.home}/.meguri}
+    modelscope:
+      enabled: ${MEGURI_MODELSCOPE_SKILLS_ENABLED:false}
+      base-url: https://modelscope.cn
+      bridge-url: ${MEGURI_MODELSCOPE_SKILL_BRIDGE_URL:http://127.0.0.1:8000}
+      bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+      bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+      timeout-ms: ${MEGURI_MODELSCOPE_SKILL_TIMEOUT_MS:15000}
   performance:
     execution-mode-enabled: ${MEGURI_EXECUTION_MODE_ENABLED:false}
     fast-path-enabled: ${MEGURI_FAST_PATH_ENABLED:false}
@@ -45,6 +56,12 @@ meguri:
   data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
   turn-journal:
     mode: ${MEGURI_TURN_JOURNAL_MODE:in-memory}
+  context:
+    structured-compression-enabled: ${MEGURI_CONTEXT_STRUCTURED_COMPRESSION_ENABLED:false}
+    selective-rehydration-enabled: ${MEGURI_CONTEXT_SELECTIVE_REHYDRATION_ENABLED:false}
+    topic-detection-enabled: ${MEGURI_CONTEXT_TOPIC_DETECTION_ENABLED:false}
+    semantic-compression-enabled: ${MEGURI_CONTEXT_SEMANTIC_COMPRESSION_ENABLED:false}
+    strategy-revision: ${MEGURI_CONTEXT_STRATEGY_REVISION:context-refactoring-v1-deterministic}
   daily-reports:
     directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
   rag:

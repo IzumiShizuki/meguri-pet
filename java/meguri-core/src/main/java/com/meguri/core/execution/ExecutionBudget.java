@@ -84,16 +84,16 @@ public record ExecutionBudget(
                 deadlineAt);
     }
 
-    /** Limited ReAct v1 is hard-bounded to at most three rounds. */
+    /** Limited ReAct v1 is hard-bounded to six decisions and four actions. */
     public ExecutionBudget limitedReactV1() {
         return new ExecutionBudget(
                 maxPreProviderStages,
-                maxModelCalls,
+                Math.min(maxModelCalls, 6),
                 maxRetrievalCalls,
-                maxToolCalls,
+                Math.min(maxToolCalls, 4),
                 maxRemoteAgents,
                 maxAgentDepth,
-                Math.min(maxRounds, 3),
+                Math.min(maxRounds, 6),
                 repeatedActionLimit,
                 maxTokens,
                 maxCostUnits,

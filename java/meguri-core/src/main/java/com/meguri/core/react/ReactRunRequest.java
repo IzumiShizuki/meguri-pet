@@ -16,6 +16,7 @@ public record ReactRunRequest(
         TurnExecutionMode executionMode,
         ExecutionBudget budget,
         List<CapabilityDescriptor> exposedCapabilities,
+        List<ReactSkillCandidate> skillCandidates,
         CancellationToken cancellation,
         String plannerRevision) {
 
@@ -38,5 +39,31 @@ public record ReactRunRequest(
             }
         }
         exposedCapabilities = List.copyOf(unique.values());
+        List<ReactSkillCandidate> candidates = skillCandidates == null
+                ? List.of() : List.copyOf(skillCandidates);
+        Map<String, ReactSkillCandidate> uniqueSkills = new LinkedHashMap<>();
+        for (ReactSkillCandidate candidate : candidates) {
+            Objects.requireNonNull(candidate, "skill candidate");
+            ReactSkillCandidate previous = uniqueSkills.putIfAbsent(
+                    candidate.skillId(), candidate);
+            if (previous != null) {
+                throw new IllegalArgumentException(
+                        "duplicate Skill candidate: " + candidate.skillId());
+            }
+        }
+        skillCandidates = List.copyOf(uniqueSkills.values());
+    }
+
+    /** Compatibility constructor for callers predating external Skill L1 data. */
+    public ReactRunRequest(
+            ReactInvocationScope scope,
+            String goal,
+            TurnExecutionMode executionMode,
+            ExecutionBudget budget,
+            List<CapabilityDescriptor> exposedCapabilities,
+            CancellationToken cancellation,
+            String plannerRevision) {
+        this(scope, goal, executionMode, budget, exposedCapabilities, List.of(),
+                cancellation, plannerRevision);
     }
 }

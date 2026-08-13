@@ -87,6 +87,42 @@ class ContextPrecompressionWorkerTest {
         assertThat(staleWorkerView.activeSummaries("user", "website", "shared")).hasSize(1);
     }
 
+    @Test
+    void structuredWorkerPersistsFactsWithSourceProvenance() {
+        SessionContextStore sessions = new SessionContextStore(
+                20, new NoopSessionContextPersistence());
+        List<String> sourceIds = new ArrayList<>();
+        for (int index = 0; index < 4; index++) {
+            String messageId = "structured-message-" + index;
+            sessions.appendNode("user", "website", "structured", messageId, null,
+                    new SessionContextStore.Message(
+                            index % 2 == 0 ? "user" : "assistant", "constraint message " + index));
+            sourceIds.add(messageId);
+        }
+        InMemoryContextRuntimePersistence persistence = new InMemoryContextRuntimePersistence();
+        Instant now = Instant.now();
+        persistence.enqueuePrecompression(new ContextRuntimePersistence.PrecompressionJob(
+                "structured-job", "structured-key", "user", "website", "structured", 4L,
+                sourceIds, "model", "strategy-v2", ContextRuntimePersistence.JobStatus.PENDING,
+                0, now, null, null, now));
+
+        try (ContextPrecompressionWorker worker = new ContextPrecompressionWorker(
+                sessions, persistence, Clock.fixed(now, ZoneOffset.UTC),
+                Duration.ofSeconds(30), Duration.ofSeconds(1), 10, 3, 1_000,
+                new DeterministicContextRefactoringStrategy(1_000), true)) {
+            assertThat(worker.runOnce().completed()).isEqualTo(1);
+        }
+
+        assertThat(sessions.activeSummaries("user", "website", "structured"))
+                .singleElement()
+                .satisfies(summary -> {
+                    assertThat(summary.structured()).isNotNull();
+                    assertThat(summary.structured().facts()).isNotEmpty();
+                    assertThat(summary.structured().facts().getFirst().sourceIds())
+                            .allMatch(sourceIds::contains);
+                });
+    }
+
     private static final class SharedPersistence implements SessionContextPersistence {
         private final Map<String, SessionContextStore.GraphSnapshot> values = new LinkedHashMap<>();
 

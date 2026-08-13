@@ -61,15 +61,38 @@ public interface ContextRuntimePersistence {
             long graphRevision,
             List<String> sourceMessageIds,
             String modelId,
+            String strategyRevision,
             JobStatus status,
-             int attempts,
-             Instant availableAt,
-             Instant leaseUntil,
-             String summaryId,
+            int attempts,
+            Instant availableAt,
+            Instant leaseUntil,
+            String summaryId,
             Instant createdAt) {
+        public PrecompressionJob(
+                String jobId,
+                String idempotencyKey,
+                String userId,
+                String clientId,
+                String conversationId,
+                long graphRevision,
+                List<String> sourceMessageIds,
+                String modelId,
+                JobStatus status,
+                int attempts,
+                Instant availableAt,
+                Instant leaseUntil,
+                String summaryId,
+                Instant createdAt) {
+            this(jobId, idempotencyKey, userId, clientId, conversationId, graphRevision,
+                    sourceMessageIds, modelId, ContextRefactoringStrategy.DEFAULT_REVISION,
+                    status, attempts, availableAt, leaseUntil, summaryId, createdAt);
+        }
+
         public PrecompressionJob {
             sourceMessageIds = sourceMessageIds == null
                     ? List.of() : List.copyOf(sourceMessageIds);
+            strategyRevision = strategyRevision == null || strategyRevision.isBlank()
+                    ? ContextRefactoringStrategy.DEFAULT_REVISION : strategyRevision.trim();
         }
     }
 }

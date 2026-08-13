@@ -5,6 +5,8 @@ import com.meguri.core.dto.LlmResponse;
 import com.meguri.core.dto.MemoryCandidate;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.react.ReactPlannerDecision;
+import com.meguri.core.react.ReactPlanningContext;
 import dev.langchain4j.model.chat.ChatModel;
 import java.util.List;
 import java.util.Map;
@@ -39,6 +41,16 @@ public final class OpenAICompatibleLlmProvider implements LlmProvider {
     public Mono<AgentPlanningRequest.Decision> planAgent(
             AgentPlanningRequest request) {
         return delegate.planAgent(request);
+    }
+
+    @Override
+    public Mono<ReactPlannerDecision> planReact(ReactPlanningContext context) {
+        return delegate.planReact(context);
+    }
+
+    @Override
+    public boolean supportsReactPlanning() {
+        return delegate.supportsReactPlanning();
     }
 
     @Override

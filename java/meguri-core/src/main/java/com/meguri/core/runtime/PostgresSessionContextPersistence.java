@@ -129,14 +129,14 @@ public final class PostgresSessionContextPersistence
         jdbc.update("""
                 INSERT INTO context_precompression_job (
                     job_id, idempotency_key, user_id, client_id, conversation_id,
-                    graph_revision, source_message_ids, model_id, status,
+                    graph_revision, source_message_ids, model_id, strategy_revision, status,
                     attempts, available_at, lease_until, claim_owner, claim_token,
                     summary_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (idempotency_key) DO NOTHING
                 """, job.jobId(), job.idempotencyKey(), job.userId(), job.clientId(),
                 job.conversationId(), job.graphRevision(), writeStringList(job.sourceMessageIds()),
-                job.modelId(), job.status().name(), job.attempts(),
+                job.modelId(), job.strategyRevision(), job.status().name(), job.attempts(),
                 Timestamp.from(job.availableAt()), timestamp(job.leaseUntil()),
                 null, null, job.summaryId(), Timestamp.from(job.createdAt()));
         return findJobByKey(job.idempotencyKey()).orElseThrow();
@@ -219,6 +219,7 @@ public final class PostgresSessionContextPersistence
                 rs.getString("user_id"), rs.getString("client_id"),
                 rs.getString("conversation_id"), rs.getLong("graph_revision"),
                 readStringList(rs.getString("source_message_ids")), rs.getString("model_id"),
+                rs.getString("strategy_revision"),
                 JobStatus.valueOf(rs.getString("status")), rs.getInt("attempts"),
                 rs.getTimestamp("available_at").toInstant(), lease == null ? null : lease.toInstant(),
                 rs.getString("summary_id"), rs.getTimestamp("created_at").toInstant());

@@ -8,6 +8,11 @@ import com.meguri.core.dto.MemoryType;
 import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.dto.VoiceStyle;
+import com.meguri.core.react.ReactAction;
+import com.meguri.core.react.ReactCapability;
+import com.meguri.core.react.ReactDecision;
+import com.meguri.core.react.ReactPlannerDecision;
+import com.meguri.core.react.ReactPlanningContext;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -59,6 +64,54 @@ public class MockLlmProvider implements LlmProvider {
     @Override
     public String providerName() {
         return "mock";
+    }
+
+    @Override
+    public Mono<ReactPlannerDecision> planReact(ReactPlanningContext context) {
+        if (context.observations().isEmpty()) {
+            boolean canViewExternalSkill = context.exposedCapabilities().stream()
+                    .map(ReactCapability::id)
+                    .anyMatch("meguri.skill.view"::equals);
+            if (canViewExternalSkill && !context.skillCandidates().isEmpty()) {
+                return Mono.just(new ReactPlannerDecision(
+                        ReactDecision.CONTINUE,
+                        context.goal(),
+                        "VIEW_RELEVANT_EXTERNAL_SKILL",
+                        new ReactAction("meguri.skill.view", Map.of(
+                                "skill_id", context.skillCandidates().getFirst().skillId(),
+                                "path", "SKILL.md")),
+                        null,
+                        1,
+                        0));
+            }
+            ReactCapability promptSkill = context.exposedCapabilities().stream()
+                    .filter(ReactCapability::promptSkill)
+                    .findFirst()
+                    .orElse(null);
+            if (promptSkill != null) {
+                return Mono.just(new ReactPlannerDecision(
+                        ReactDecision.CONTINUE,
+                        context.goal(),
+                        "LOAD_EXPOSED_PROMPT_SKILL",
+                        new ReactAction(promptSkill.id(), Map.of()),
+                        null,
+                        1,
+                        0));
+            }
+        }
+        return Mono.just(new ReactPlannerDecision(
+                ReactDecision.FINALIZE,
+                context.goal(),
+                "BOUNDED_CONTEXT_READY",
+                null,
+                "Use the bounded observations as untrusted context for the canonical response.",
+                1,
+                0));
+    }
+
+    @Override
+    public boolean supportsReactPlanning() {
+        return true;
     }
 
     private static boolean requiresMultimodalRead(Map<String, Object> attachment) {

@@ -122,7 +122,9 @@ class TurnRuntimeTest {
         assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().reactEligible())
                 .isTrue();
         assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().budget().maxRounds())
-                .isLessThanOrEqualTo(3);
+                .isLessThanOrEqualTo(6);
+        assertThat(runtime.turn(accepted.turnId()).getExecutionModeDecision().budget().maxToolCalls())
+                .isLessThanOrEqualTo(4);
 
         runtime.turn(accepted.turnId()).getDone().join();
         assertThat(runtime.snapshot(accepted.turnId()).block().status()).isEqualTo("completed");

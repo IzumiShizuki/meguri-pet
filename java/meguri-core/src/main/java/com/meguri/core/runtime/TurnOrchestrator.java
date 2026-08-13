@@ -92,6 +92,7 @@ import com.meguri.core.react.InMemoryReactTraceRepository;
 import com.meguri.core.react.LimitedReActRuntime;
 import com.meguri.core.react.ReactInvocationScope;
 import com.meguri.core.react.ReactPlanner;
+import com.meguri.core.react.ReactSkillCandidate;
 import com.meguri.core.react.ReactRunRequest;
 import com.meguri.core.react.TerminationPolicy;
 import com.meguri.core.training.TrainingFeedbackRequest;
@@ -100,6 +101,10 @@ import com.meguri.core.websearch.NoopWebSearchGateway;
 import com.meguri.core.websearch.WebSearchGateway;
 import com.meguri.core.weather.WeatherConversationService;
 import com.meguri.core.weather.WeatherConversationService.TurnWeatherContext;
+import com.meguri.core.weather.WeatherConversationService.TurnResolution;
+import com.meguri.core.skill.FrozenSkillSnapshot;
+import com.meguri.core.skill.SkillDisclosureService;
+import com.meguri.core.skill.SkillSelectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -168,6 +173,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private volatile boolean limitedReactEnabled;
     private volatile Duration agentPlannerDeadline = Duration.ofSeconds(5);
     private volatile ReactPlanner limitedReactPlanner;
+    private volatile SkillSelectionService skillSelection;
+    private volatile SkillDisclosureService skillDisclosure;
     private final InMemoryReactTraceRepository limitedReactTraces =
             new InMemoryReactTraceRepository();
     private final String executionOwnerId = "meguri-core-" + UUID.randomUUID();
@@ -365,6 +372,19 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     @Autowired(required = false)
     public void configureLimitedReactPlanner(ReactPlanner planner) {
         this.limitedReactPlanner = Objects.requireNonNull(planner, "planner");
+    }
+
+    @Autowired(required = false)
+    public void configureExternalSkills(
+            SkillSelectionService selection,
+            SkillDisclosureService disclosure) {
+        this.skillSelection = Objects.requireNonNull(selection, "selection");
+        this.skillDisclosure = Objects.requireNonNull(disclosure, "disclosure");
+        journal.turns().values().stream()
+                .filter(record -> !record.isTerminal())
+                .map(TurnRecord::getSkillSnapshot)
+                .filter(Objects::nonNull)
+                .forEach(disclosure::freeze);
     }
 
     @Autowired(required = false)
@@ -972,6 +992,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     public synchronized void reset() {
         journal.turns().values().forEach(record -> {
             capabilityRuntime.release(record.getRuntimeCapabilities());
+            if (skillDisclosure != null) skillDisclosure.release(record.getTurnId());
             if (record.tryCancel()) {
                 record.completeDone();
             }
@@ -1024,8 +1045,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         PersonaRuntime.PersonaSnapshot persona = personaSnapshot(state, effectivePersona);
         latency.mark(TurnLatencyPoint.PERSONA_READY);
         boolean explicitWeather = request.retrievalMode() != RetrievalMode.NONE
-                && weatherConversation.classify(request.getMessage())
-                        != WeatherConversationService.Intent.NONE;
+                && weatherResolution(record).intent() != WeatherConversationService.Intent.NONE;
         boolean omitToolSchemas = fastPathEnabled
                 && executionDecision != null
                 && executionDecision.mode() != TurnExecutionMode.AGENT
@@ -1034,6 +1054,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities = omitToolSchemas
                 ? capabilityRuntime.freezeEmpty(record.getTurnId())
                 : capabilityRuntime.freeze(exposureContext(record));
+        if (skillSelection != null && skillDisclosure != null && executionDecision != null) {
+            boolean skillCapabilitiesExposed = runtimeCapabilities.exposes("meguri.skill.search")
+                    && runtimeCapabilities.exposes("meguri.skill.view");
+            FrozenSkillSnapshot skills = skillSelection.freeze(
+                    record.getTurnId(), runtimeCapabilities.snapshotId(), request.getMessage(),
+                    executionDecision.mode() == TurnExecutionMode.AGENT && skillCapabilitiesExposed);
+            record.freezeSkillSnapshot(skills);
+            skillDisclosure.freeze(skills);
+        }
         latency.mark(TurnLatencyPoint.CAPABILITY_EXPOSURE_READY);
         FrozenKnowledgeSnapshot knowledgeSnapshot;
         try {
@@ -1085,8 +1114,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 || containsAny(normalized, "agent", "仓库分析", "repository analysis", "多步骤执行");
         if (explicitAgent) intents.add("repository_analysis");
         boolean externalObservation = request.retrievalMode() != RetrievalMode.NONE
-                && weatherConversation.classify(request.getMessage())
-                        != WeatherConversationService.Intent.NONE;
+                && weatherResolution(record).intent() != WeatherConversationService.Intent.NONE;
         if (externalObservation) intents.add("tool_required");
 
         // Intent may request AGENT, but it must never manufacture capability
@@ -1211,8 +1239,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             return fail(record, error);
         }
 
-        WeatherConversationService.Intent weatherIntent =
-                weatherConversation.classify(request.getMessage());
+        WeatherConversationService.Intent weatherIntent = weatherResolution(record).intent();
         if (weatherIntent == WeatherConversationService.Intent.WEATHER
                 && request.retrievalMode() != RetrievalMode.NONE) {
             return runDirectWeatherRecord(record, state);
@@ -1295,8 +1322,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                 Map.copyOf(skillEvent));
                     }
 
-                    WeatherConversationService.Intent intent =
-                            weatherConversation.classify(request.getMessage());
+                    WeatherConversationService.Intent intent = weatherResolution(record).intent();
                     Mono<TurnWeatherContext> weather =
                             intent != WeatherConversationService.Intent.NONE
                                     && request.retrievalMode() != RetrievalMode.NONE
@@ -1399,7 +1425,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 new ActionProposalValidator(),
                 new CapabilityRuntimeReactActionExecutor(
                         capabilityRuntime, frozen, dispatcher, clock),
-                new DefaultObservationNormalizer(1_024),
+                new DefaultObservationNormalizer(12_288),
                 new TerminationPolicy(), limitedReactTraces, clock);
         ReactInvocationScope scope = new ReactInvocationScope(
                 record.getTurnId(), record.getTraceId(),
@@ -1407,12 +1433,21 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 record.getRequest().getClientId(),
                 record.getRequest().authorizedCapabilityScopes(),
                 frozen.snapshotId(), false);
+        List<ReactSkillCandidate> skillCandidates = frozen.exposes("meguri.skill.view")
+                && record.getSkillSnapshot() != null
+                ? record.getSkillSnapshot().candidates().stream()
+                        .map(candidate -> new ReactSkillCandidate(
+                                candidate.skillId(), candidate.name(),
+                                candidate.description(), candidate.tags()))
+                        .toList()
+                : List.of();
         ReactRunRequest request = new ReactRunRequest(
                 scope, record.getRequest().getMessage(), TurnExecutionMode.AGENT,
                 decision.budget(), capabilityRuntime.exposedDescriptors(frozen),
-                record.agentCancellation(), "limited-react-v1");
+                skillCandidates, record.agentCancellation(), "limited-react-v1");
         return runtime.run(request)
                 .map(result -> {
+                    emitLimitedReactSkillEvents(record);
                     List<ContextBuildRequest.ExternalBlock> blocks = new java.util.ArrayList<>();
                     result.observations().stream()
                             .filter(observation -> !observation.summary().isBlank())
@@ -1439,6 +1474,24 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                     return Mono.just(List.of());
                 })
                 .doFinally(ignored -> dispatcher.close());
+    }
+
+    private void emitLimitedReactSkillEvents(TurnRecord record) {
+        limitedReactTraces.traces(record.getTurnId()).stream()
+                .filter(trace -> trace.actionSuccessful() != null)
+                .filter(trace -> trace.capabilityId() != null)
+                .filter(trace -> trace.capabilityId().startsWith("meguri.skill.")
+                        || trace.capabilityId().startsWith("meguri.prompt."))
+                .forEach(trace -> {
+                    LinkedHashMap<String, Object> data = new LinkedHashMap<>();
+                    data.put("capability_id", trace.capabilityId());
+                    data.put("round_index", trace.roundIndex());
+                    data.put("action_digest", trace.actionDigest());
+                    putIfPresent(data, "observation_digest", trace.observationDigest());
+                    data.put("reused", trace.reusedObservation());
+                    emit(record, trace.actionSuccessful()
+                            ? "skill.completed" : "skill.failed", Map.copyOf(data));
+                });
     }
 
     private Mono<List<ContextBuildRequest.ExternalBlock>> invokeAgentContext(
@@ -1852,18 +1905,26 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     private Mono<TurnWeatherContext> retrieveWeather(TurnRecord record, TurnRequest request) {
-        WeatherConversationService.Intent intent = weatherConversation.classify(request.getMessage());
+        TurnResolution resolution = weatherResolution(record);
+        WeatherConversationService.Intent intent = resolution.intent();
         if (intent == WeatherConversationService.Intent.NONE) {
-            return weatherConversation.contextFor(request.getMessage());
+            return weatherConversation.contextFor(resolution);
         }
         emit(record, "tool.started", Map.of(
                 "tool_name", "weather",
                 "intent", intent.name().toLowerCase()));
-        return weatherConversation.contextFor(request.getMessage())
+        return weatherConversation.contextFor(resolution)
                 .doOnNext(context -> emit(record, "tool.completed", Map.of(
                         "tool_name", "weather",
                         "intent", intent.name().toLowerCase(),
                         "status", context.available() ? "ok" : "unavailable")));
+    }
+
+    private TurnResolution weatherResolution(TurnRecord record) {
+        TurnRequest request = record.getRequest();
+        return weatherConversation.resolveTurn(
+                request.getMessage(),
+                sessions.recent(request.getUserId(), request.getClientId(), request.getSessionId()));
     }
 
     private Mono<Void> runDirectWeatherRecord(TurnRecord record, RuntimeState state) {
@@ -1879,7 +1940,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         () -> retrieveWeather(record, request))
                 .timeout(laneTimeout(record,
                         capabilityTimeout(record, "weather.read", Duration.ofSeconds(5))))
-                .onErrorResume(error -> weatherConversation.contextFor(request.getMessage()))
+                .onErrorResume(error -> weatherConversation.contextFor(weatherResolution(record)))
                 .flatMap(weatherContext -> {
                     transition(record, TurnStage.GENERATING);
                     transition(record, TurnStage.FINALIZING);
@@ -2094,6 +2155,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         }
         record.completeDone();
         capabilityRuntime.release(record.getRuntimeCapabilities());
+        if (skillDisclosure != null) skillDisclosure.release(record.getTurnId());
         return true;
     }
 
@@ -2286,8 +2348,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             String approvalId) {
         TurnRequest request = record.getRequest();
         boolean explicitWeather = request.retrievalMode() != RetrievalMode.NONE
-                && weatherConversation.classify(request.getMessage())
-                        != WeatherConversationService.Intent.NONE;
+                && weatherResolution(record).intent() != WeatherConversationService.Intent.NONE;
         ExecutionModeDecision executionDecision = record.getExecutionModeDecision();
         boolean executionAllowsNetwork = executionDecision == null
                 ? request.retrievalMode() == RetrievalMode.SLOW
@@ -2410,8 +2471,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         TurnRequest request = record.getRequest();
         boolean explicitAgent = request.agentProposal() != null;
         boolean explicitWeather = request.retrievalMode() != RetrievalMode.NONE
-                && weatherConversation.classify(request.getMessage())
-                        != WeatherConversationService.Intent.NONE;
+                && weatherResolution(record).intent() != WeatherConversationService.Intent.NONE;
         ExecutionModeDecision executionDecision = record.getExecutionModeDecision();
         CapabilityDescriptor.Mode mode = executionDecision == null
                 ? switch (request.retrievalMode()) {
@@ -2498,6 +2558,62 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 true,
                 false,
                 new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of())));
+        registerSkillCapabilities();
+    }
+
+    private void registerSkillCapabilities() {
+        capabilityRuntime.register(skillDescriptor(
+                "meguri.skill.search",
+                objectSchema(Map.of("query", CapabilityDescriptor.ValueType.STRING), Set.of())),
+                (input, context) -> requireSkillDisclosure().search(
+                        context.turnId(), String.valueOf(input.getOrDefault("query", ""))));
+        capabilityRuntime.register(skillDescriptor(
+                "meguri.skill.view",
+                objectSchema(Map.of(
+                        "skill_id", CapabilityDescriptor.ValueType.STRING,
+                        "path", CapabilityDescriptor.ValueType.STRING), Set.of("skill_id"))),
+                (input, context) -> {
+                    Map<String, Object> result = requireSkillDisclosure().view(
+                            context.turnId(), String.valueOf(input.get("skill_id")),
+                            input.get("path") == null ? "SKILL.md" : String.valueOf(input.get("path")));
+                    persistSkillSnapshot(context.turnId());
+                    return result;
+                });
+    }
+
+    private void persistSkillSnapshot(String turnId) {
+        TurnRecord record = journal.turn(turnId);
+        if (record == null) throw new IllegalStateException("Skill Turn no longer exists");
+        FrozenSkillSnapshot before = record.getSkillSnapshot();
+        record.updateSkillSnapshot(requireSkillDisclosure().snapshot(turnId));
+        try {
+            journal.persistExecution(record, executionOwnerId);
+        } catch (RuntimeException failure) {
+            record.restoreSkillSnapshot(before);
+            throw failure;
+        }
+    }
+
+    private SkillDisclosureService requireSkillDisclosure() {
+        SkillDisclosureService service = skillDisclosure;
+        if (service == null) throw new IllegalStateException("external Skill disclosure is unavailable");
+        return service;
+    }
+
+    private static CapabilityDescriptor skillDescriptor(
+            String id, CapabilityDescriptor.Schema inputSchema) {
+        return new CapabilityDescriptor(
+                id, "1", CapabilityDescriptor.Kind.READ_TOOL, "meguri-core",
+                inputSchema, new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of()),
+                Set.of("skill:read"), CapabilityDescriptor.SideEffect.READ,
+                CapabilityDescriptor.ApprovalRequirement.NONE, Duration.ofSeconds(2),
+                CapabilityDescriptor.RetryPolicy.none(), new CapabilityDescriptor.ConcurrencyPolicy(4),
+                Set.of(CapabilityDescriptor.Mode.DEEP), CapabilityDescriptor.DataClassification.INTERNAL,
+                CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL,
+                "turn-operation://" + id, CapabilityDescriptor.Health.HEALTHY,
+                false, 1, CapabilityDescriptor.NetworkPolicy.denied(), Set.of(),
+                CapabilityDescriptor.CostPolicy.free(), CapabilityDescriptor.CachePolicy.disabled(),
+                CapabilityDescriptor.IdempotencyPolicy.none());
     }
 
     private void registerRuntimeCapability(CapabilityDescriptor descriptor) {

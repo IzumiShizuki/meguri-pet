@@ -7,6 +7,9 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -193,6 +196,115 @@ class CompanionContextRuntimeTest {
         assertThat(store.graph("u", "web", "c").activeLeafMessageId()).isEqualTo(resumed.messageId());
         assertThat(store.graph("u", "web", "c").activePath())
                 .extracting(SessionContextStore.MessageNode::content).containsExactly("root", "new branch");
+    }
+
+    @Test
+    void thinkSelectivelyRehydratesRelevantStructuredFactsOnActivePath() {
+        SessionContextStore store = new SessionContextStore(30);
+        SessionContextStore.MessageNode constraint = append(store, null, "user",
+                "The database constraint is postgres and must stay stable");
+        SessionContextStore.MessageNode decision = append(store, null, "assistant",
+                "We chose postgres because the existing migration path is compatible");
+        StructuredContextSummary structured = StructuredContextSummary.builder("postgres decision")
+                .fact(new StructuredContextSummary.Fact(
+                        "fact-postgres", "postgres was chosen for the migration path",
+                        List.of(decision.messageId()), StructuredContextSummary.Importance.HIGH,
+                        StructuredContextSummary.FactStatus.ACTIVE, List.of()))
+                .fact(new StructuredContextSummary.Fact(
+                        "fact-unrelated", "the mascot color is blue",
+                        List.of(constraint.messageId()), StructuredContextSummary.Importance.NORMAL,
+                        StructuredContextSummary.FactStatus.ACTIVE, List.of()))
+                .currentState("fact-postgres")
+                .operation(new StructuredContextSummary.Operation(
+                        StructuredContextSummary.OperationType.COMPRESS,
+                        List.of("fact-postgres"), List.of(decision.messageId()), "fact-postgres"))
+                .operation(new StructuredContextSummary.Operation(
+                        StructuredContextSummary.OperationType.COMPRESS,
+                        List.of("fact-unrelated"), List.of(constraint.messageId()), "fact-unrelated"))
+                .build();
+        store.addSummary("u", "web", "c", List.of(constraint.messageId(), decision.messageId()),
+                "postgres decision", "test-structured", structured);
+        SessionContextStore.MessageNode question = append(store, null, "user",
+                "Why did we choose postgres for the migration path?");
+
+        CompanionContextRuntime runtime = new CompanionContextRuntime(
+                store, new InMemoryContextRuntimePersistence(), tokenizer,
+                new DeterministicTopicDetector(), true, "test-strategy");
+        ContextBundle bundle = runtime.build(new ContextBuildRequest(
+                "u", "web", "c", profile(500, 450), "general", 0.2, List.of(),
+                question.content(), new TopicSignal("database", 0.8, "test", "test-detector"),
+                RehydrationPolicy.thinkDefault())).bundle();
+
+        assertThat(bundle.blocks()).anyMatch(block ->
+                block.blockType() == ContextBundle.BlockType.REHYDRATED
+                        && block.sourceIds().stream().anyMatch("auto-fact:fact-postgres"::equals)
+                        && block.content().contains("We chose postgres"));
+        assertThat(bundle.blocks()).noneMatch(block ->
+                block.sourceIds().stream().anyMatch("auto-fact:fact-unrelated"::equals));
+        assertThat(bundle.rehydrationDecisions()).anyMatch(decisionResult ->
+                decisionResult.factId().equals("fact-postgres") && decisionResult.selected());
+        assertThat(bundle.rehydrationDecisions()).noneMatch(decisionResult ->
+                decisionResult.factId().equals("fact-unrelated"));
+    }
+
+    @Test
+    void disabledRehydrationDoesNotRestoreStructuredFacts() {
+        SessionContextStore store = new SessionContextStore(20);
+        SessionContextStore.MessageNode source = append(store, null, "user", "the exact route is /v1/items");
+        StructuredContextSummary structured = StructuredContextSummary.builder("route")
+                .fact(new StructuredContextSummary.Fact(
+                        "fact-route", "the exact route is /v1/items", List.of(source.messageId()),
+                        StructuredContextSummary.Importance.HIGH,
+                        StructuredContextSummary.FactStatus.ACTIVE, List.of()))
+                .exactItem("fact-route")
+                .operation(new StructuredContextSummary.Operation(
+                        StructuredContextSummary.OperationType.KEEP_EXACT,
+                        List.of("fact-route"), List.of(source.messageId()), "fact-route"))
+                .build();
+        store.addSummary("u", "web", "c", List.of(source.messageId()), "route", "test", structured);
+        SessionContextStore.MessageNode question = append(store, null, "user", "what is the exact route?");
+
+        ContextBundle bundle = new CompanionContextRuntime(
+                store, new InMemoryContextRuntimePersistence(), tokenizer,
+                new DeterministicTopicDetector(), true, "test")
+                .build(new ContextBuildRequest(
+                        "u", "web", "c", profile(300, 250), "general", 0.2, List.of(),
+                        question.content(), null, RehydrationPolicy.disabled()))
+                .bundle();
+
+        assertThat(bundle.blocks()).noneMatch(block -> block.blockType() == ContextBundle.BlockType.REHYDRATED
+                && block.sourceIds().stream().anyMatch(value -> value.startsWith("auto-fact:")));
+    }
+
+    @Test
+    void invalidReadModelFallsBackToHarnessAndRequestsRebuild() {
+        SessionContextStore store = new SessionContextStore(20);
+        append(store, null, "user", "read model fallback");
+        AtomicInteger rebuilds = new AtomicInteger();
+        ConversationContextReadModelProvider provider = new ConversationContextReadModelProvider() {
+            @Override
+            public Optional<ConversationContextReadModel> find(ContextBuildRequest request,
+                                                               SessionContextStore.GraphSnapshot authority) {
+                return Optional.of(new ConversationContextReadModel(
+                        authority.sessionId(), authority.activeLeafMessageId(), null, null,
+                        List.of(), authority.activePath(), List.of(), List.of(), Map.of(), Map.of(),
+                        0, authority.revision() - 1, "bad-digest", "test"));
+            }
+
+            @Override
+            public void rebuild(ContextBuildRequest request,
+                                SessionContextStore.GraphSnapshot authority) {
+                rebuilds.incrementAndGet();
+            }
+        };
+
+        ContextBundle bundle = new CompanionContextRuntime(
+                store, new InMemoryContextRuntimePersistence(), tokenizer,
+                new DeterministicTopicDetector(), false, true, "test", provider)
+                .build(request(profile(200, 180), List.of())).bundle();
+
+        assertThat(bundle.blocks()).anyMatch(block -> block.content().contains("read model fallback"));
+        assertThat(rebuilds).hasValue(1);
     }
 
     private CompanionContextRuntime runtime(SessionContextStore store, ContextRuntimePersistence persistence) {

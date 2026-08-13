@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS turn_runtime (
     accepted_at TIMESTAMPTZ NOT NULL,
     deadline_at TIMESTAMPTZ NOT NULL,
     manifest_json JSONB,
+    skill_snapshot_json JSONB,
     result_json JSONB,
     failure_code VARCHAR(128),
     error TEXT,
@@ -32,6 +33,7 @@ ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS lease_until TIMESTAMPTZ;
 ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ;
 ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS cancel_requested BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE turn_runtime ADD COLUMN IF NOT EXISTS skill_snapshot_json JSONB;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_turn_runtime_idempotency
     ON turn_runtime (user_id, client_id, session_id, idempotency_key)

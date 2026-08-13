@@ -78,6 +78,7 @@ class TurnJournalPersistenceContractTest {
                 .contains("event_id varchar(128) not null unique")
                 .contains("where status = 'pending'")
                 .contains("failure_code varchar(128)")
+                .contains("skill_snapshot_json jsonb")
                 .contains("retry_of_turn_id varchar(128)")
                 .contains("owner_id varchar(255)")
                 .contains("lease_until timestamptz")

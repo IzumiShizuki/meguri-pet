@@ -11,10 +11,25 @@ public record ContextBundle(
         List<Block> blocks,
         Budget budget,
         List<Truncation> truncations,
-        String buildRevision) {
+        String buildRevision,
+        List<RehydrationDecision> rehydrationDecisions) {
+    public ContextBundle(
+            String conversationId,
+            String activeLeafMessageId,
+            String topicSegmentId,
+            List<Block> blocks,
+            Budget budget,
+            List<Truncation> truncations,
+            String buildRevision) {
+        this(conversationId, activeLeafMessageId, topicSegmentId, blocks, budget,
+                truncations, buildRevision, List.of());
+    }
+
     public ContextBundle {
         blocks = blocks == null ? List.of() : List.copyOf(blocks);
         truncations = truncations == null ? List.of() : List.copyOf(truncations);
+        rehydrationDecisions = rehydrationDecisions == null
+                ? List.of() : List.copyOf(rehydrationDecisions);
     }
 
     public enum BlockType {
@@ -57,6 +72,29 @@ public record ContextBundle(
         public Truncation {
             sourceIds = sourceIds == null ? List.of() : List.copyOf(sourceIds);
             if (reason == null || reason.isBlank()) throw new IllegalArgumentException("reason must not be blank");
+        }
+    }
+
+    /** Server-side explanation of automatic fact recovery and its budget outcome. */
+    public record RehydrationDecision(
+            String factId,
+            List<String> sourceIds,
+            String reason,
+            double score,
+            int tokenCount,
+            boolean selected) {
+        public RehydrationDecision {
+            if (factId == null || factId.isBlank()) {
+                throw new IllegalArgumentException("factId must not be blank");
+            }
+            sourceIds = sourceIds == null ? List.of() : List.copyOf(sourceIds);
+            reason = reason == null ? "" : reason;
+            if (score < 0d || Double.isNaN(score)) {
+                throw new IllegalArgumentException("rehydration score must not be negative");
+            }
+            if (tokenCount < 0) {
+                throw new IllegalArgumentException("rehydration token count must not be negative");
+            }
         }
     }
 }

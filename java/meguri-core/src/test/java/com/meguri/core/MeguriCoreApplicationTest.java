@@ -38,6 +38,17 @@ class MeguriCoreApplicationTest {
     }
 
     @Test
+    void disabled_modelscope_source_returns_a_stable_error_while_core_stays_healthy() {
+        client.get().uri("/internal/v1/skill-sources/modelscope/skills?q=pdf")
+                .exchange()
+                .expectStatus().isEqualTo(503)
+                .expectBody()
+                .jsonPath("$.code").isEqualTo("SKILL_SOURCE_DISABLED")
+                .jsonPath("$.retryable").isEqualTo(false);
+        client.get().uri("/health").exchange().expectStatus().isOk();
+    }
+
+    @Test
     void localProfileEnablesQiantangWeatherDefaults() {
         assertThat(environment.getProperty("meguri.weather.enabled", Boolean.class)).isTrue();
         assertThat(environment.getProperty("meguri.weather.location-name"))

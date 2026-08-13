@@ -40,6 +40,26 @@ public final class ContextRehydrationService {
         return List.copyOf(result);
     }
 
+    /** Restores only an active-path span selected by the structured fact index. */
+    public RehydratedWindow rehydrateAutomatic(
+            SessionContextStore.GraphSnapshot graph,
+            String factId,
+            String sourceMessageId,
+            int before,
+            int after) {
+        List<SessionContextStore.MessageNode> activePath = graph.activePath();
+        int sourceIndex = indexOf(activePath, sourceMessageId);
+        if (sourceIndex < 0) return null;
+        SessionContextStore.MessageNode source = activePath.get(sourceIndex);
+        int from = Math.max(0, sourceIndex - Math.max(0, before));
+        int to = Math.min(activePath.size(), sourceIndex + Math.max(0, after) + 1);
+        return new RehydratedWindow(
+                "auto-fact:" + factId,
+                SessionContextStore.ReferenceType.AUTO_FACT,
+                source.messageId(), source.content(),
+                List.copyOf(new ArrayList<>(activePath.subList(from, to))));
+    }
+
     private static int indexOf(
             List<SessionContextStore.MessageNode> activePath, String messageId) {
         for (int index = 0; index < activePath.size(); index++) {

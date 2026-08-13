@@ -8,6 +8,7 @@ import com.meguri.core.dto.EventEnvelope;
 import com.meguri.core.dto.EventMetadata;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.harness.HarnessManifest;
+import com.meguri.core.skill.FrozenSkillSnapshot;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -36,7 +37,7 @@ public final class PostgresTurnJournal implements TurnJournal {
     private static final TypeReference<Map<String, Object>> OBJECT_MAP = new TypeReference<>() { };
     private static final String TURN_COLUMNS = """
             turn_id, trace_id, request_json, status, stage, accepted_at,
-            deadline_at, manifest_json, result_json, failure_code, error,
+            deadline_at, manifest_json, skill_snapshot_json, result_json, failure_code, error,
             retry_of_turn_id, cancel_requested, version
             """;
 
@@ -613,6 +614,7 @@ public final class PostgresTurnJournal implements TurnJournal {
                 """;
         java.util.ArrayList<Object> parameters = new java.util.ArrayList<>(java.util.Arrays.asList(
                 record.statusValue(), record.getStage().wireValue(), nullableJson(record.getManifest()),
+                nullableJson(record.getSkillSnapshot()),
                 nullableJson(record.getResult()), record.getFailureCode(), record.getError(),
                 record.getRetryOfTurnId(), record.isCancelRequested(),
                 record.getTurnId(), record.getVersion()));
@@ -620,6 +622,7 @@ public final class PostgresTurnJournal implements TurnJournal {
         int updated = jdbc.update("""
                 UPDATE turn_runtime
                 SET status = ?, stage = ?, manifest_json = CAST(? AS jsonb),
+                    skill_snapshot_json = CAST(? AS jsonb),
                     result_json = CAST(? AS jsonb), failure_code = ?, error = ?,
                     retry_of_turn_id = ?, cancel_requested = ?, version = version + 1,
                     updated_at = CURRENT_TIMESTAMP
@@ -680,6 +683,7 @@ public final class PostgresTurnJournal implements TurnJournal {
                 current.restore(
                         fresh.getStatus(), fresh.getStage(), fresh.getManifest(), fresh.getResult(),
                         fresh.getFailureCode(), fresh.getError(), fresh.getRetryOfTurnId(), fresh.getVersion());
+                current.restoreSkillSnapshot(fresh.getSkillSnapshot());
                 if (fresh.isCancelRequested()) current.requestCancel();
             }
             return current;
@@ -695,6 +699,7 @@ public final class PostgresTurnJournal implements TurnJournal {
                 rs.getTimestamp("accepted_at").toInstant(),
                 rs.getTimestamp("deadline_at").toInstant());
         String manifestJson = rs.getString("manifest_json");
+        String skillSnapshotJson = rs.getString("skill_snapshot_json");
         String resultJson = rs.getString("result_json");
         HarnessManifest manifest = manifestJson == null ? null : read(manifestJson, HarnessManifest.class);
         ChatResponse result = resultJson == null ? null : read(resultJson, ChatResponse.class);
@@ -707,6 +712,9 @@ public final class PostgresTurnJournal implements TurnJournal {
                 rs.getString("error"),
                 rs.getString("retry_of_turn_id"),
                 rs.getLong("version"));
+        if (skillSnapshotJson != null) {
+            record.freezeSkillSnapshot(read(skillSnapshotJson, FrozenSkillSnapshot.class));
+        }
         if (rs.getBoolean("cancel_requested")) record.requestCancel();
         return record;
     }

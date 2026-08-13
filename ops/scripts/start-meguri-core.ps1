@@ -13,6 +13,16 @@ function Main {
     # 关键：强制这个 core 跑在 Windows 上，并明确指向正确的 es.exe
     $env:MEGURI_EVERYTHING_ENABLED = 'true'
     $env:MEGURI_EVERYTHING_ES_PATH = $EsPath
+    # Local development rollout for the bounded ReAct path. Application
+    # defaults remain disabled; other deployment entry points must opt in.
+    $env:MEGURI_EXECUTION_MODE_ENABLED = 'true'
+    $env:MEGURI_LIMITED_REACT_ENABLED = 'true'
+    $configuredScopes = @($env:MEGURI_CAPABILITY_SCOPES -split ',' |
+        ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    # This explicit local launcher is the administrative desktop boundary.
+    # Hosted deployments must grant these scopes through server policy instead.
+    $env:MEGURI_CAPABILITY_SCOPES = (@($configuredScopes + 'skill:read' + 'skill:manage') |
+        Select-Object -Unique) -join ','
     $env:JAVA_HOME = $JavaHome
     $env:Path      = "$JavaHome\bin;$MavenBin;$env:Path"
 

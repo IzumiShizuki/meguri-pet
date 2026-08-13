@@ -1,6 +1,7 @@
 package com.meguri.core.weather;
 
 import com.meguri.core.dto.LlmResponse;
+import com.meguri.core.runtime.SessionContextStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
@@ -32,6 +33,10 @@ public final class WeatherConversationService {
             Pattern.compile("(?<!\\d)(\\d{4})-(\\d{1,2})-(\\d{1,2})(?!\\d)");
     private static final Pattern CHINESE_DATE =
             Pattern.compile("(?<!\\d)(\\d{1,2})月(\\d{1,2})日?");
+    private static final Pattern RELATIVE_DATE = Pattern.compile("大后天|后天|明天|今天");
+    private static final Pattern NARROW_FOLLOW_UP = Pattern.compile(
+            "^(?:我问的是|我是说|不是|那|所以)?(?:大后天|后天|明天|今天|那天)?"
+                    + "(?:呢|来着|怎么样|会下雨吗|要带伞吗|冷吗|热吗)[？?。！!]*$");
 
     private final WeatherService weather;
 
@@ -59,12 +64,58 @@ public final class WeatherConversationService {
     }
 
     public Mono<TurnWeatherContext> contextFor(String message) {
-        Intent intent = classify(message);
+        return contextFor(resolveTurn(message, List.of()));
+    }
+
+    public Mono<TurnWeatherContext> contextFor(TurnResolution resolution) {
+        Objects.requireNonNull(resolution, "resolution");
+        Intent intent = resolution.intent();
         if (intent == Intent.NONE || weather == null) return Mono.just(TurnWeatherContext.none());
-        LocalDate targetDate = weather.resolveForecastDate(message);
+        LocalDate targetDate = weather.resolveForecastDate(resolution.dateSource());
         return weather.forecast(targetDate, true)
                 .map(briefing -> TurnWeatherContext.available(intent, briefing))
                 .onErrorReturn(TurnWeatherContext.unavailable(intent));
+    }
+
+    /** Resolves only narrow follow-ups from the supplied active branch. */
+    public TurnResolution resolveTurn(
+            String message,
+            List<SessionContextStore.Message> activePath) {
+        String current = message == null ? "" : message.trim();
+        Intent direct = classify(current);
+        if (direct != Intent.NONE) return new TurnResolution(direct, current, false);
+        String compact = current.replaceAll("\\s+", "");
+        if (compact.length() > 40 || !NARROW_FOLLOW_UP.matcher(compact).matches()) {
+            return TurnResolution.none(current);
+        }
+        List<SessionContextStore.Message> history = activePath == null ? List.of() : activePath;
+        for (int index = history.size() - 1; index >= 0; index--) {
+            SessionContextStore.Message candidate = history.get(index);
+            if (!"user".equals(candidate.role())) continue;
+            if (index == history.size() - 1 && candidate.content().equals(current)) continue;
+            if (classify(candidate.content()) == Intent.WEATHER) {
+                String dateSource = hasExplicitDate(current) ? current : candidate.content();
+                return new TurnResolution(Intent.WEATHER, dateSource, true);
+            }
+        }
+        return TurnResolution.none(current);
+    }
+
+    private static boolean hasExplicitDate(String value) {
+        return RELATIVE_DATE.matcher(value).find()
+                || ISO_DATE.matcher(value).find()
+                || CHINESE_DATE.matcher(value).find();
+    }
+
+    public record TurnResolution(Intent intent, String dateSource, boolean inherited) {
+        public TurnResolution {
+            intent = Objects.requireNonNull(intent, "intent");
+            dateSource = dateSource == null ? "" : dateSource;
+        }
+
+        static TurnResolution none(String message) {
+            return new TurnResolution(Intent.NONE, message, false);
+        }
     }
 
     LocalDate resolveTargetDate(String message) {

@@ -42,7 +42,7 @@ public final class ExecutionBudgetPolicy {
                         32_768, 8_192, Duration.ofMinutes(3)),
                 TurnExecutionMode.AGENT,
                 new ExecutionBudgetLimits(
-                        8, 3, 2, 3, 0, 0, 3, 2,
+                        8, 6, 2, 4, 0, 0, 6, 2,
                         32_768, 16_384, Duration.ofMinutes(3))), clock);
     }
 

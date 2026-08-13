@@ -27,6 +27,8 @@ public final class ContextPrecompressionWorker implements AutoCloseable {
     private final int batchSize;
     private final int maxAttempts;
     private final int maximumSummaryCharacters;
+    private final ContextRefactoringStrategy strategy;
+    private final boolean structuredCompressionEnabled;
     private final String workerId;
     private final ScheduledExecutorService heartbeats;
 
@@ -39,6 +41,22 @@ public final class ContextPrecompressionWorker implements AutoCloseable {
             int batchSize,
             int maxAttempts,
             int maximumSummaryCharacters) {
+        this(sessions, persistence, clock, lease, retryBackoff, batchSize,
+                maxAttempts, maximumSummaryCharacters,
+                new DeterministicContextRefactoringStrategy(maximumSummaryCharacters), false);
+    }
+
+    public ContextPrecompressionWorker(
+            SessionContextStore sessions,
+            ContextRuntimePersistence persistence,
+            Clock clock,
+            Duration lease,
+            Duration retryBackoff,
+            int batchSize,
+            int maxAttempts,
+            int maximumSummaryCharacters,
+            ContextRefactoringStrategy strategy,
+            boolean structuredCompressionEnabled) {
         this.sessions = Objects.requireNonNull(sessions, "sessions");
         this.persistence = Objects.requireNonNull(persistence, "persistence");
         this.clock = Objects.requireNonNull(clock, "clock");
@@ -48,6 +66,8 @@ public final class ContextPrecompressionWorker implements AutoCloseable {
         this.maxAttempts = positive(maxAttempts, "maxAttempts");
         this.maximumSummaryCharacters = positive(
                 maximumSummaryCharacters, "maximumSummaryCharacters");
+        this.strategy = Objects.requireNonNull(strategy, "strategy");
+        this.structuredCompressionEnabled = structuredCompressionEnabled;
         this.workerId = "context-precompression-" + UUID.randomUUID();
         this.heartbeats = Executors.newSingleThreadScheduledExecutor(task -> {
             Thread thread = new Thread(task, "context-precompression-heartbeat-" + workerId);
@@ -114,8 +134,8 @@ public final class ContextPrecompressionWorker implements AutoCloseable {
         if (graph.revision() < job.graphRevision()) {
             throw new IllegalStateException("context graph has not reached the queued revision");
         }
-        String modelRevision = "context-precompression-v1:"
-                + job.modelId() + ":" + job.jobId();
+        String modelRevision = "context-precompression-v2:"
+                + job.modelId() + ":" + job.strategyRevision() + ":" + job.jobId();
         var existing = graph.summaries().stream()
                 .filter(summary -> modelRevision.equals(summary.modelRevision()))
                 .findFirst();
@@ -134,11 +154,20 @@ public final class ContextPrecompressionWorker implements AutoCloseable {
             if (node == null) throw new PermanentFailure("precompression source is missing");
             messages.add(node);
         }
-        String content = extractiveSummary(messages, maximumSummaryCharacters);
+        String content;
+        StructuredContextSummary structured = null;
+        if (structuredCompressionEnabled) {
+            ContextRefactoringStrategy.Output output = strategy.refactor(
+                    new ContextRefactoringStrategy.Input(messages, job.modelId()));
+            content = output.compactContent();
+            structured = output.structured();
+        } else {
+            content = extractiveSummary(messages, maximumSummaryCharacters);
+        }
         try {
             return sessions.addSummary(
                     job.userId(), job.clientId(), job.conversationId(), sourceIds,
-                    content, modelRevision).summaryId();
+                    content, modelRevision, structured).summaryId();
         } catch (IllegalArgumentException staleBranch) {
             throw new PermanentFailure("precompression branch is no longer active", staleBranch);
         }
