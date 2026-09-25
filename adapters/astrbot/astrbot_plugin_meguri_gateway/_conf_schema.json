@@ -156,5 +156,10 @@
     "description": "Remote-development operators using platform:bot_account:sender_id",
     "type": "list",
     "default": []
+  },
+  "passthrough_commands": {
+    "description": "命令放行清单：命中前缀的消息不交给 Meguri，而由其它插件/AstrBot 默认流程处理（例如 jrlp）。其它插件已注册的指令会按插件注册表自动放行，这里只需补充注册表看不到的别名。",
+    "type": "list",
+    "default": []
   }
 }

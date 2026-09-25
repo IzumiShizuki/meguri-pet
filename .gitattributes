@@ -12,3 +12,4 @@ configs/meguri_system_prompt.txt text eol=lf
 *.png binary
 *.ogg binary
 adapters/astrbot/astrbot_plugin_chuanhuatong/** -whitespace
+adapters/astrbot/astrbot_plugin_animewifex/** -whitespace

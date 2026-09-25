@@ -90,6 +90,27 @@ MEGURI_ASTRBOT_SHARED_TOKEN_FILE
 MEGURI_RELAY_TOKEN_FILE
 ```
 
+## Command ownership
+
+With `route_all_private_messages=true` (or `route_all_group_messages=true`) the
+gateway sees essentially every message, so it must yield messages that belong to
+another plugin instead of answering them. Two mechanisms decide that:
+
+- **Discovery**: command names and aliases are read from every other plugin's
+  registered `CommandFilter`/`CommandGroupFilter`, cached for 60 seconds. A
+  discovery failure leaves the configured list authoritative rather than routing
+  everything to Meguri.
+- **`passthrough_commands`**: an explicit release list, prefix-matched and
+  case-insensitive, for plugins that match commands as plain text instead of
+  registering a `CommandFilter`. `astrbot_plugin_animewifex` is such a plugin, so
+  `jrlp`, `jrlb`, and its Chinese commands belong in that list.
+
+Matching accepts the bare command and the command followed by arguments
+(`查老婆 @某人`). An explicit `/meguri ...` message is never released, even when the
+text after the prefix looks like another plugin's command. Released messages are
+not blocked from AstrBot's default LLM and are not stopped, so they behave exactly
+as if the gateway had not run.
+
 ## Chinese/Japanese learning replies
 
 `bilingual_zh_ja=true` makes the gateway request the Core reply profile
@@ -102,6 +123,23 @@ turn; the image renderer only validates, splits, and lays out complete pairs.
 【今天也辛苦了。】
 【今日もお疲れさま。】
 ```
+
+A pair may also arrive with both groups on one physical line
+(`【今天也辛苦了。】【今日もお疲れさま。】`); the renderer flattens the groups in
+reading order before pairing, so both layouts produce the same translation/original
+pairs. Pairing by group rather than by line is what keeps Chinese out of the
+Japanese font run — a mixed run would draw characters the Japanese font does not
+cover as blanks. Some Core direct replies (a weather answer, for example) arrive
+with no brackets at all as a bare Chinese line followed by a Japanese line; those
+are paired by script so the reply still renders as a learning card, while ordinary
+multi-line text is left alone. An oversized pair is paginated one pair per panel,
+and the panel's font size shrinks until the block fits the dialogue frame rather
+than being clipped.
+
+A Meguri turn is rendered from a decorator that runs before other plugins'
+decorators and then stops the event, so the reply cannot be polluted by, or
+replaced with, another plugin's decorated output; non-Meguri turns keep the
+original low-priority path.
 
 The line order carries the language meaning, so the rendered message never
 shows language-name labels. Other clients remain on the default reply format. Memory candidate summaries

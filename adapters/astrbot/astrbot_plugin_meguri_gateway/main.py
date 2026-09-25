@@ -120,6 +120,11 @@ class MeguriGatewayPlugin(Star):
                 for value in (config.get("allowed_senders", []) or [])
                 if str(value).strip()
             ),
+            passthrough_commands=tuple(
+                str(value).strip().casefold()
+                for value in (config.get("passthrough_commands", []) or [])
+                if str(value).strip()
+            ),
         )
         self._daily_report_task: asyncio.Task | None = None
         self._daily_report_render_directory = Path(
@@ -157,10 +162,18 @@ class MeguriGatewayPlugin(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def on_message(self, event: AstrMessageEvent):
-        """Handle explicit /meguri commands and optionally private chat messages."""
+        """Handle explicit /meguri commands and optionally private chat messages.
+
+        Messages owned by another plugin's registered command are released here
+        before routing, so this plugin never calls ``should_call_llm(True)`` or
+        ``stop_event()`` on them: AstrBot then keeps its normal plugin dispatch
+        and the owning plugin answers instead of Meguri.
+        """
 
         message = platform_message_from_event(event)
         if message is None:
+            return
+        if self.route_policy.matches_passthrough(message.text):
             return
         explicit = is_meguri_command(message.text)
         if not self.route_policy.should_route(message):

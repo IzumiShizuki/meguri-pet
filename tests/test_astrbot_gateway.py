@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -1002,3 +1003,31 @@ class AstrBotBridgeTests(unittest.TestCase):
 
     def test_non_text_event_is_left_for_other_astrbot_handlers(self):
         self.assertIsNone(platform_message_from_event(FakeAstrBotEvent(text="  ")))
+
+    def test_plugin_commands_are_released_before_meguri_routes(self):
+        policy = MessageRoutePolicy(
+            route_all_private_messages=True,
+            passthrough_commands=("jrlp", "查老婆"),
+        )
+
+        # Another plugin owns these messages, including with trailing arguments.
+        self.assertTrue(policy.matches_passthrough("jrlp"))
+        self.assertTrue(policy.matches_passthrough("JRLP"))
+        self.assertTrue(policy.matches_passthrough("查老婆 @123456"))
+        # Prefix matching must not swallow a longer unrelated word.
+        self.assertFalse(policy.matches_passthrough("jrlpx"))
+        self.assertFalse(policy.matches_passthrough("今天天气怎么样"))
+        # An explicit /meguri invocation always stays with Meguri.
+        self.assertFalse(policy.matches_passthrough("/meguri chat jrlp"))
+
+    def test_discovery_failure_leaves_the_passthrough_list_authoritative(self):
+        """Missing AstrBot internals must not route every message to Meguri."""
+
+        with patch(
+            "adapters.astrbot.astrbot_plugin_meguri_gateway.bridge."
+            "registered_plugin_commands",
+            return_value=frozenset({"抽老婆"}),
+        ):
+            policy = MessageRoutePolicy(route_all_private_messages=True)
+            self.assertTrue(policy.matches_passthrough("抽老婆"))
+            self.assertFalse(policy.matches_passthrough("随便聊聊"))

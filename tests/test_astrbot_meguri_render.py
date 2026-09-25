@@ -108,6 +108,36 @@ class BilingualReplyTests(unittest.TestCase):
             "【今天也辛苦了。】\n【今日もお疲れさま。】",
         )
 
+    def test_flattens_multiple_bracket_groups_sharing_one_line(self):
+        """A line carrying `【中文】【日文】` must pair by language, not by line."""
+
+        packed = (
+            "【又是同一句呢……不过我不重复念数据了。】"
+            "【また同じ言葉だね……でも、同じデータは繰り返さないよ。】\n"
+            "【杭州钱塘区今天多云，20～29℃，降雨概率0%。】"
+            "【杭州銭塘区は今日曇り、20〜29℃、降水確率0％。】"
+        )
+
+        self.assertEqual(
+            parse_bilingual_pairs(packed),
+            [
+                ("又是同一句呢……不过我不重复念数据了。", "また同じ言葉だね……でも、同じデータは繰り返さないよ。"),
+                ("杭州钱塘区今天多云，20～29℃，降雨概率0%。", "杭州銭塘区は今日曇り、20〜29℃、降水確率0％。"),
+            ],
+        )
+
+    def test_packed_and_canonical_layouts_yield_identical_pairs(self):
+        pairs = [
+            ("第一句中文翻译。", "一つ目の日本語原文です。"),
+            ("第二句中文翻译。", "二つ目の日本語原文です。"),
+        ]
+
+        canonical = format_bilingual_pairs(pairs)
+        packed = "\n".join(f"【{cn}】【{jp}】" for cn, jp in pairs)
+
+        self.assertEqual(parse_bilingual_pairs(canonical), pairs)
+        self.assertEqual(parse_bilingual_pairs(packed), pairs)
+
     def test_rejects_incomplete_pairs_and_stray_prose_without_dropping_it(self):
         self.assertIsNone(parse_bilingual_pairs("【今天也辛苦了。】"))
         self.assertIsNone(
@@ -119,6 +149,36 @@ class BilingualReplyTests(unittest.TestCase):
             parse_bilingual_pairs(
                 "【第一句。】\n【第二句。】\n【二文目です。】"
             )
+        )
+
+    def test_pairs_unbracketed_translation_and_original_by_script(self):
+        """A Core direct reply may arrive as a bare Chinese line + Japanese line."""
+
+        source = "杭州钱塘区今天多云，降雨概率0%。\n杭州銭塘区は今日曇り、降水確率0％。"
+
+        self.assertEqual(
+            parse_bilingual_pairs(source),
+            [("杭州钱塘区今天多云，降雨概率0%。", "杭州銭塘区は今日曇り、降水確率0％。")],
+        )
+        self.assertEqual(
+            parse_bilingual_pairs("今天天气不错。\n明日は晴れです。\n出门走走。\n散歩でもしよう。"),
+            [("今天天气不错。", "明日は晴れです。"), ("出门走走。", "散歩でもしよう。")],
+        )
+
+    def test_rejects_unbracketed_text_that_is_not_bilingual(self):
+        self.assertIsNone(parse_bilingual_pairs("今天天气不错。\n出门走走吧。"))
+        self.assertIsNone(parse_bilingual_pairs("今日は晴れです。\n明日は雨です。"))
+        self.assertIsNone(parse_bilingual_pairs("只有一行普通文本。"))
+
+    def test_bracket_layout_wins_over_the_script_fallback(self):
+        """A malformed bracket line must not be re-read as unbracketed bilingual."""
+
+        self.assertIsNone(
+            parse_bilingual_pairs("【第一句。】\n【第二句。】\n【二文目です。】")
+        )
+        self.assertEqual(
+            parse_bilingual_pairs("【今天也辛苦了。】\n【今日もお疲れさま。】"),
+            [("今天也辛苦了。", "今日もお疲れさま。")],
         )
 
     def test_long_text_splits_only_between_complete_pairs(self):
@@ -148,13 +208,29 @@ class BilingualReplyTests(unittest.TestCase):
             [format_bilingual_pairs([pair]) for pair in pairs],
         )
 
-    def test_single_oversized_pair_remains_atomic(self):
-        source = (
-            "【这是一句明显超过测试阈值、但仍然不能与原文拆开的中文翻译。】\n"
-            "【これはテストの上限を超えても、翻訳と分離してはいけない原文です。】"
-        )
+    def test_single_oversized_pair_splits_into_bounded_continuation_pages(self):
+        translated = "这是一句明显超过单张对话卡片容量的中文翻译，需要按顺序拆到后续图片中继续展示。"
+        original = "これは一枚の会話カードに収まらない長い原文なので、後続の画像へ順番どおりに分割して表示する必要があります。"
+        source = format_bilingual_pairs([(translated, original)])
 
-        self.assertEqual(split_bilingual_text(source, max_chars=10), [source])
+        chunks = split_bilingual_text(source, max_chars=42)
+
+        self.assertIsNotNone(chunks)
+        self.assertGreater(len(chunks or []), 1)
+        self.assertEqual(len(set(chunks or [])), len(chunks or []))
+        self.assertTrue(
+            all(len(chunk.replace("\n", "")) <= 42 for chunk in chunks or [])
+        )
+        parsed_chunks = [parse_bilingual_pairs(chunk) for chunk in chunks or []]
+        self.assertTrue(all(pairs and len(pairs) == 1 for pairs in parsed_chunks))
+        self.assertEqual(
+            "".join(pairs[0][0] for pairs in parsed_chunks if pairs),
+            translated,
+        )
+        self.assertEqual(
+            "".join(pairs[0][1] for pairs in parsed_chunks if pairs),
+            original,
+        )
 
 
 class GatewayPayloadTests(unittest.TestCase):

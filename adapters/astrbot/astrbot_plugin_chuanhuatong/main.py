@@ -23,6 +23,7 @@ from astrbot.core.message.message_event_result import MessageChain
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from .meguri_render import (
+    BILINGUAL_FONT_SIZE_MIN,
     MeguriAssetResolver,
     format_bilingual_pairs,
     normalize_gateway_payload,
@@ -1979,6 +1980,13 @@ class ChuanHuaTongPlugin(Star):
                 padding = max(8, round(frame_width * 0.0125))
         text_area_w = max(10, box_width - padding * 2)
         if bilingual_pairs is not None:
+            chinese_font, japanese_font, bilingual_size = self._fit_bilingual_fonts(
+                bilingual_pairs,
+                bilingual_size,
+                layout,
+                text_area_w,
+                max(20, box_height - padding * 2),
+            )
             self._draw_bilingual_textbox(
                 canvas,
                 box_left=box_left,
@@ -1986,8 +1994,8 @@ class ChuanHuaTongPlugin(Star):
                 text_area_width=text_area_w,
                 padding=padding,
                 pairs=bilingual_pairs,
-                japanese_font=font,
-                chinese_font=self._load_meguri_chinese_font(bilingual_size, layout),
+                japanese_font=japanese_font,
+                chinese_font=chinese_font,
                 fill=self._hex_or_rgba(layout.get("text_color", "#FFFFFF")),
                 stroke_width=stroke_width,
                 stroke_fill=stroke_color,
@@ -2124,6 +2132,23 @@ class ChuanHuaTongPlugin(Star):
         except Exception:
             logger.debug("[传话筒] 自定义组件渲染失败", exc_info=True)
 
+    def _open_font(self, path: str, size: int) -> ImageFont.FreeTypeFont:
+        """Open a TrueType font, preferring a `.ttc` index that has the glyphs.
+
+        Some collections (e.g. ``msyh.ttc``) start with a face whose
+        Simplified-Chinese coverage is incomplete, which renders as empty boxes.
+        Trying the earlier indices keeps the body text readable instead of
+        silently dropping characters.
+        """
+
+        if Path(path).suffix.lower() == ".ttc":
+            for index in range(4):
+                try:
+                    return ImageFont.truetype(path, size=size, index=index)
+                except Exception:
+                    continue
+        return ImageFont.truetype(path, size=size)
+
     def _load_font(self, size: int, preferred: Optional[str] = None, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         font_path = str(self.cfg().get("font_path") or "").strip()
         candidates: list[str] = []
@@ -2150,7 +2175,7 @@ class ChuanHuaTongPlugin(Star):
             if not path:
                 continue
             try:
-                return ImageFont.truetype(path, size=size)
+                return self._open_font(path, size)
             except Exception:
                 continue
         return ImageFont.load_default()
@@ -2168,7 +2193,7 @@ class ChuanHuaTongPlugin(Star):
         resolved = self._resolve_font_path(preferred) if preferred else None
         if resolved:
             try:
-                font = ImageFont.truetype(resolved, size=int(size))
+                font = self._open_font(resolved, int(size))
                 weight_value = self.cfg().get("meguri_japanese_font_weight", 600)
                 try:
                     weight = max(100, min(900, int(weight_value)))
@@ -2203,10 +2228,84 @@ class ChuanHuaTongPlugin(Star):
         resolved = self._resolve_font_path(preferred) if preferred else None
         if resolved:
             try:
-                return ImageFont.truetype(resolved, size=int(size))
+                return self._open_font(resolved, int(size))
             except Exception:
                 logger.debug("[传话筒] 中文显示字体加载失败，回退到正文样式。", exc_info=True)
         return self._load_font(size, preferred=layout.get("body_font"))
+
+    def _measure_bilingual_height(
+        self,
+        pairs: list[tuple[str, str]],
+        chinese_font: ImageFont.ImageFont,
+        japanese_font: ImageFont.ImageFont,
+        text_area_width: int,
+    ) -> int:
+        """Return the total pixel height the given fonts need for these pairs."""
+
+        draw = ImageDraw.Draw(Image.new("RGBA", (max(10, int(text_area_width)), 10)))
+        pair_gap = max(8, int(getattr(japanese_font, "size", 24) * 0.22))
+        language_gap = max(4, int(getattr(japanese_font, "size", 24) * 0.12))
+        total = 0
+        for pair_index, (chinese, japanese) in enumerate(pairs):
+            for content, font in (
+                (f"【{chinese.strip()}】", chinese_font),
+                (f"【{japanese.strip()}】", japanese_font),
+            ):
+                wrapped = self._wrap_text(content, font, max(10, int(text_area_width)))
+                line_spacing = max(0, int(getattr(font, "size", 24) * 0.12))
+                bbox = draw.multiline_textbbox(
+                    (0, 0), wrapped, font=font, spacing=line_spacing
+                )
+                total += (
+                    max(getattr(font, "size", 24), bbox[3] - bbox[1]) + language_gap
+                )
+            if pair_index < len(pairs) - 1:
+                total += pair_gap
+        return total
+
+    def _fit_bilingual_fonts(
+        self,
+        pairs: list[tuple[str, str]],
+        requested_size: int,
+        layout: Dict[str, Any],
+        text_area_width: int,
+        available_height: int,
+    ) -> tuple[
+        ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        ImageFont.FreeTypeFont | ImageFont.ImageFont,
+        int,
+    ]:
+        """Shrink the bilingual fonts until the pair block fits the text box.
+
+        The renderer previously drew at a fixed size, so a long pair silently ran
+        past the bottom of the dialogue frame and the trailing lines were lost.
+        The smallest allowed size is kept even when the block still overflows, so
+        behaviour never becomes worse than a readable single page.
+        """
+
+        size = int(requested_size)
+        available = max(1, int(available_height))
+
+        def build(candidate: int):
+            return (
+                self._load_meguri_chinese_font(candidate, layout),
+                self._load_bilingual_font(candidate, layout),
+            )
+
+        chinese_font, japanese_font = build(size)
+        while size > BILINGUAL_FONT_SIZE_MIN:
+            measured = self._measure_bilingual_height(
+                pairs, chinese_font, japanese_font, text_area_width
+            )
+            if measured <= available:
+                break
+            # Scale proportionally, then step down at least one point so the loop
+            # always makes progress on fonts whose metrics are non-linear.
+            ratio = available / measured
+            next_size = min(size - 1, max(BILINGUAL_FONT_SIZE_MIN, int(size * ratio)))
+            size = max(BILINGUAL_FONT_SIZE_MIN, next_size)
+            chinese_font, japanese_font = build(size)
+        return chinese_font, japanese_font, size
 
     def _wrap_text(self, text: str, font: ImageFont.ImageFont, max_width: int) -> str:
         if not text:
@@ -2398,11 +2497,16 @@ class ChuanHuaTongPlugin(Star):
         # Split text with emotion assignment
         chunks_with_emotion = self._split_text_with_emotion(text, char_limit, emotion)
         
-        if len(chunks_with_emotion) <= 1:
-            # Single chunk, render normally
+        if not chunks_with_emotion:
+            return False
+
+        if len(chunks_with_emotion) == 1:
+            # Render the normalized slice, not the unsplit input, so this path
+            # follows the same page-local content contract as continuation pages.
+            chunk_text, chunk_emotion = chunks_with_emotion[0]
             image_path = await self._render_with_fallback(
-                text,
-                emotion,
+                chunk_text,
+                chunk_emotion,
                 session_id,
                 meguri_payload,
             )
@@ -2415,9 +2519,9 @@ class ChuanHuaTongPlugin(Star):
             return False
 
         if is_bilingual:
-            # Send immediately in pair order instead of collecting successes
-            # and appending failed fallbacks later. This keeps the lesson order
-            # stable even if one individual panel cannot be rendered.
+            # Render and send the current slice before advancing. A fresh chain
+            # and the renderer's unique output path prevent a later page from
+            # aliasing the first page; inline text fallback preserves position.
             delivered = 0
             for idx, (chunk_text, chunk_emotion) in enumerate(chunks_with_emotion, 1):
                 image_path = await self._render_with_fallback(
@@ -3090,8 +3194,30 @@ class ChuanHuaTongPlugin(Star):
         if emotion_tag:
             event.set_extra("extracted_emotion_tag", emotion_tag)
 
-    @filter.on_decorating_result(priority=-10)  # 降低优先级，确保在其他插件之后处理
-    async def on_decorating_result(self, event: AstrMessageEvent):
+    @filter.on_decorating_result(priority=1_000_000)  # Meguri 轮次抢先渲染并隔离
+    async def _meguri_isolate_and_render(self, event: AstrMessageEvent):
+        """Meguri 轮次：抢在所有装饰器（含 meme_manager@99999）之前渲染。
+
+        渲染完成后调用 stop_event()，AstrBot 装饰阶段会在 is_stopped() 时提前
+        return，从而跳过其余所有装饰器，把 Meguri 的输出（Gal 图或双语文本）
+        与其它插件隔离，避免被塞入表情包/额外组件而导致渲染被跳过或输出被污染。
+        非 Meguri 轮次直接返回，保持原插件行为不变。
+        """
+        if not isinstance(event.get_extra("meguri_render_payload"), dict):
+            return  # 非 Meguri 轮次：交给下方低优先级 handler，其它插件行为不变
+        try:
+            await self._decorate_and_render(event)
+        finally:
+            # 即便渲染回退到纯文本，也要隔离，防止其它装饰器污染 Meguri 输出。
+            event.stop_event()
+
+    @filter.on_decorating_result(priority=-10)  # 非 Meguri：仍在其他插件之后处理
+    async def _legacy_decorate_last(self, event: AstrMessageEvent):
+        if isinstance(event.get_extra("meguri_render_payload"), dict):
+            return  # Meguri 轮次已在高优先级 handler 处理，避免重复渲染
+        await self._decorate_and_render(event)
+
+    async def _decorate_and_render(self, event: AstrMessageEvent):
         """在装饰结果时使用已提取的表情标签，不再重复清洗消息链"""
         session_id = event.unified_msg_origin
         logger.debug("[传话筒] on_decorating_result 触发，会话: %s", session_id)

@@ -97,10 +97,55 @@ _FENCED_JSON_RE = re.compile(r"\A\s*```json\s*(\{.*\})\s*```\s*\Z", re.IGNORECAS
 _SPRITE_RE = re.compile(r"\Ace(0[1-6])(\d{3})([lm])\.png\Z", re.IGNORECASE)
 _EXPRESSION_CODE_RE = re.compile(r"\A\d{3}\Z")
 _BACKGROUND_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp"})
-_BILINGUAL_BRACKET_LINE_RE = re.compile(r"\A\s*【\s*(.*?)\s*】\s*\Z")
+# A single physical line may carry several bracket groups, e.g. the server
+# sometimes emits `【中文】【日文】` on one line instead of the canonical
+# translation-line + original-line form. Groups are flattened before pairing.
+_BILINGUAL_BRACKET_GROUP_RE = re.compile(r"【\s*(.*?)\s*】")
+# Some Core replies (for example a direct weather response) arrive without
+# full-width brackets at all, as a bare Chinese line followed by a Japanese line.
+# Those are paired by script, so an unbracketed bilingual reply is still rendered
+# as a learning card instead of falling back to plain text.
+_KANA_RE = re.compile(r"[\u3040-\u309f\u30a0-\u30ff]")
+_HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_BLANK_LINE_SPLIT_RE = re.compile(r"\n\s*\n")
+_INLINE_NEWLINE_RE = re.compile(r"[ \t]*\n[ \t]*")
 BILINGUAL_FONT_SIZE_DEFAULT = 42
 BILINGUAL_FONT_SIZE_MIN = 18
 BILINGUAL_FONT_SIZE_MAX = 64
+_BILINGUAL_PAGE_WRAPPER_CHARS = 4
+
+
+def _is_japanese_text(value: str) -> bool:
+    """Japanese original: contains hiragana or katakana."""
+
+    return bool(_KANA_RE.search(value))
+
+
+def _is_chinese_text(value: str) -> bool:
+    """Chinese translation: contains han characters and no kana."""
+
+    return bool(_HAN_RE.search(value)) and not _KANA_RE.search(value)
+
+
+def _pair_text_lines(values: Sequence[str]) -> list[tuple[str, str]] | None:
+    """Pair a (translation, original, translation, original, ...) sequence.
+
+    Returns ``None`` unless every pair is (Chinese without kana, text with kana),
+    so ordinary multi-line text is never mistaken for a bilingual reply.
+    """
+
+    if len(values) < 2 or len(values) % 2:
+        return None
+    for index in range(0, len(values), 2):
+        if not _is_chinese_text(values[index]) or not _is_japanese_text(values[index + 1]):
+            return None
+    return [
+        (
+            _INLINE_NEWLINE_RE.sub(" ", values[index]).strip(),
+            _INLINE_NEWLINE_RE.sub(" ", values[index + 1]).strip(),
+        )
+        for index in range(0, len(values), 2)
+    ]
 
 
 def normalize_bilingual_font_size(value: Any) -> int:
@@ -121,29 +166,54 @@ def parse_bilingual_pairs(text: str) -> list[tuple[str, str]] | None:
 
     The canonical form is ``【Chinese translation】`` followed by ``【Japanese
     original】``. The line order, rather than a visible language label, carries
-    the meaning. Every non-empty line must be one complete full-width bracket
-    line and belong to a pair; otherwise the caller preserves the original
+    the meaning. Every non-empty line must consist of complete full-width bracket
+    groups and belong to a pair; otherwise the caller preserves the original
     text unchanged.
+
+    A physical line may hold one group (the canonical layout) or several groups
+    (``【中文】【日文】``). Groups are flattened in reading order before pairing,
+    so the two layouts produce identical pairs instead of a cross-language pair
+    that mixes Chinese and Japanese inside one string.
+
+    A reply with no brackets at all is still accepted when every line pairs as
+    (Chinese without kana, text with kana); anything else returns ``None``.
     """
 
     if not isinstance(text, str) or not text.strip():
         return None
 
-    lines: list[str] = []
+    groups: list[str] = []
+    bracketed = True
     for raw_line in text.splitlines():
         if not raw_line.strip():
             continue
-        matched = _BILINGUAL_BRACKET_LINE_RE.fullmatch(raw_line)
-        if matched is None:
-            return None
-        content = matched.group(1).strip()
-        if not content:
-            return None
-        lines.append(content)
+        # The line must be nothing but full-width bracket groups. One group is the
+        # canonical layout; several groups on one physical line (`【中文】【日文】`)
+        # are flattened in reading order so both layouts yield the same pairs.
+        matches = list(_BILINGUAL_BRACKET_GROUP_RE.finditer(raw_line))
+        if not matches or _BILINGUAL_BRACKET_GROUP_RE.sub("", raw_line).strip():
+            bracketed = False
+            break
+        for match in matches:
+            content = match.group(1).strip()
+            if not content:
+                return None
+            groups.append(content)
 
-    if not lines or len(lines) % 2:
-        return None
-    return list(zip(lines[::2], lines[1::2]))
+    if bracketed and groups and not len(groups) % 2:
+        return list(zip(groups[::2], groups[1::2]))
+
+    # Unbracketed form: pair by blank-line block first, then by non-empty line,
+    # and only when every pair is (Chinese, Japanese). Ordinary multi-line text
+    # fails both attempts and is preserved unchanged by the caller.
+    blocks = [
+        block.strip() for block in _BLANK_LINE_SPLIT_RE.split(text) if block.strip()
+    ]
+    pairs = _pair_text_lines(blocks)
+    if pairs is None:
+        plain_lines = [line.strip() for line in text.splitlines() if line.strip()]
+        pairs = _pair_text_lines(plain_lines)
+    return pairs
 
 
 def format_bilingual_pairs(pairs: Sequence[tuple[str, str]]) -> str:
@@ -155,19 +225,73 @@ def format_bilingual_pairs(pairs: Sequence[tuple[str, str]]) -> str:
     )
 
 
-def split_bilingual_text(text: str, max_chars: int) -> list[str] | None:
-    """Return one complete bilingual pair per renderer panel.
+def _balanced_text_slices(text: str, slice_count: int) -> list[str]:
+    """Partition text into non-empty contiguous slices of near-equal length."""
 
-    ``max_chars`` remains part of the call contract used by the legacy splitter,
-    but a bilingual learning panel deliberately ignores it: one image contains
-    exactly one translation/original pair. A long pair is still kept intact so
-    Pillow can wrap within each labelled line without separating the languages.
+    slice_count = max(1, min(slice_count, len(text)))
+    base_size, larger_slice_count = divmod(len(text), slice_count)
+    slices: list[str] = []
+    offset = 0
+    for index in range(slice_count):
+        size = base_size + (1 if index < larger_slice_count else 0)
+        slices.append(text[offset : offset + size])
+        offset += size
+    return slices
+
+
+def _bilingual_pair_page_count(chinese: str, japanese: str, max_chars: int) -> int:
+    """Return a feasible page count whose formatted slices fit the limit."""
+
+    content_limit = max_chars - _BILINGUAL_PAGE_WRAPPER_CHARS
+    max_page_count = min(len(chinese), len(japanese))
+    if content_limit < 2 or max_page_count < 2:
+        return 1
+
+    total_length = len(chinese) + len(japanese)
+    page_count = max(2, (total_length + content_limit - 1) // content_limit)
+    page_count = min(page_count, max_page_count)
+    while page_count < max_page_count:
+        chinese_size = (len(chinese) + page_count - 1) // page_count
+        japanese_size = (len(japanese) + page_count - 1) // page_count
+        if chinese_size + japanese_size <= content_limit:
+            break
+        page_count += 1
+    return page_count
+
+
+def split_bilingual_text(text: str, max_chars: int) -> list[str] | None:
+    """Return ordered, bounded bilingual renderer panels.
+
+    Short translation/original pairs retain the one-pair-per-panel behavior.
+    An oversized pair is partitioned into the same number of contiguous slices
+    for both languages, so every page stays parseable and later pages continue
+    instead of repeating earlier content.
     """
 
     pairs = parse_bilingual_pairs(text)
     if pairs is None:
         return None
-    return [format_bilingual_pairs([pair]) for pair in pairs]
+
+    panels: list[str] = []
+    for chinese, japanese in pairs:
+        formatted_pair = format_bilingual_pairs([(chinese, japanese)])
+        visible_length = len(formatted_pair.replace("\n", ""))
+        if max_chars <= 0 or visible_length <= max_chars:
+            panels.append(formatted_pair)
+            continue
+
+        page_count = _bilingual_pair_page_count(chinese, japanese, max_chars)
+        if page_count <= 1:
+            panels.append(formatted_pair)
+            continue
+
+        chinese_slices = _balanced_text_slices(chinese, page_count)
+        japanese_slices = _balanced_text_slices(japanese, page_count)
+        panels.extend(
+            format_bilingual_pairs([(chinese_slice, japanese_slice)])
+            for chinese_slice, japanese_slice in zip(chinese_slices, japanese_slices)
+        )
+    return panels
 
 
 def _normalized_enum(value: Any, allowed: frozenset[str], fallback: str) -> str:
