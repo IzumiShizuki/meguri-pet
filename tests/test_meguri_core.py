@@ -50,6 +50,14 @@ class MeguriCoreTests(unittest.TestCase):
         self.assertIsNotNone(body["expression"]["sprite_file"])
         self.assertGreater(self.client.get("/health").json()["rag_chunks"], 0)
 
+    def test_liveness_and_local_readiness_are_distinct(self):
+        live = self.client.get("/health/live")
+        self.assertEqual(live.status_code, 200)
+        self.assertEqual(live.json()["status"], "alive")
+        ready = self.client.get("/health/ready")
+        self.assertEqual(ready.status_code, 200)
+        self.assertEqual(ready.json()["checks"], {"local_unmanaged": "passed"})
+
     def test_local_website_cors_is_allowlisted(self):
         response = self.client.options(
             "/v1/turns",
@@ -79,6 +87,11 @@ class MeguriCoreTests(unittest.TestCase):
         self.assertEqual(events[0].type, "turn.started")
         self.assertEqual(events[-1].type, "turn.completed")
         self.assertEqual([e.sequence for e in events], list(range(1, len(events) + 1)))
+        self.assertTrue(all(e.protocol_version == "1.0" for e in events))
+        self.assertEqual(len({e.event_id for e in events}), len(events))
+        self.assertTrue(events[0].required)
+        self.assertTrue(events[-1].required)
+        self.assertTrue(all(not e.required for e in events if e.type == "text.delta"))
         stream = self.client.get("/v1/sessions/s-test/events")
         self.assertEqual(stream.status_code, 200)
         self.assertIn("text.delta", stream.text)

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -116,38 +115,8 @@ class ExistingMemoryOSAdapter:
         return hits[: input.limit]
 
     async def upsert(self, input: MemoryUpsertInput) -> MemoryRecord:
-        scope_id = self.scope_id_for_user(input.user_id)
-        timestamp = datetime.now(timezone.utc).isoformat()
-        data = await self._request(
-            "POST",
-            self._scope_path(scope_id, "records"),
-            json={
-                "user_input": f"Meguri memory update ({input.memory_type})",
-                "assistant_response": input.canonical_text,
-                "timestamp": timestamp,
-                "meta_data": {
-                    "source": "meguri-core",
-                    "source_client": input.source_client,
-                    "source_session": input.source_session,
-                    "confidence": input.confidence,
-                    "sensitivity": input.sensitivity,
-                    "importance": input.importance,
-                    "memory_type": input.memory_type,
-                },
-            },
-        )
-        returned_timestamp = str(data.get("timestamp") or timestamp)
-        return MemoryRecord(
-            memory_id=self._synthetic_id(scope_id, input.canonical_text, returned_timestamp),
-            user_id=input.user_id,
-            memory_type=input.memory_type,
-            canonical_text=input.canonical_text,
-            source_client=input.source_client,
-            source_session=input.source_session,
-            confidence=input.confidence,
-            sensitivity=input.sensitivity,
-            importance=input.importance,
-            expires_at=input.expires_at,
+        raise MemoryOSUnsupportedOperation(
+            "existing MemoryOS is a read-only import/shadow source; writes are forbidden"
         )
 
     async def supersede(self, old_id: str, next: MemoryUpsertInput) -> MemoryRecord:

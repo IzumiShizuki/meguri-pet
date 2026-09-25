@@ -1,0 +1,22 @@
+{
+  "approval_schema_version": 1,
+  "environment": "production",
+  "release_id": "meguri-production-blocked",
+  "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "change_ticket": "NOT-APPROVED",
+  "approved_at": "2026-07-14T00:00:00Z",
+  "expires_at": "2026-07-14T00:00:01Z",
+  "approvers": [
+    {"role": "release-owner", "identity": "approval-required"},
+    {"role": "data-owner", "identity": "approval-required"},
+    {"role": "security-owner", "identity": "approval-required"}
+  ],
+  "checks": {
+    "staging_acceptance": false,
+    "restore_rehearsal": false,
+    "rollback_fault_injection": false,
+    "exposure_review": false,
+    "production_backup": false,
+    "route_change_approved": false
+  }
+}

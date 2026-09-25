@@ -1,0 +1,68 @@
+{
+  "normal": [
+    { "sequence": 1, "event_id": "normal-1", "type": "turn.started", "replay_policy": "STATE" },
+    { "sequence": 2, "event_id": "normal-2", "type": "text.delta", "replay_policy": "STATE" },
+    { "sequence": 3, "event_id": "normal-3", "type": "turn.completed", "replay_policy": "STATE" }
+  ],
+  "disconnect_resume_after_sequence": 2,
+  "duplicate_event_id": "normal-2",
+  "identity": {
+    "shared_meguri_user_id": "user-shared-20-7",
+    "isolated_session_ids": ["session-airi", "session-astrbot", "session-web"]
+  },
+  "idempotency": {
+    "logical_request_fingerprint": "fixture-request-20-7",
+    "same_request_retry_reuses_key": true,
+    "confirmed_request_releases_key": true
+  },
+  "terminal": ["turn.completed", "turn.cancelled", "turn.failed"],
+  "cancel": ["cancel_requested", "cancelled"],
+  "stable_errors": [
+    { "code": "UNAUTHORIZED", "retryable": false },
+    { "code": "CONFLICT", "retryable": false },
+    { "code": "TURN_TERMINAL", "retryable": false },
+    { "code": "CURSOR_EXPIRED", "retryable": true },
+    { "code": "UNSUPPORTED_PROTOCOL_MAJOR", "retryable": false }
+  ],
+  "unknown_optional_event": { "required": false, "type": "future.presentation.hint" },
+  "major_rejected": "2.0",
+  "minor_accepted": "1.9",
+  "cursor_expired": { "code": "CURSOR_EXPIRED", "snapshot_sequence": 40 },
+  "once_replay": {
+    "event_id": "tts-side-effect-1",
+    "type": "tts.requested",
+    "replay_policy": "ONCE",
+    "expected_dispatch_count": 1
+  },
+  "cross_client_memory": {
+    "formal_memory": {
+      "key": "favorite_drink",
+      "value": "jasmine tea",
+      "writer": "airi",
+      "readers": ["astrbot", "website"]
+    },
+    "session_messages": {
+      "airi": "airi-private-raw",
+      "astrbot": "astrbot-private-raw",
+      "website": "website-private-raw"
+    },
+    "expected_shared_memory_readers": 3,
+    "expected_raw_messages_per_session": 1
+  },
+  "required_event_catalog": [
+    { "type": "tool.proposed", "replay_policy": "ALWAYS" },
+    { "type": "approval.required", "replay_policy": "STATE" },
+    { "type": "approval.resolved", "replay_policy": "ALWAYS" },
+    { "type": "tool.started", "replay_policy": "ALWAYS" },
+    { "type": "tool.completed", "replay_policy": "ALWAYS" },
+    { "type": "tool.failed", "replay_policy": "ALWAYS" },
+    { "type": "skill.started", "replay_policy": "STATE" },
+    { "type": "skill.waiting", "replay_policy": "STATE" },
+    { "type": "skill.completed", "replay_policy": "STATE" },
+    { "type": "skill.failed", "replay_policy": "STATE" },
+    { "type": "agent.started", "replay_policy": "STATE" },
+    { "type": "agent.waiting", "replay_policy": "STATE" },
+    { "type": "agent.completed", "replay_policy": "STATE" },
+    { "type": "agent.failed", "replay_policy": "STATE" }
+  ]
+}

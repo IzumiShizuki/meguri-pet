@@ -1,3 +1,4 @@
+import type { SessionSnapshot } from './dto.ts'
 import { isTerminalEvent, type ExpressionIntensity, type TurnEventEnvelope } from './turn-events.ts'
 
 export interface ExpressionCue {
@@ -15,6 +16,13 @@ export interface TurnViewState {
   error?: string
 }
 
+export interface SessionEventCheckpoint {
+  session_id?: string
+  last_sequence: number
+  processed_event_ids: string[]
+  processed_once_event_ids?: string[]
+}
+
 export class SequenceGapError extends Error {
   readonly expected: number
   readonly received: number
@@ -28,11 +36,31 @@ export class SequenceGapError extends Error {
 
 export class SessionTurnReducer {
   readonly turns = new Map<string, TurnViewState>()
+  private readonly processedEventIds = new Set<string>()
+  private readonly processedOnceEventIds = new Set<string>()
   lastSequence: number
   sessionId?: string
 
-  constructor(startSequence = 0) {
-    this.lastSequence = startSequence
+  constructor(start: number | SessionEventCheckpoint = 0) {
+    if (typeof start === 'number') {
+      validateSequence(start, 'start sequence')
+      this.lastSequence = start
+      return
+    }
+    validateSequence(start.last_sequence, 'checkpoint sequence')
+    if (start.session_id !== undefined && !start.session_id.trim())
+      throw new TypeError('checkpoint session_id must not be empty')
+    if (!Array.isArray(start.processed_event_ids))
+      throw new TypeError('checkpoint processed_event_ids must be an array')
+    for (const eventId of start.processed_event_ids) {
+      if (typeof eventId !== 'string' || eventId.length === 0)
+        throw new TypeError('checkpoint event IDs must be non-empty strings')
+      this.processedEventIds.add(eventId)
+    }
+    for (const eventId of start.processed_once_event_ids ?? [])
+      this.processedOnceEventIds.add(eventId)
+    this.lastSequence = start.last_sequence
+    this.sessionId = start.session_id
   }
 
   apply(event: TurnEventEnvelope): boolean {
@@ -45,6 +73,14 @@ export class SessionTurnReducer {
     if (event.sequence !== expected)
       throw new SequenceGapError(expected, event.sequence)
     this.lastSequence = event.sequence
+    if (this.processedEventIds.has(event.event_id))
+      return false
+    this.processedEventIds.add(event.event_id)
+    if (event.replay_policy === 'ONCE') {
+      if (this.processedOnceEventIds.has(event.event_id))
+        return false
+      this.processedOnceEventIds.add(event.event_id)
+    }
     const state = this.turns.get(event.turn_id) ?? {
       turnId: event.turn_id,
       text: '',
@@ -70,6 +106,42 @@ export class SessionTurnReducer {
     return true
   }
 
+  checkpoint(): SessionEventCheckpoint {
+    const checkpoint: SessionEventCheckpoint = {
+      session_id: this.sessionId,
+      last_sequence: this.lastSequence,
+      processed_event_ids: [...this.processedEventIds],
+    }
+    if (this.processedOnceEventIds.size > 0)
+      checkpoint.processed_once_event_ids = [...this.processedOnceEventIds]
+    return checkpoint
+  }
+
+  restoreSnapshot(snapshot: SessionSnapshot): void {
+    if (this.sessionId && snapshot.session_id !== this.sessionId)
+      throw new Error('snapshot belongs to another session')
+    this.sessionId = snapshot.session_id
+    this.lastSequence = snapshot.sequence
+    this.turns.clear()
+    this.processedEventIds.clear()
+    this.processedOnceEventIds.clear()
+    for (const turn of snapshot.turns) {
+      this.turns.set(turn.turn_id, {
+        turnId: turn.turn_id,
+        text: turn.text,
+        status: turn.status,
+        expression: turn.expression as ExpressionCue | undefined,
+        error: turn.error,
+      })
+    }
+    for (const eventId of snapshot.processed_event_ids ?? [])
+      this.processedEventIds.add(eventId)
+    for (const eventId of snapshot.processed_once_event_ids ?? []) {
+      this.processedOnceEventIds.add(eventId)
+      this.processedEventIds.add(eventId)
+    }
+  }
+
   isTerminal(turnId: string): boolean {
     const status = this.turns.get(turnId)?.status
     return status === 'completed' || status === 'cancelled' || status === 'failed'
@@ -78,4 +150,9 @@ export class SessionTurnReducer {
   terminalEventSeen(event: TurnEventEnvelope): boolean {
     return isTerminalEvent(event.type)
   }
+}
+
+function validateSequence(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0)
+    throw new TypeError(`${label} must be a non-negative safe integer`)
 }

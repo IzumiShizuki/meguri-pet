@@ -110,23 +110,20 @@ class ExistingMemoryOSAdapterTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(path.endswith("/retrieve"))
         self.assertEqual(body["journal_limit"], 0)
 
-    async def test_upsert_uses_record_append_with_structured_metadata(self):
-        record = await self.adapter.upsert(
-            MemoryUpsertInput(
-                user_id="user-a",
-                memory_type="ongoing_project",
-                canonical_text="Meguri framework uses FastAPI",
-                source_client="website",
-                source_session="session-web",
-                confidence=0.9,
-                importance=4,
+    async def test_upsert_is_read_only_and_never_calls_record_append(self):
+        with self.assertRaises(MemoryOSUnsupportedOperation):
+            await self.adapter.upsert(
+                MemoryUpsertInput(
+                    user_id="user-a",
+                    memory_type="ongoing_project",
+                    canonical_text="Meguri framework uses FastAPI",
+                    source_client="website",
+                    source_session="session-web",
+                    confidence=0.9,
+                    importance=4,
+                )
             )
-        )
-        self.assertTrue(record.memory_id.startswith("memoryos-"))
-        _, path, body, _ = self.fixture.requests[0]
-        self.assertTrue(path.endswith("/records"))
-        self.assertEqual(body["assistant_response"], "Meguri framework uses FastAPI")
-        self.assertEqual(body["meta_data"]["memory_type"], "ongoing_project")
+        self.assertEqual(self.fixture.requests, [])
 
     async def test_journal_maps_to_exportable_records(self):
         records = await self.adapter.list_records("user-a")

@@ -1,0 +1,26 @@
+{
+  "acceptance_schema_version": 1,
+  "environment": "staging",
+  "status": "blocked",
+  "release_id": "meguri-staging-20260715-r002",
+  "release_manifest_sha256": "da63ef6e536cdc0c6edaab7ccc15b98aab6a3088ad9ec542e77b00e236eb5cd0",
+  "restore_metadata_sha256": "8d23141c0cc7699b73ad7b6aa6abb40a6ae167c489f4d593d4a12bc8a120bc42",
+  "server_inventory_before_sha256": "f0391c00f39e138997cc19956a343a00f55f6ab719a18306af689f2cc2acfe7d",
+  "server_inventory_after_sha256": "0dbdbbbbd610d19cb7f85a0fc7a863e724eb2a7e2985381b334aff443d55af57",
+  "checks": {
+    "compose_project_identity": true,
+    "network_isolation": true,
+    "data_isolation": true,
+    "account_isolation": true,
+    "named_volume_isolation": true,
+    "empty_database_migration": true,
+    "failed_migration_blocks_core": true,
+    "backup_created": true,
+    "restore_rehearsal": true,
+    "image_fault_rollback": true,
+    "readiness_fault_rollback": true,
+    "protected_services_unchanged": true
+  },
+  "reason": "All environment, migration, recovery, rollback, isolation and protected-service checks passed on the isolated Staging runtime. Full application acceptance remains blocked because no usable DeepSeek API credential is provisioned and real Turn/SSE/RAG/Memory smoke has not passed.",
+  "generated_at": "2026-07-15T01:58:14+08:00"
+}

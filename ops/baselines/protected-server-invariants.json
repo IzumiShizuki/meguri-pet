@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-14T21:13:00+08:00",
+  "docker_engine_version": "29.2.1",
+  "required_running_containers": [
+    "astrbot",
+    "clash-core",
+    "cli-proxy-api-plus",
+    "infra-kafka",
+    "infra-mysql",
+    "infra-nacos",
+    "infra-postgres",
+    "infra-redis",
+    "mcprouter-api",
+    "mcprouter-proxy",
+    "new-api",
+    "openresty",
+    "shizuki-memoryos",
+    "shizuki-site-backend",
+    "shizuki-site-bill-sync-agent",
+    "shizuki-site-document-converter",
+    "shizuki-site-frontend",
+    "shizuki-site-meting-api",
+    "shizuki-site-music-ncm-api",
+    "shizuki-site-music-web-auth-sidecar",
+    "shizuki-site-notion-mcp-sidecar",
+    "shizuki-site-presentation-generator"
+  ],
+  "required_networks": [
+    "1panel-network",
+    "astrbot_default",
+    "cli-proxy-plus_default",
+    "deploy_default",
+    "infra_default",
+    "mcprouter_default",
+    "mihomo-panel_default",
+    "shizuki-memoryos_default",
+    "shizuki-site_default"
+  ],
+  "required_named_volumes": [
+    "infra_kafka-data",
+    "infra_mysql-data",
+    "infra_nacos-data",
+    "infra_nacos-logs",
+    "infra_redis-data",
+    "infra-postgres-data",
+    "shizuki-memoryos_memoryos-data",
+    "shizuki-site_document-converter-work"
+  ],
+  "protected_volume_prefixes": ["infra_", "shizuki-memoryos_", "shizuki-site_"],
+  "meguri_object_prefixes": ["meguri-dev", "meguri-staging", "meguri-production"]
+}

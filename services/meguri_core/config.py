@@ -7,10 +7,29 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = ROOT / "configs"
-DATA_ROOT = Path(os.getenv("MEGURI_DATA_ROOT", ROOT / "datasets" / "meguri"))
+
+
+def candidate_data_roots(root: Path) -> list[Path]:
+    candidates = [root / "datasets" / "meguri"]
+    if root.name != "meguri-pet":
+        candidates.append(root.with_name("meguri-pet") / "datasets" / "meguri")
+    return candidates
+
+
+def resolve_data_root(root: Path = ROOT, env_value: str | None = None) -> Path:
+    if env_value:
+        return Path(env_value)
+    for candidate in candidate_data_roots(root):
+        if candidate.exists():
+            return candidate
+    return candidate_data_roots(root)[0]
+
+
+DATA_ROOT = resolve_data_root(env_value=os.getenv("MEGURI_DATA_ROOT"))
 BUILD_REPORT = DATA_ROOT / "build_report.json"
 SYSTEM_PROMPT_PATH = CONFIG_ROOT / "meguri_system_prompt.txt"
 RESPONSE_SCHEMA_PATH = CONFIG_ROOT / "meguri_response.schema.json"
+RAG_QUERY_ALIASES_PATH = CONFIG_ROOT / "meguri_rag_query_aliases.json"
 
 
 def load_build_id() -> str:

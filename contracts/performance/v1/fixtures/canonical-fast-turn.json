@@ -1,0 +1,224 @@
+{
+  "fixture_type": "canonical_turn",
+  "contract_revision": "performance.v1",
+  "signals": {
+    "user_requested_mode": null,
+    "skill_required_mode": null,
+    "classifier_candidate_mode": "FAST",
+    "intent_tags": ["greeting"],
+    "external_observation_required": false,
+    "multi_step_execution_required": false,
+    "tool_capable_client": true,
+    "remote_agent_capable_client": false,
+    "remaining_deadline_millis": 15000
+  },
+  "execution_mode_decision": {
+    "mode": "FAST",
+    "reason_codes": ["DETERMINISTIC_GREETING"],
+    "budget": {
+      "max_pre_provider_stages": 4,
+      "max_model_calls": 1,
+      "max_retrieval_calls": 1,
+      "max_tool_calls": 0,
+      "max_remote_agents": 0,
+      "max_agent_depth": 0,
+      "max_rounds": 0,
+      "repeated_action_limit": 0,
+      "max_tokens": 1200,
+      "max_cost_units": 10,
+      "deadline_at": "2026-08-01T12:00:15Z"
+    },
+    "user_explicit": false,
+    "react_eligible": false
+  },
+  "persona_base_snapshot": {
+    "contract_revision": "performance.v1",
+    "snapshot_id": "persona-base-fixture-v1",
+    "user_id": "user-fixture",
+    "character_id": "meguri",
+    "persona_revision": "persona-r20",
+    "relationship_version": "relationship-v7",
+    "stable_scene_version": "scene-stable-v3",
+    "preference_version": "preference-v5",
+    "override_watermark": "override-42",
+    "exemplar_collection_revision": "exemplar-v2",
+    "built_at": "2026-08-01T11:59:00Z",
+    "stable_state": {
+      "language": "zh-CN",
+      "relationship_stage": "sibling",
+      "style": "warm-concise"
+    }
+  },
+  "effective_persona_state": {
+    "contract_revision": "performance.v1",
+    "base_snapshot_id": "persona-base-fixture-v1",
+    "temporal_mode": "WORK",
+    "scene_delta_version": "scene-delta-turn-1",
+    "runtime_override_revision": null,
+    "client_capability_revision": "client-cap-v1",
+    "policy_revision": "policy-r20",
+    "resolution_trace_id": "persona-trace-fixture",
+    "effective_state": {
+      "response_style": "warm-concise",
+      "maximum_relationship_stage": "sibling"
+    }
+  },
+  "conversation_context_read_model": {
+    "contract_revision": "performance.v1",
+    "conversation_id": "conversation-fixture",
+    "active_leaf_message_id": "message-user-2",
+    "active_topic_segment_id": "topic-greeting",
+    "latest_stable_summary_id": null,
+    "recent_message_window": [
+      {
+        "message_id": "message-assistant-1",
+        "parent_message_id": null,
+        "role": "assistant",
+        "content": "今天也在这里。",
+        "token_count": 6,
+        "created_at": "2026-08-01T11:59:55Z"
+      },
+      {
+        "message_id": "message-user-2",
+        "parent_message_id": "message-assistant-1",
+        "role": "user",
+        "content": "你好",
+        "token_count": 2,
+        "created_at": "2026-08-01T12:00:00Z"
+      }
+    ],
+    "open_loops": [],
+    "reference_index": {},
+    "token_count": 8,
+    "version": "context-read-v12"
+  },
+  "retrieval_decision": {
+    "mode": "NONE",
+    "lanes": [],
+    "reason_codes": ["L0_GREETING"],
+    "quorum": {
+      "policy_id": "none-v1",
+      "minimum_total_items": 0,
+      "required_seats": []
+    }
+  },
+  "retrieval_bundle": {
+    "contract_revision": "performance.v1",
+    "trace_id": "retrieval-trace-fixture",
+    "decision": {
+      "mode": "NONE",
+      "lanes": [],
+      "reason_codes": ["L0_GREETING"],
+      "quorum": {
+        "policy_id": "none-v1",
+        "minimum_total_items": 0,
+        "required_seats": []
+      }
+    },
+    "completed_at": "2026-08-01T12:00:00.007Z",
+    "minimum_ready_at": "2026-08-01T12:00:00.007Z",
+    "all_settled_at": "2026-08-01T12:00:00.007Z",
+    "quorum_satisfied": true,
+    "items": [],
+    "lanes": [],
+    "degradations": []
+  },
+  "capability_snapshot_version": "capability-snapshot-r20",
+  "delta_policy": {
+    "max_delay_millis": 25,
+    "max_characters": 48,
+    "flush_first_token_immediately": true
+  },
+  "text_delta_chunks": [
+    {
+      "delta": "你好。",
+      "chunk_index": 1,
+      "first_chunk": true,
+      "coalesced": false,
+      "provider_token_count": 1,
+      "flush_reason": "FIRST_TOKEN",
+      "created_at": "2026-08-01T12:00:00.074Z"
+    }
+  ],
+  "turn_event_envelopes": [
+    {
+      "protocol_version": "1.0",
+      "event_id": "event-fixture-1",
+      "required": true,
+      "replay_policy": "STATE",
+      "type": "text.delta",
+      "turn_id": "turn-fixture",
+      "session_id": "session-fixture",
+      "sequence": 1,
+      "created_at": "2026-08-01T12:00:00.078Z",
+      "data": {
+        "delta": "你好。",
+        "index": 1,
+        "native": true,
+        "flush_reason": "FIRST_TOKEN"
+      },
+      "metadata": {
+        "trace_id": "trace-fixture",
+        "source": "meguri-core",
+        "created_at": "2026-08-01T12:00:00.078Z",
+        "build_id": "build-fixture"
+      }
+    }
+  ],
+  "turn_latency_trace": {
+    "contract_revision": "performance.v1",
+    "trace_id": "trace-fixture",
+    "turn_id": "turn-fixture",
+    "release_id": "release-fixture",
+    "git_commit": "0123456789abcdef0123456789abcdef01234567",
+    "image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "response_contract_revision": "adapter-protocol-v1",
+    "prompt_revision": "prompt-r20",
+    "execution_mode": "FAST",
+    "retrieval_mode": "NONE",
+    "client_type": "website",
+    "provider": "fixture-provider",
+    "model": "fixture-low-latency-model",
+    "timestamps": {
+      "turn.received_at": "2026-08-01T12:00:00.000Z",
+      "turn.persisted_at": "2026-08-01T12:00:00.004Z",
+      "persona.started_at": "2026-08-01T12:00:00.004Z",
+      "persona.ready_at": "2026-08-01T12:00:00.006Z",
+      "retrieval_gate.started_at": "2026-08-01T12:00:00.006Z",
+      "retrieval_gate.ready_at": "2026-08-01T12:00:00.007Z",
+      "context_build.started_at": "2026-08-01T12:00:00.007Z",
+      "context.ready_at": "2026-08-01T12:00:00.009Z",
+      "capability_exposure.started_at": "2026-08-01T12:00:00.009Z",
+      "capability_exposure.ready_at": "2026-08-01T12:00:00.010Z",
+      "provider.request_sent_at": "2026-08-01T12:00:00.011Z",
+      "provider.first_byte_at": "2026-08-01T12:00:00.060Z",
+      "provider.first_token_at": "2026-08-01T12:00:00.074Z",
+      "first_delta.persisted_at": "2026-08-01T12:00:00.078Z",
+      "first_delta.sse_flushed_at": "2026-08-01T12:00:00.080Z",
+      "client.first_delta_received_at": "2026-08-01T12:00:00.083Z",
+      "client.first_render.at": "2026-08-01T12:00:00.086Z"
+    },
+    "durations_millis": {
+      "turn_persist_latency": 4,
+      "persona_latency": 2,
+      "retrieval_gate_latency": 1,
+      "retrieval_wait_before_provider": 0,
+      "context_build_latency": 2,
+      "capability_exposure_latency": 1,
+      "pre_provider_latency": 11,
+      "provider_queue_latency": 49,
+      "provider_first_token_latency": 63,
+      "event_persist_latency": 4,
+      "sse_transport_latency": 3,
+      "client_render_latency": 3,
+      "end_to_end_ttft": 86
+    },
+    "missing_timestamp_reason_codes": {
+      "query_rewrite.started_at": "SKIPPED_FAST_L0",
+      "query_rewrite.ready_at": "SKIPPED_FAST_L0",
+      "retrieval.started_at": "SKIPPED_RETRIEVAL_NONE",
+      "retrieval.minimum_ready_at": "SKIPPED_RETRIEVAL_NONE",
+      "retrieval.all_settled_at": "SKIPPED_RETRIEVAL_NONE"
+    }
+  }
+}

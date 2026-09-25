@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.local/schemas/generation_profile.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "status",
+    "model",
+    "adapter",
+    "generation",
+    "validation_evidence",
+    "safety_evidence",
+    "policy"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "profile_id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"},
+    "status": {"const": "validation_selected"},
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "revision", "tokenizer_revision"],
+      "properties": {
+        "repo_id": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tokenizer_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "sha256"],
+      "properties": {
+        "model_id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_new_tokens",
+        "repetition_penalty",
+        "no_repeat_ngram_size",
+        "force_json_object_start"
+      ],
+      "properties": {
+        "max_new_tokens": {"type": "integer", "minimum": 1, "maximum": 1024},
+        "repetition_penalty": {"type": "number", "minimum": 1.0, "maximum": 2.0},
+        "no_repeat_ngram_size": {"type": "integer", "minimum": 0, "maximum": 32},
+        "force_json_object_start": {"type": "boolean"}
+      }
+    },
+    "validation_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "report_sha256",
+        "validation_count",
+        "composite_score",
+        "json_parse_rate",
+        "response_schema_valid_rate",
+        "extra_field_rate",
+        "locked_eval_accessed"
+      ],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 3},
+        "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "validation_count": {"type": "integer", "minimum": 1},
+        "composite_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "json_parse_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "response_schema_valid_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "extra_field_rate": {"type": "number", "minimum": 0, "maximum": 1},
+        "locked_eval_accessed": {"const": false}
+      }
+    },
+    "safety_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "report_sha256", "passed", "total"],
+      "properties": {
+        "run_id": {"type": "string", "minLength": 3},
+        "report_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "passed": {"type": "integer", "minimum": 1},
+        "total": {"type": "integer", "minimum": 1}
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selection_scope",
+        "staging_eligible",
+        "production_ready",
+        "requires_new_independently_frozen_locked_eval",
+        "requires_frozen_rubric_human_review",
+        "previous_locked_eval_suite_id",
+        "previous_locked_eval_input_hashes_sha256",
+        "previous_locked_eval_must_not_be_reused_for_tuning"
+      ],
+      "properties": {
+        "selection_scope": {"const": "validation_and_frozen_synthetic_safety_only"},
+        "staging_eligible": {"const": false},
+        "production_ready": {"const": false},
+        "requires_new_independently_frozen_locked_eval": {"const": true},
+        "requires_frozen_rubric_human_review": {"const": true},
+        "previous_locked_eval_suite_id": {"type": "string", "minLength": 3},
+        "previous_locked_eval_input_hashes_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "previous_locked_eval_must_not_be_reused_for_tuning": {"const": true}
+      }
+    }
+  }
+}

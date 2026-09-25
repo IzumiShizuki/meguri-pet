@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.local/contracts/adapter-protocol/v1/adapter-protocol.schema.json",
+  "title": "Meguri Shared Adapter Protocol v1",
+  "type": "object",
+  "$defs": {
+    "ProtocolVersion": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+$"
+    },
+    "NonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ClientProfile": {
+      "type": "string",
+      "enum": ["airi", "astrbot", "website", "desktop_pet", "custom"]
+    },
+    "IdentityContext": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["meguri_user", "platform_actor", "client_instance", "session"],
+      "properties": {
+        "meguri_user": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["id"],
+          "properties": { "id": { "$ref": "#/$defs/NonEmptyString" } }
+        },
+        "platform_actor": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["platform", "actor_id"],
+          "properties": {
+            "platform": { "$ref": "#/$defs/NonEmptyString" },
+            "actor_id": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        },
+        "client_instance": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["id", "profile"],
+          "properties": {
+            "id": { "$ref": "#/$defs/NonEmptyString" },
+            "profile": { "$ref": "#/$defs/ClientProfile" }
+          }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["id"],
+          "properties": { "id": { "$ref": "#/$defs/NonEmptyString" } }
+        }
+      }
+    },
+    "ClientCapabilities": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" },
+      "required": ["text", "voice", "sprite", "screen_context", "formal_memory", "sse"],
+      "properties": {
+        "text": { "type": "boolean" },
+        "voice": { "type": "boolean" },
+        "sprite": { "type": "boolean" },
+        "screen_context": { "type": "boolean" },
+        "formal_memory": { "type": "boolean" },
+        "sse": { "type": "boolean" }
+      }
+    },
+    "ClientPermissions": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["screen_read", "microphone", "audio_playback", "notifications", "formal_memory_write"],
+      "properties": {
+        "screen_read": { "type": "boolean" },
+        "microphone": { "type": "boolean" },
+        "audio_playback": { "type": "boolean" },
+        "notifications": { "type": "boolean" },
+        "formal_memory_write": { "type": "boolean" }
+      }
+    },
+    "ClientHello": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocol_versions", "identity", "capabilities", "permissions"],
+      "properties": {
+        "protocol_versions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/ProtocolVersion" }
+        },
+        "identity": { "$ref": "#/$defs/IdentityContext" },
+        "capabilities": { "$ref": "#/$defs/ClientCapabilities" },
+        "permissions": { "$ref": "#/$defs/ClientPermissions" },
+        "required_extensions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      }
+    },
+    "HelloResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "selected_protocol_version",
+        "server_capabilities_revision",
+        "server_capabilities",
+        "effective_capabilities",
+        "granted_permissions"
+      ],
+      "properties": {
+        "selected_protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "server_capabilities_revision": { "$ref": "#/$defs/NonEmptyString" },
+        "server_capabilities": { "$ref": "#/$defs/ClientCapabilities" },
+        "effective_capabilities": { "$ref": "#/$defs/ClientCapabilities" },
+        "granted_permissions": { "$ref": "#/$defs/ClientPermissions" },
+        "supported_extensions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      }
+    },
+    "TurnCreateRequest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocol_version", "identity", "message"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "identity": { "$ref": "#/$defs/IdentityContext" },
+        "message": { "$ref": "#/$defs/NonEmptyString" },
+        "attachments": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "relationship_profile": {
+          "type": "string",
+          "enum": ["sibling", "pursuit", "lover"]
+        },
+        "training_mode": { "type": "boolean" },
+        "reply_format": { "type": "string", "enum": ["default", "zh_ja_pairs"] },
+        "retrieval_mode": { "type": "string", "enum": ["NONE", "FAST", "SLOW"] },
+        "execution_mode": { "type": "string", "enum": ["FAST", "THINK", "AGENT"] },
+        "required_extensions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        }
+      }
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": ["accepted", "running", "completed", "failed", "cancelled", "cancel_requested"]
+    },
+    "Turn": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocol_version", "turn_id", "session_id", "build_id", "status", "created_at", "updated_at"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "turn_id": { "$ref": "#/$defs/NonEmptyString" },
+        "session_id": { "$ref": "#/$defs/NonEmptyString" },
+        "build_id": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "$ref": "#/$defs/TurnStatus" },
+        "created_at": { "$ref": "#/$defs/NonEmptyString" },
+        "updated_at": { "$ref": "#/$defs/NonEmptyString" },
+        "output_text": { "type": "string" },
+        "error": { "$ref": "#/$defs/ProtocolError" }
+      }
+    },
+    "TurnCreateResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["turn_id", "session_id", "build_id", "status"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "turn_id": { "$ref": "#/$defs/NonEmptyString" },
+        "session_id": { "$ref": "#/$defs/NonEmptyString" },
+        "build_id": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "$ref": "#/$defs/TurnStatus" }
+      }
+    },
+    "TurnCancelResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["turn_id", "status"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "turn_id": { "$ref": "#/$defs/NonEmptyString" },
+        "status": { "type": "string", "enum": ["cancel_requested", "cancelled"] }
+      }
+    },
+    "TurnSnapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["turn_id", "status", "text"],
+      "properties": {
+        "turn_id": { "$ref": "#/$defs/NonEmptyString" },
+        "status": {
+          "type": "string",
+          "enum": ["idle", "running", "completed", "cancelled", "failed"]
+        },
+        "text": { "type": "string" },
+        "error": { "type": "string" },
+        "expression": { "type": "object" }
+      }
+    },
+    "SessionSnapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocol_version", "session_id", "sequence", "turns", "created_at"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "session_id": { "$ref": "#/$defs/NonEmptyString" },
+        "sequence": { "type": "integer", "minimum": 0 },
+        "turns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/TurnSnapshot" }
+        },
+        "processed_once_event_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "processed_event_ids": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/NonEmptyString" }
+        },
+        "created_at": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "EventEnvelope": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "protocol_version",
+        "event_id",
+        "required",
+        "replay_policy",
+        "type",
+        "turn_id",
+        "session_id",
+        "sequence",
+        "created_at",
+        "data",
+        "metadata"
+      ],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "event_id": { "$ref": "#/$defs/NonEmptyString" },
+        "required": { "type": "boolean" },
+        "required_extension": { "$ref": "#/$defs/NonEmptyString" },
+        "replay_policy": { "type": "string", "enum": ["STATE", "ONCE", "ALWAYS"] },
+        "type": { "$ref": "#/$defs/NonEmptyString" },
+        "turn_id": { "$ref": "#/$defs/NonEmptyString" },
+        "session_id": { "$ref": "#/$defs/NonEmptyString" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "created_at": { "$ref": "#/$defs/NonEmptyString" },
+        "data": { "type": "object" },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["trace_id", "source", "created_at", "build_id"],
+          "properties": {
+            "trace_id": { "$ref": "#/$defs/NonEmptyString" },
+            "source": { "$ref": "#/$defs/NonEmptyString" },
+            "created_at": { "$ref": "#/$defs/NonEmptyString" },
+            "build_id": { "$ref": "#/$defs/NonEmptyString" }
+          }
+        }
+      }
+    },
+    "Heartbeat": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocol_version", "type", "created_at"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "type": { "const": "heartbeat" },
+        "created_at": { "$ref": "#/$defs/NonEmptyString" }
+      }
+    },
+    "ProtocolError": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "INVALID_REQUEST",
+            "UNAUTHORIZED",
+            "FORBIDDEN",
+            "NOT_FOUND",
+            "CONFLICT",
+            "TURN_TERMINAL",
+            "CURSOR_EXPIRED",
+            "UNSUPPORTED_PROTOCOL_MAJOR",
+            "UNSUPPORTED_REQUIRED_EXTENSION",
+            "CAPABILITY_UNAVAILABLE",
+            "RATE_LIMITED",
+            "INTERNAL"
+          ]
+        },
+        "message": { "$ref": "#/$defs/NonEmptyString" },
+        "retryable": { "type": "boolean" },
+        "details": { "type": "object" }
+      }
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["protocol_version", "error"],
+      "properties": {
+        "protocol_version": { "$ref": "#/$defs/ProtocolVersion" },
+        "error": { "$ref": "#/$defs/ProtocolError" }
+      }
+    }
+  }
+}

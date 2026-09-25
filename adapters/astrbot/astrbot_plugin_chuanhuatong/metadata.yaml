@@ -1,0 +1,6 @@
+name: astrbot_plugin_chuanhuatong
+display_name: 传话筒·Meguri 立绘对话框
+desc: 基于传话筒 v2.3.0，适配 Meguri Core 的结构化表情、服饰与时段场景，并使用游戏原作对话框
+version: v2.4.0-meguri.5
+author: bvzrays / Meguri adaptation
+repo: https://github.com/bvzrays/astrbot_plugin_chuanhuatong

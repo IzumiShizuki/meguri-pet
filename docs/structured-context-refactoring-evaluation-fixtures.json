@@ -1,0 +1,44 @@
+{
+  "schema_version": "structured-context-evaluation-v1",
+  "comparisons": [
+    "Long Raw",
+    "Current Extractive Summary",
+    "Structured Compression + Selective Rehydration"
+  ],
+  "cases": [
+    {
+      "id": "superseded-constraint",
+      "turns": ["limit is 10", "change the limit to 20", "what is the current limit and why"],
+      "assertions": ["new value wins", "old value remains recoverable only when explicitly requested"]
+    },
+    {
+      "id": "rejected-decision",
+      "turns": ["consider Redis", "reject Redis", "use Postgres because migration is safer", "why Postgres"],
+      "assertions": ["rejected option is not active", "causal reason can select its source span"]
+    },
+    {
+      "id": "long-causal-follow-up",
+      "turn_count_range": [20, 50],
+      "assertions": ["constraint retention", "temporal/causal accuracy"]
+    },
+    {
+      "id": "exact-recall",
+      "turns": ["the route is /v1/items", "quote the exact route and time order"],
+      "assertions": ["exact recall", "explicit reference uses 6-before-4-after"]
+    },
+    {
+      "id": "interleaved-topics",
+      "topics": ["database migration", "mascot design", "deployment path"],
+      "assertions": ["no unrelated fact recovery", "sibling branch isolation"]
+    },
+    {
+      "id": "fallback-boundaries",
+      "operations": ["QUOTE", "RESUME_FROM", "TOPIC_LINK", "stale_summary", "branch_switch"],
+      "assertions": ["full Harness fallback", "exact trace replay"]
+    }
+  ],
+  "ttft": {
+    "status": "NOT_MEASURED",
+    "reason": "No matched same-release, same-workload, same-client production baseline is asserted by this fixture."
+  }
+}

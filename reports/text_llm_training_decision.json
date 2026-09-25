@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-16T07:25:06+08:00",
+  "status": "EVALUATED_NO_GO_STAGING",
+  "production_ready": false,
+  "model": {
+    "model_id": "qwen35-4b-l2-full-s3407-20260716-v1-a2dec9d9d481",
+    "registry_status": "evaluated",
+    "base_model": "Qwen/Qwen3.5-4B",
+    "base_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+    "adapter_sha256": "a2dec9d9d481aa8e118afc61838cb1d9e80136c3bfac5b051a62efb0a96b87ef",
+    "dataset_id": "meguri-text-sft-v1-532aca8b1a5d",
+    "data_build_id": "meguri_v2_02c3db0c507d7c2d"
+  },
+  "selection": {
+    "selected_checkpoint": "checkpoint-450",
+    "locked_eval_used": false,
+    "composite_score": 0.930124
+  },
+  "locked_eval": {
+    "status": "pass",
+    "total": 184,
+    "backend_errors": 0,
+    "automatic_score": 0.922917,
+    "json_parse_rate": 0.967391,
+    "schema_valid_rate": 0.951087,
+    "extra_field_rate": 0.016304,
+    "language_match_rate": 0.923913,
+    "relationship_severe_error_free_rate": 0.967391,
+    "mode_consistent_rate": 0.967391,
+    "memory_candidate_error_rate": 0.0,
+    "evaluation_only": true
+  },
+  "validation_only_decode_v2": {
+    "profile_id": "qwen35-4b-l2-decode-v2-r851bf6e-20260716-v1",
+    "status": "validation_selected_pending_independent_locked_eval",
+    "generation": {
+      "max_new_tokens": 256,
+      "repetition_penalty": 1.05,
+      "no_repeat_ngram_size": 4,
+      "force_json_object_start": true
+    },
+    "validation_count": 566,
+    "composite_score": 0.937279,
+    "json_parse_rate": 1.0,
+    "schema_valid_rate": 1.0,
+    "extra_field_rate": 0.0,
+    "language_match_rate": 0.939929,
+    "expression_tag_accuracy": 0.805654,
+    "expression_intensity_accuracy": 0.70318,
+    "voice_style_accuracy": 0.416961,
+    "safety_passed": 8,
+    "safety_total": 8,
+    "locked_eval_accessed": false,
+    "human_review_status": "pending_new_locked_eval_automatic_gate",
+    "staging_eligible": false
+  },
+  "staging_gate": {
+    "status": "fail",
+    "failed_checks": [
+      "json_parse_rate_gte_0_995",
+      "schema_valid_rate_gte_0_99",
+      "extra_field_rate_lte_0_005",
+      "human_persona_score_gte_0_90"
+    ]
+  },
+  "human_review": {
+    "status": "deferred_automatic_gate_failed",
+    "reason": "Automatic JSON and Schema gates already block Staging."
+  },
+  "evidence_sha256": {
+    "experiment_manifest": "c11bd62c2fb6a51a1d17469c73147b61c687b1fb4b97635b2d46b46d10b859bb",
+    "validation_selection": "f37cf14154dde640354e754c07921c83dd007d932c4d681e73769d2cb78bbbf9",
+    "export_manifest": "184e61764698022b4eaaa0eb40ec2a74c940dc4195a662172fb2f56e53a5eeee",
+    "locked_eval_report": "294ae54550e889578b90597c7239fb361a893148f63c37684aa8d27e85da5d56",
+    "comparison_report": "0bdd667796a41b6bd9e0d2b297fc8060212c43179268077ff77fa5a360736e0e",
+    "decode_v2_validation_report": "d9fca15d068d036a40c5ecfbeadedc27438bf798c9483fbe141defcf1c97e48c",
+    "decode_v2_safety_report": "87aae409cd51e4d7d6ed17d96ea4253217982207cabc4067094d173a49688ce7",
+    "decode_v2_validation_diagnostic": "6cf6057878f132f423d78c15ac981373801b0d01a5fcfffecab42fb988cdcf5c",
+    "decode_v2_generation_profile": "3b36c58ddcb6a09499c7a5528054741d2f43f25c2b87c2a2b576cc5a1c170738",
+    "independent_locked_suite_request": "9498c432089455a8a41ce5d1f2b93cba4c43a3793aadbb5c17efc16bb4de46b1"
+  },
+  "next_iteration_policy": {
+    "use_train_and_validation_only": true,
+    "locked_eval_failure_content_may_be_used_for_tuning": false,
+    "decode_v2_profile_frozen": true,
+    "new_independently_frozen_locked_eval_required": true,
+    "new_locked_eval_source_build_required": true,
+    "zero_overlap_with_train_validation_and_previous_locked_required": true,
+    "distinct_suite_preparer_and_approver_required": true,
+    "new_suite_base_and_prompt_rag_baselines_required": true,
+    "frozen_rubric_human_review_required": true,
+    "generation_profile_runtime_binding_supported": true,
+    "frozen_human_review_tooling_ready": true,
+    "registry_and_staging_route_must_remain_unchanged_until_both_pass": true
+  }
+}

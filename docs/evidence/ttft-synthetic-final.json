@@ -1,0 +1,60 @@
+{
+  "schema_revision": "meguri.synthetic-ttft.v1",
+  "benchmark_type": "SYNTHETIC_IN_PROCESS",
+  "label": "synthetic-final",
+  "git_commit": "619ccfbee11ad055e1ddfd12a961284358e6d2d7",
+  "dirty_worktree": true,
+  "sample_count": 100,
+  "warmup_count": 15,
+  "provider_first_token_delay_ms": 5,
+  "provider_tail_delay_ms": 75,
+  "subsequent_delta_coalescing_delay_ms": 50,
+  "synthetic_retrieval_delay_ms": 20,
+  "synthetic_prompt_skill_delay_ms": 15,
+  "provider": "synthetic-timed-provider",
+  "model": "synthetic-open-stream",
+  "execution_mode": "CURRENT_DEFAULT_PATH",
+  "retrieval_mode": "NONE",
+  "client_type": "website-in-process",
+  "scope": "TurnOrchestrator.start to first persisted text.delta",
+  "excluded": [
+    "real provider and provider queue",
+    "PostgreSQL and network persistence",
+    "HTTP/SSE serialization and socket flush",
+    "reverse proxy buffering",
+    "client transport and first render"
+  ],
+  "environment": {
+    "java_version": "21.0.11",
+    "os_name": "Windows 11",
+    "available_processors": 16
+  },
+  "metrics_ms": {
+    "event_persist_latency": { "sample_count": 100, "p50": 0.114, "p95": 0.232, "p99": 0.259 },
+    "server_first_durable_delta_ttft": { "sample_count": 100, "p50": 20.244, "p95": 24.021, "p99": 24.785 },
+    "pre_provider_latency": { "sample_count": 100, "p50": 3.359, "p95": 4.492, "p99": 4.787 },
+    "provider_first_token_latency": { "sample_count": 100, "p50": 16.527, "p95": 20.372, "p99": 20.594 }
+  },
+  "delta_policy_comparison": {
+    "status": "MEASURED_SYNTHETIC",
+    "metric": "provider_stream_subscription_to_first_chunk_emission",
+    "baseline": "LEGACY_FIRST_TOKEN_WAITS_FOR_WINDOW",
+    "candidate": "FIRST_TOKEN_IMMEDIATE_THEN_COALESCE",
+    "baseline_distribution_ms": { "sample_count": 100, "p50": 61.747, "p95": 62.005, "p99": 62.309 },
+    "candidate_distribution_ms": { "sample_count": 100, "p50": 15.439, "p95": 15.55, "p99": 15.697 },
+    "reduction_ms": { "p50": 46.308, "p95": 46.455, "p99": 46.612 },
+    "boundary": "NativeTextDeltaAggregator seam; no journal, network, or client"
+  },
+  "execution_fast_path_comparison": {
+    "status": "MEASURED_SYNTHETIC",
+    "metric": "turn_received_to_first_provider_chunk",
+    "baseline": "LEGACY_FAST_WITH_RETRIEVAL_AND_PROMPT_SKILL",
+    "candidate": "EXECUTION_FAST_BYPASS",
+    "baseline_distribution_ms": { "sample_count": 100, "p50": 61.993, "p95": 62.29, "p99": 64.948 },
+    "candidate_distribution_ms": { "sample_count": 100, "p50": 15.442, "p95": 15.584, "p99": 16.01 },
+    "reduction_ms": { "p50": 46.552, "p95": 46.706, "p99": 48.938 },
+    "legacy_executed_stages": ["retrieval", "prompt_skill"],
+    "fast_bypassed_stages": ["retrieval", "prompt_skill"],
+    "boundary": "controlled Reactor stage model; not the integrated Turn FAST path"
+  }
+}

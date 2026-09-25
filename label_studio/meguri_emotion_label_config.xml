@@ -1,0 +1,59 @@
+<View>
+  <Header value="Meguri 日语语音情绪与声学复核" />
+  <Text name="text" value="$text_jp" />
+  <Text name="metadata" value="语音：$voice_id　场景：$scene_id　服装：$outfit_code　关系：$relationship_stage　旧风格：$voice_style　旧强度：$expression_intensity" />
+  <Text name="proposal" value="系统建议：$proposed_category_zh　基础动作：$proposed_base_action_zh　专项：$proposed_specialty_target_zh　回声：$proposed_room_reverb_zh" />
+
+  <View style="display: flex; gap: 24px; margin-top: 16px;">
+    <View style="flex: 1;">
+      <Header value="O 原始音频" />
+      <Audio name="original_audio" value="$original_audio" />
+    </View>
+    <View style="flex: 1;">
+      <Header value="D 去噪输入" />
+      <Audio name="denoised_audio" value="$denoised_audio" />
+    </View>
+  </View>
+
+  <Header value="请用中文描述当前会话的具体情绪" />
+  <TextArea name="emotion_description" toName="text" required="true" rows="2" placeholder="例如：无奈但温柔的宠溺，不是愤怒" />
+
+  <Choices name="emotion_category" toName="text" choice="single" required="true" showInline="false">
+    <Choice value="平静／普通" />
+    <Choice value="无奈宠溺" />
+    <Choice value="克制但加重语气的愤怒" />
+    <Choice value="强烈愤怒" />
+    <Choice value="其他强情绪" />
+    <Choice value="其他中等情绪表达" />
+    <Choice value="浴室／环境回声" />
+    <Choice value="不可用" />
+  </Choices>
+
+  <Choices name="emotion_intensity" toName="text" choice="single" required="true" showInline="true">
+    <Choice value="低" />
+    <Choice value="中" />
+    <Choice value="高" />
+  </Choices>
+
+  <Choices name="room_reverb" toName="text" choice="single" required="true" showInline="true">
+    <Choice value="无" />
+    <Choice value="轻微" />
+    <Choice value="明显" />
+  </Choices>
+
+  <Choices name="base_action" toName="text" choice="single" required="true" showInline="true">
+    <Choice value="保留" />
+    <Choice value="降低权重" />
+    <Choice value="排除" />
+  </Choices>
+
+  <Choices name="specialty_target" toName="text" choice="single" required="true" showInline="false">
+    <Choice value="无" />
+    <Choice value="强情绪专项" />
+    <Choice value="克制愤怒专项" />
+    <Choice value="无奈宠溺专项" />
+  </Choices>
+
+  <Rating name="source_clarity" toName="text" maxRating="5" required="true" />
+  <TextArea name="notes" toName="text" rows="3" placeholder="补充备注（可选）" />
+</View>

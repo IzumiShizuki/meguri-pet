@@ -1,0 +1,117 @@
+# Copy this file to application.yml for local use. The default document is
+# offline-first; select a real provider explicitly with MEGURI_LLM_PROVIDER.
+spring:
+  application:
+    name: meguri-core-java
+  codec:
+    max-in-memory-size: 512KB
+  profiles:
+    default: local-mock
+  main:
+    web-application-type: reactive
+
+server:
+  address: ${MEGURI_CORE_BIND_ADDRESS:127.0.0.1}
+  port: ${SERVER_PORT:18080}
+  shutdown: graceful
+
+meguri:
+  skills:
+    # External Skills are opt-in and remain untrusted even after activation.
+    store-mode: ${MEGURI_SKILL_STORE_MODE:memory}
+    data-root: ${MEGURI_SKILL_DATA_ROOT:${user.home}/.meguri}
+    modelscope:
+      enabled: ${MEGURI_MODELSCOPE_SKILLS_ENABLED:false}
+      base-url: https://modelscope.cn
+      bridge-url: ${MEGURI_MODELSCOPE_SKILL_BRIDGE_URL:http://127.0.0.1:8000}
+      bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+      bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+      timeout-ms: ${MEGURI_MODELSCOPE_SKILL_TIMEOUT_MS:15000}
+  performance:
+    execution-mode-enabled: ${MEGURI_EXECUTION_MODE_ENABLED:false}
+    fast-path-enabled: ${MEGURI_FAST_PATH_ENABLED:false}
+    limited-react-enabled: ${MEGURI_LIMITED_REACT_ENABLED:false}
+  agent:
+    planner:
+      # Control-plane only: preserve ordinary-response quality while bounding planning work.
+      deadline-ms: ${MEGURI_AGENT_PLANNER_DEADLINE_MS:5000}
+      provider-timeout-ms: ${MEGURI_AGENT_PLANNER_PROVIDER_TIMEOUT_MS:4000}
+      queue-timeout-ms: ${MEGURI_AGENT_PLANNER_QUEUE_TIMEOUT_MS:250}
+      max-concurrency: ${MEGURI_AGENT_PLANNER_MAX_CONCURRENCY:1}
+      max-tokens: ${MEGURI_AGENT_PLANNER_MAX_TOKENS:128}
+      model: ${MEGURI_AGENT_PLANNER_MODEL:${MEGURI_LLM_MODEL:}}
+      # Omit this to reuse MEGURI_LLM_API_KEY_FILE; never use an inline key.
+      api-key-file: ${MEGURI_AGENT_PLANNER_API_KEY_FILE:}
+      thinking: ${MEGURI_AGENT_PLANNER_THINKING:disabled}
+    gateway-mode: ${MEGURI_AGENT_GATEWAY_MODE:unavailable}
+    remote:
+      endpoint: ${MEGURI_AGENT_REMOTE_ENDPOINT:https://127.0.0.1/}
+      authorization-environment: ${MEGURI_AGENT_REMOTE_AUTHORIZATION_ENVIRONMENT:}
+      connect-timeout-ms: ${MEGURI_AGENT_REMOTE_CONNECT_TIMEOUT_MS:3000}
+      request-timeout-ms: ${MEGURI_AGENT_REMOTE_REQUEST_TIMEOUT_MS:10000}
+      maximum-response-characters: ${MEGURI_AGENT_REMOTE_MAXIMUM_RESPONSE_CHARACTERS:262144}
+      allow-insecure-localhost: ${MEGURI_AGENT_REMOTE_ALLOW_INSECURE_LOCALHOST:false}
+  build-id: ${MEGURI_BUILD_ID:}
+  public-origin: ${MEGURI_CORE_PUBLIC_ORIGIN:http://127.0.0.1:18080}
+  data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
+  turn-journal:
+    mode: ${MEGURI_TURN_JOURNAL_MODE:in-memory}
+  context:
+    structured-compression-enabled: ${MEGURI_CONTEXT_STRUCTURED_COMPRESSION_ENABLED:false}
+    selective-rehydration-enabled: ${MEGURI_CONTEXT_SELECTIVE_REHYDRATION_ENABLED:false}
+    topic-detection-enabled: ${MEGURI_CONTEXT_TOPIC_DETECTION_ENABLED:false}
+    semantic-compression-enabled: ${MEGURI_CONTEXT_SEMANTIC_COMPRESSION_ENABLED:false}
+    strategy-revision: ${MEGURI_CONTEXT_STRATEGY_REVISION:context-refactoring-v1-deterministic}
+  daily-reports:
+    directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
+  rag:
+    bridge-enabled: ${MEGURI_RAG_BRIDGE_ENABLED:false}
+    bridge-url: ${MEGURI_RAG_BRIDGE_URL:${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_RAG_TIMEOUT_MS:2500}
+  memory:
+    bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_MEMORY_TIMEOUT_MS:1500}
+  security:
+    auth-required: ${MEGURI_CORE_AUTH_REQUIRED:false}
+    tenant-id: ${MEGURI_TENANT_ID:meguri-local}
+    shared-token: ${MEGURI_CORE_SHARED_TOKEN:}
+    shared-token-file: ${MEGURI_CORE_SHARED_TOKEN_FILE:}
+    formal-memory-allowed-users: ${MEGURI_FORMAL_MEMORY_ALLOWED_USERS:}
+    formal-memory-allowed-clients: ${MEGURI_FORMAL_MEMORY_ALLOWED_CLIENTS:}
+    capability-scopes: ${MEGURI_CAPABILITY_SCOPES:}
+  llm:
+    provider: ${MEGURI_LLM_PROVIDER:mock}
+    base-url: ${MEGURI_LLM_BASE_URL:}
+    model: ${MEGURI_LLM_MODEL:}
+    api-key-file: ${MEGURI_LLM_API_KEY_FILE:}
+    response-format: ${MEGURI_LLM_RESPONSE_FORMAT:json_schema}
+    max-concurrency: ${MEGURI_LLM_MAX_CONCURRENCY:4}
+    max-tokens: ${MEGURI_LLM_MAX_TOKENS:1200}
+    prompt-token-budget: ${MEGURI_LLM_PROMPT_TOKEN_BUDGET:12000}
+    tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
+    thinking: ${MEGURI_LLM_THINKING:auto}
+    multimodal:
+      # Attachment content is allowed only for declared primary models. If the
+      # active model is absent, a configured dsv4p-compatible fallback is used.
+      primary-models: ${MEGURI_LLM_MULTIMODAL_PRIMARY_MODELS:}
+      fallback-model: ${MEGURI_LLM_MULTIMODAL_FALLBACK_MODEL:}
+      fallback-base-url: ${MEGURI_LLM_MULTIMODAL_FALLBACK_BASE_URL:}
+      # Omit this to reuse MEGURI_LLM_API_KEY_FILE.
+      fallback-api-key-file: ${MEGURI_LLM_MULTIMODAL_FALLBACK_API_KEY_FILE:}
+      fallback-thinking: ${MEGURI_LLM_MULTIMODAL_FALLBACK_THINKING:auto}
+      max-attachment-bytes: ${MEGURI_MULTIMODAL_MAX_ATTACHMENT_BYTES:5242880}
+      max-total-bytes: ${MEGURI_MULTIMODAL_MAX_TOTAL_BYTES:10485760}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true

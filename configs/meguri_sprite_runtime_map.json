@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "build_id": "meguri_v2_02c3db0c507d7c2d",
+  "renderer": "png",
+  "size": "l",
+  "source": "visual_review_of_8_outfits_25_shared_expression_codes",
+  "canonical_data_modified": false,
+  "expressions": {
+    "neutral": {
+      "low": "001",
+      "medium": "001",
+      "high": "004"
+    },
+    "happy": {
+      "low": "002",
+      "medium": "003",
+      "high": "202"
+    },
+    "affectionate": {
+      "low": "022",
+      "medium": "010",
+      "high": "102"
+    },
+    "excited": {
+      "low": "003",
+      "medium": "202",
+      "high": "206"
+    },
+    "angry": {
+      "low": "012",
+      "medium": "014",
+      "high": "006"
+    },
+    "confused": {
+      "low": "104",
+      "medium": "015",
+      "high": "211"
+    },
+    "embarrassed": {
+      "low": "010",
+      "medium": "102",
+      "high": "211"
+    },
+    "sad": {
+      "low": "016",
+      "medium": "015",
+      "high": "013"
+    },
+    "sleepy": {
+      "low": "023",
+      "medium": "013",
+      "high": "005"
+    },
+    "surprised": {
+      "low": "022",
+      "medium": "011",
+      "high": "211"
+    },
+    "teasing": {
+      "low": "020",
+      "medium": "021",
+      "high": "006"
+    },
+    "worried": {
+      "low": "009",
+      "medium": "016",
+      "high": "015"
+    }
+  }
+}

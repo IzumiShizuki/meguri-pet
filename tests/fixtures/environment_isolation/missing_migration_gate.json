@@ -1,0 +1,10 @@
+{
+  "environment": "staging",
+  "compose_overrides": [
+    {
+      "path": "services.core.depends_on.migration.condition",
+      "value": "service_started"
+    }
+  ],
+  "expected_error": "migration_gate"
+}

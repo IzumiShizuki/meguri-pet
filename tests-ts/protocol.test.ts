@@ -16,6 +16,9 @@ function event(
   data: Record<string, unknown> = {},
 ): TurnEventEnvelope {
   return {
+    protocol_version: '1.0',
+    event_id: `event-${sequence}`,
+    required: true,
     type,
     turn_id: 'turn-1',
     session_id: 'session-1',
@@ -44,11 +47,17 @@ test('SSE parser handles split chunks and heartbeat comments', () => {
   parser.finish()
 })
 
-test('event parser rejects unknown types and invalid sequence', () => {
-  assert.throws(
-    () => parseTurnEventEnvelope({ ...event(1, 'turn.started'), type: 'unknown' }),
-    /unsupported event type/,
-  )
+test('event parser advances optional unknown events but rejects required ones', () => {
+  const optional = parseTurnEventEnvelope({
+    ...event(1, 'turn.started'),
+    type: 'future.presentation.hint',
+    required: false,
+  })
+  assert.equal(optional.type, 'future.presentation.hint')
+  assert.throws(() => parseTurnEventEnvelope({
+    ...event(1, 'turn.started'),
+    type: 'future.required.command',
+  }), /unsupported required event type/)
   assert.throws(
     () => parseTurnEventEnvelope({ ...event(1, 'turn.started'), sequence: 0 }),
     /positive integer/,
@@ -63,6 +72,58 @@ test('reducer assembles text and ignores duplicate replay', () => {
   reducer.apply(event(3, 'text.delta', { delta: 'Meguri' }))
   reducer.apply(event(4, 'turn.completed'))
   assert.equal(reducer.turns.get('turn-1')?.text, 'hello Meguri')
+  assert.equal(reducer.turns.get('turn-1')?.status, 'completed')
+})
+
+test('reducer deduplicates stable event IDs without replaying side effects', () => {
+  const reducer = new SessionTurnReducer()
+  reducer.apply(event(1, 'turn.started'))
+  assert.equal(reducer.apply({
+    ...event(2, 'tts.requested', { text: 'hello' }),
+    event_id: 'tts-once-1',
+  }), true)
+  assert.equal(reducer.apply({
+    ...event(3, 'tts.requested', { text: 'must not play twice' }),
+    event_id: 'tts-once-1',
+  }), false)
+  assert.equal(reducer.lastSequence, 3)
+  assert.deepEqual(reducer.checkpoint(), {
+    session_id: 'session-1',
+    last_sequence: 3,
+    processed_event_ids: ['event-1', 'tts-once-1'],
+  })
+})
+
+test('reducer restores event ID deduplication from a serialized checkpoint', () => {
+  const first = new SessionTurnReducer()
+  first.apply(event(1, 'turn.started'))
+  first.apply({ ...event(2, 'tts.requested'), event_id: 'tts-once-1' })
+
+  const checkpoint = JSON.parse(JSON.stringify(first.checkpoint()))
+  const restored = new SessionTurnReducer(checkpoint)
+  assert.equal(restored.apply({
+    ...event(3, 'tts.requested'),
+    event_id: 'tts-once-1',
+  }), false)
+  assert.equal(restored.apply(event(4, 'turn.completed')), true)
+  assert.equal(restored.lastSequence, 4)
+  assert.equal(restored.turns.get('turn-1')?.status, 'completed')
+})
+
+test('reducer checkpoints an optional unknown event without changing turn state', () => {
+  const reducer = new SessionTurnReducer()
+  reducer.apply(event(1, 'turn.started'))
+  reducer.apply({
+    ...event(2, 'future.presentation.hint'),
+    required: false,
+  })
+  reducer.apply(event(3, 'turn.completed'))
+  assert.equal(reducer.lastSequence, 3)
+  assert.deepEqual(reducer.checkpoint().processed_event_ids, [
+    'event-1',
+    'event-2',
+    'event-3',
+  ])
   assert.equal(reducer.turns.get('turn-1')?.status, 'completed')
 })
 

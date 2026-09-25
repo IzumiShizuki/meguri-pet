@@ -93,6 +93,7 @@ class SessionSummaryInput(BaseModel):
     client_id: str
     session_id: str
     messages: list[SessionMessage]
+    structured_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=3)
 
 
 class SessionSummary(BaseModel):
@@ -101,6 +102,8 @@ class SessionSummary(BaseModel):
     session_id: str
     summary: str
     message_count: int
+    structured_candidates: list[MemoryCandidate] = Field(default_factory=list, max_length=3)
+    candidate_status: Literal["audit_only", "pending_review"] = "audit_only"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -310,6 +313,8 @@ class FakeMemoryProvider:
             session_id=input.session_id,
             summary=content[:1000],
             message_count=len(input.messages),
+            structured_candidates=input.structured_candidates,
+            candidate_status="audit_only",
         )
 
     async def list_records(self, user_id: str, include_deleted: bool = False) -> list[MemoryRecord]:

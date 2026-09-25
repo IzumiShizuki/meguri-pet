@@ -1,10 +1,17 @@
 import {
   MeguriApiClient,
+  MeguriApiError,
   type FollowOptions,
 } from '../../../packages/client-sdk/src/index.ts'
 import {
   SessionTurnReducer,
   type ClientCapabilities,
+  type ClientHello,
+  type ClientPermissions,
+  type IdentityContext,
+  type ProtocolVersion,
+  type SessionEventCheckpoint,
+  type TurnCreateRequest,
   type TurnEventEnvelope,
   type TurnRequest,
   type TurnViewState,
@@ -13,6 +20,8 @@ import {
 export interface WebsiteIdentity {
   meguriUserId: string
   storageKey: string
+  platformActorId?: string
+  clientInstanceId?: string
 }
 
 export interface KeyValueStorage {
@@ -21,14 +30,34 @@ export interface KeyValueStorage {
   removeItem(key: string): void
 }
 
-export interface WebsiteSessionRecord {
+export interface WebsiteSessionRecordV1 {
   version: 1
   sessionId: string
   activeTurnId?: string
 }
 
+export interface WebsiteSessionRecordV2 {
+  version: 2
+  sessionId: string
+  activeTurnId?: string
+  checkpoint: SessionEventCheckpoint
+  activeTurnState?: TurnViewState
+  selectedProtocolVersion?: ProtocolVersion
+  serverCapabilitiesRevision?: string
+  pendingCreate?: PendingTurnCreate
+}
+
+export interface PendingTurnCreate {
+  fingerprint: string
+  idempotencyKey: string
+}
+
+export type WebsiteSessionRecord = WebsiteSessionRecordV1 | WebsiteSessionRecordV2
+
 export interface WebsiteSessionOptions {
   capabilities?: Partial<ClientCapabilities>
+  permissions?: Partial<ClientPermissions>
+  protocolVersions?: ProtocolVersion[]
   createSessionId?: () => string
 }
 
@@ -42,6 +71,16 @@ const defaultCapabilities: ClientCapabilities = {
   sprite: true,
   voice: false,
   screen_context: false,
+  formal_memory: false,
+  sse: true,
+}
+
+const defaultPermissions: ClientPermissions = {
+  screen_read: false,
+  microphone: false,
+  audio_playback: false,
+  notifications: false,
+  formal_memory_write: false,
 }
 
 export class WebsiteSessionStore {
@@ -89,7 +128,13 @@ export class WebsiteMeguriSession {
   private readonly identity: WebsiteIdentity
   private readonly store: WebsiteSessionStore
   private readonly capabilities: ClientCapabilities
+  private readonly permissions: ClientPermissions
+  private readonly protocolVersions: ProtocolVersion[]
+  private selectedProtocolVersion?: ProtocolVersion
+  private serverCapabilitiesRevision?: string
+  private helloComplete = false
   private activeTurnId?: string
+  private pendingCreate?: PendingTurnCreate
 
   constructor(
     api: MeguriApiClient,
@@ -102,16 +147,35 @@ export class WebsiteMeguriSession {
     this.api = api
     this.identity = identity
     this.store = new WebsiteSessionStore(storage, identity.storageKey)
-    this.capabilities = { ...defaultCapabilities, ...options.capabilities }
+    this.capabilities = mergeCapabilities(defaultCapabilities, options.capabilities)
+    this.permissions = { ...defaultPermissions, ...options.permissions }
+    this.protocolVersions = options.protocolVersions ?? ['1.1', '1.0']
     const saved = this.store.load()
     this.sessionId = saved?.sessionId ?? (options.createSessionId ?? createSessionId)()
     this.activeTurnId = saved?.activeTurnId
-    this.reducer = new SessionTurnReducer()
+    this.reducer = new SessionTurnReducer(saved?.version === 2 ? saved.checkpoint : 0)
+    this.selectedProtocolVersion = saved?.version === 2
+      ? saved.selectedProtocolVersion
+      : undefined
+    this.serverCapabilitiesRevision = saved?.version === 2
+      ? saved.serverCapabilitiesRevision
+      : undefined
+    this.pendingCreate = saved?.version === 2 ? saved.pendingCreate : undefined
+    if (saved?.version === 2 && saved.activeTurnState)
+      this.reducer.turns.set(saved.activeTurnState.turnId, { ...saved.activeTurnState })
     this.persist()
   }
 
   get pendingTurnId(): string | undefined {
     return this.activeTurnId
+  }
+
+  get negotiatedProtocolVersion(): ProtocolVersion | undefined {
+    return this.selectedProtocolVersion
+  }
+
+  get capabilitiesRevision(): string | undefined {
+    return this.serverCapabilitiesRevision
   }
 
   async send(message: string, options: WebsiteSendOptions = {}): Promise<TurnViewState> {
@@ -120,16 +184,40 @@ export class WebsiteMeguriSession {
       throw new TypeError('message must not be empty')
     if (this.activeTurnId)
       throw new Error('an active website turn must be resumed or cancelled first')
-    const request: TurnRequest = {
-      user_id: this.identity.meguriUserId,
-      client_id: 'website',
-      session_id: this.sessionId,
+    await this.ensureHello()
+    const request: TurnCreateRequest = {
+      protocol_version: this.selectedProtocolVersion ?? '1.0',
+      identity: this.identityContext(),
       message: normalized,
-      client_capabilities: this.capabilities,
-      relationship_profile: options.relationshipProfile,
+      ...(options.relationshipProfile
+        ? { relationship_profile: options.relationshipProfile }
+        : {}),
     }
-    const created = await this.api.createTurn(request, options.idempotencyKey)
+    const fingerprint = requestFingerprint(request)
+    if (this.pendingCreate && this.pendingCreate.fingerprint !== fingerprint)
+      throw new Error('retry the pending website request before sending a different message')
+    this.pendingCreate ??= {
+      fingerprint,
+      idempotencyKey: options.idempotencyKey ?? `website-${crypto.randomUUID()}`,
+    }
+    // Persist before POST. If the response is lost after Core commits the Turn,
+    // a reload can retry this logical request with the same idempotency key.
+    this.persist()
+    let created
+    try {
+      created = await this.api.createTurn(request, this.pendingCreate.idempotencyKey)
+    }
+    catch (error) {
+      if (error instanceof MeguriApiError
+        && error.status !== undefined
+        && isDeterministicCreateRejection(error.status)) {
+        this.pendingCreate = undefined
+        this.persist()
+      }
+      throw error
+    }
     this.activeTurnId = created.turn_id
+    this.pendingCreate = undefined
     this.persist()
     return await this.followActive(options)
   }
@@ -137,6 +225,7 @@ export class WebsiteMeguriSession {
   async resume(options: Omit<WebsiteSendOptions, 'idempotencyKey' | 'relationshipProfile'> = {}): Promise<TurnViewState | undefined> {
     if (!this.activeTurnId)
       return undefined
+    await this.ensureHello()
     return await this.followActive(options)
   }
 
@@ -150,13 +239,22 @@ export class WebsiteMeguriSession {
     const turnId = this.activeTurnId
     if (!turnId)
       throw new Error('no active website turn')
-    await this.api.followSession(this.sessionId, this.reducer, {
-      ...options,
-      untilTurnId: turnId,
-      onEvent: async (event: TurnEventEnvelope) => {
-        await options.onEvent?.(event)
-      },
-    })
+    if (!this.reducer.isTerminal(turnId)) {
+      await this.api.followSession(this.sessionId, this.reducer, {
+        ...options,
+        untilTurnId: turnId,
+        onEvent: async (event: TurnEventEnvelope) => {
+          // The reducer has already applied the event. Persist its checkpoint
+          // before dispatching page-side effects so reloads cannot replay them.
+          this.persist()
+          await options.onEvent?.(event)
+        },
+        onSnapshot: async (snapshot) => {
+          this.persist()
+          await options.onSnapshot?.(snapshot)
+        },
+      })
+    }
     const state = this.reducer.turns.get(turnId)
     if (!state)
       throw new Error('terminal website turn has no view state')
@@ -166,11 +264,50 @@ export class WebsiteMeguriSession {
   }
 
   private persist(): void {
+    const activeTurnState = this.activeTurnId
+      ? this.reducer.turns.get(this.activeTurnId)
+      : undefined
     this.store.save({
-      version: 1,
+      version: 2,
       sessionId: this.sessionId,
       activeTurnId: this.activeTurnId,
+      checkpoint: this.reducer.checkpoint(),
+      activeTurnState: activeTurnState ? { ...activeTurnState } : undefined,
+      selectedProtocolVersion: this.selectedProtocolVersion,
+      serverCapabilitiesRevision: this.serverCapabilitiesRevision,
+      pendingCreate: this.pendingCreate,
     })
+  }
+
+  private async ensureHello(): Promise<void> {
+    if (this.helloComplete)
+      return
+    const hello: ClientHello = {
+      protocol_versions: this.protocolVersions,
+      identity: this.identityContext(),
+      capabilities: this.capabilities,
+      permissions: this.permissions,
+    }
+    const response = await this.api.hello(hello)
+    this.selectedProtocolVersion = response.selected_protocol_version
+    this.serverCapabilitiesRevision = response.server_capabilities_revision
+    this.helloComplete = true
+    this.persist()
+  }
+
+  private identityContext(): IdentityContext {
+    return {
+      meguri_user: { id: this.identity.meguriUserId },
+      platform_actor: {
+        platform: 'meguri.website',
+        actor_id: this.identity.platformActorId ?? `website-account-${this.identity.storageKey}`,
+      },
+      client_instance: {
+        id: this.identity.clientInstanceId ?? `website-client-${this.identity.storageKey}`,
+        profile: 'website',
+      },
+      session: { id: this.sessionId },
+    }
   }
 }
 
@@ -178,12 +315,104 @@ function createSessionId(): string {
   return `web_${crypto.randomUUID().replaceAll('-', '')}`
 }
 
+function isDeterministicCreateRejection(status: number): boolean {
+  return status >= 400
+    && status < 500
+    && status !== 408
+    && status !== 425
+    && status !== 429
+}
+
+function mergeCapabilities(
+  defaults: ClientCapabilities,
+  overrides: Partial<ClientCapabilities> | undefined,
+): ClientCapabilities {
+  const merged = { ...defaults }
+  for (const [capability, enabled] of Object.entries(overrides ?? {})) {
+    if (typeof enabled === 'boolean')
+      merged[capability] = enabled
+  }
+  return merged
+}
+
 function isSessionRecord(value: unknown): value is WebsiteSessionRecord {
   if (typeof value !== 'object' || value === null || Array.isArray(value))
     return false
   const record = value as Record<string, unknown>
-  return record.version === 1
-    && typeof record.sessionId === 'string'
-    && record.sessionId.length > 0
-    && (record.activeTurnId === undefined || typeof record.activeTurnId === 'string')
+  if (typeof record.sessionId !== 'string' || record.sessionId.length === 0)
+    return false
+  if (record.activeTurnId !== undefined && typeof record.activeTurnId !== 'string')
+    return false
+  if (record.version === 1)
+    return true
+  if (record.version !== 2 || !isCheckpoint(record.checkpoint))
+    return false
+  if (record.selectedProtocolVersion !== undefined
+    && (typeof record.selectedProtocolVersion !== 'string'
+      || !/^1\.\d+$/.test(record.selectedProtocolVersion)))
+    return false
+  if (record.serverCapabilitiesRevision !== undefined
+    && (typeof record.serverCapabilitiesRevision !== 'string'
+      || record.serverCapabilitiesRevision.length === 0))
+    return false
+  if (record.pendingCreate !== undefined && !isPendingCreate(record.pendingCreate))
+    return false
+  if (record.checkpoint.session_id !== undefined
+    && record.checkpoint.session_id !== record.sessionId)
+    return false
+  return record.activeTurnState === undefined
+    || isTurnViewState(record.activeTurnState, record.activeTurnId)
+}
+
+function isPendingCreate(value: unknown): value is PendingTurnCreate {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const pending = value as Record<string, unknown>
+  return typeof pending.fingerprint === 'string'
+    && pending.fingerprint.length > 0
+    && typeof pending.idempotencyKey === 'string'
+    && pending.idempotencyKey.length > 0
+}
+
+function requestFingerprint(request: TurnCreateRequest): string {
+  const serialized = stableStringify(request)
+  let hash = 0xcbf29ce484222325n
+  for (const byte of new TextEncoder().encode(serialized)) {
+    hash ^= BigInt(byte)
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n)
+  }
+  return hash.toString(16).padStart(16, '0')
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value))
+    return `[${value.map(stableStringify).join(',')}]`
+  if (typeof value === 'object' && value !== null) {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map(key => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+function isCheckpoint(value: unknown): value is SessionEventCheckpoint {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const checkpoint = value as Record<string, unknown>
+  return Number.isSafeInteger(checkpoint.last_sequence)
+    && Number(checkpoint.last_sequence) >= 0
+    && (checkpoint.session_id === undefined
+      || (typeof checkpoint.session_id === 'string' && checkpoint.session_id.length > 0))
+    && Array.isArray(checkpoint.processed_event_ids)
+    && checkpoint.processed_event_ids.every(eventId => typeof eventId === 'string' && eventId.length > 0)
+}
+
+function isTurnViewState(value: unknown, activeTurnId: unknown): value is TurnViewState {
+  if (typeof value !== 'object' || value === null || Array.isArray(value))
+    return false
+  const state = value as Record<string, unknown>
+  return typeof state.turnId === 'string'
+    && state.turnId.length > 0
+    && (activeTurnId === undefined || state.turnId === activeTurnId)
+    && typeof state.text === 'string'
+    && ['idle', 'running', 'completed', 'cancelled', 'failed'].includes(String(state.status))
 }

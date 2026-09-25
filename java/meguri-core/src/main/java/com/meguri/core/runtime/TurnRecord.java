@@ -1,0 +1,409 @@
+package com.meguri.core.runtime;
+
+import com.meguri.core.dto.ChatResponse;
+import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.execution.ExecutionModeDecision;
+import com.meguri.core.harness.HarnessManifest;
+import com.meguri.core.harness.persona.PersonaRuntime;
+import com.meguri.core.capability.CapabilityRuntimeFacade;
+import com.meguri.core.agent.CancellationToken;
+import com.meguri.core.context.CompanionContextRuntime;
+import com.meguri.core.llm.ProviderRequest;
+import com.meguri.core.observability.TurnLatencyTrace;
+import com.meguri.core.observability.TurnLatencyTraceRecorder;
+import com.meguri.core.persona.runtime.EffectivePersonaState;
+import com.meguri.core.retrieval.RetrievalBundle;
+import com.meguri.core.skill.FrozenSkillSnapshot;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+/** Mutable, thread-safe bookkeeping for one turn. */
+public final class TurnRecord {
+    private final String turnId;
+    private final String traceId;
+    private final TurnRequest request;
+    private final Instant acceptedAt;
+    private final Instant deadlineAt;
+    private final AtomicBoolean cancelRequested = new AtomicBoolean();
+    private final CancellationToken agentCancellation = new CancellationToken();
+    private final CompletableFuture<Void> done = new CompletableFuture<>();
+
+    private volatile TurnStatus status = TurnStatus.ACCEPTED;
+    private volatile TurnStage stage = TurnStage.CREATED;
+    private volatile HarnessManifest manifest;
+    private volatile ExecutionModeDecision executionModeDecision;
+    private volatile TurnLatencyTraceRecorder latencyTraceRecorder;
+    private volatile PersonaRuntime.PersonaSnapshot personaSnapshot;
+    private volatile CapabilityRuntimeFacade.TurnCapabilities runtimeCapabilities;
+    private volatile EffectivePersonaState effectivePersonaState;
+    private volatile RetrievalBundle retrievalBundle;
+    private volatile CompanionContextRuntime.BuildResult contextBuild;
+    private volatile ProviderRequest providerRequest;
+    private volatile FrozenSkillSnapshot skillSnapshot;
+    private volatile ChatResponse result;
+    private volatile String error;
+    private volatile String failureCode;
+    private volatile String retryOfTurnId;
+    private volatile long version;
+
+    public TurnRecord(String turnId, String traceId, TurnRequest request) {
+        this(turnId, traceId, request, Instant.now().plusSeconds(90));
+    }
+
+    public TurnRecord(String turnId, String traceId, TurnRequest request, Instant deadlineAt) {
+        this(turnId, traceId, request, Instant.now(), deadlineAt);
+    }
+
+    public TurnRecord(String turnId, String traceId, TurnRequest request,
+                      Instant acceptedAt, Instant deadlineAt) {
+        this.turnId = Objects.requireNonNull(turnId, "turnId");
+        this.traceId = Objects.requireNonNull(traceId, "traceId");
+        this.request = Objects.requireNonNull(request, "request");
+        this.acceptedAt = Objects.requireNonNull(acceptedAt, "acceptedAt");
+        this.deadlineAt = Objects.requireNonNull(deadlineAt, "deadlineAt");
+        if (!deadlineAt.isAfter(acceptedAt)) throw new IllegalArgumentException("deadlineAt must be after acceptance");
+    }
+
+    public String getTurnId() {
+        return turnId;
+    }
+
+    public String turnId() {
+        return turnId;
+    }
+
+    public String getTraceId() {
+        return traceId;
+    }
+
+    public String traceId() {
+        return traceId;
+    }
+
+    public TurnRequest getRequest() {
+        return request;
+    }
+
+    public TurnRequest request() {
+        return request;
+    }
+
+    public Instant getAcceptedAt() {
+        return acceptedAt;
+    }
+
+    public Instant getDeadlineAt() {
+        return deadlineAt;
+    }
+
+    public Duration remaining() {
+        Duration remaining = Duration.between(Instant.now(), deadlineAt);
+        return remaining.isNegative() || remaining.isZero() ? Duration.ofMillis(1) : remaining;
+    }
+
+    public TurnStatus getStatus() {
+        return status;
+    }
+
+    public String statusValue() {
+        return status.wireValue();
+    }
+
+    public synchronized void setStatus(TurnStatus status) {
+        this.status = Objects.requireNonNull(status, "status");
+    }
+
+    public TurnStage getStage() {
+        return stage;
+    }
+
+    public synchronized boolean transitionTo(TurnStage next) {
+        Objects.requireNonNull(next, "next");
+        if (stage.terminal()) return stage == next;
+        if (!next.terminal() && next.ordinal() < stage.ordinal()) {
+            throw new IllegalStateException("turn stage cannot move backwards from " + stage + " to " + next);
+        }
+        stage = next;
+        return true;
+    }
+
+    public HarnessManifest getManifest() {
+        return manifest;
+    }
+
+    public synchronized void freezeManifest(HarnessManifest manifest) {
+        Objects.requireNonNull(manifest, "manifest");
+        if (this.manifest != null && !this.manifest.equals(manifest)) {
+            throw new IllegalStateException("turn manifest is already frozen");
+        }
+        this.manifest = manifest;
+    }
+
+    public ExecutionModeDecision getExecutionModeDecision() {
+        return executionModeDecision;
+    }
+
+    public synchronized void freezeExecutionModeDecision(ExecutionModeDecision decision) {
+        Objects.requireNonNull(decision, "decision");
+        if (executionModeDecision != null && !executionModeDecision.equals(decision)) {
+            throw new IllegalStateException("execution mode decision is already frozen");
+        }
+        executionModeDecision = decision;
+    }
+
+    public TurnLatencyTraceRecorder getLatencyTraceRecorder() {
+        return latencyTraceRecorder;
+    }
+
+    public TurnLatencyTrace getLatencyTrace() {
+        TurnLatencyTraceRecorder recorder = latencyTraceRecorder;
+        return recorder == null ? null : recorder.snapshot();
+    }
+
+    public synchronized void freezeLatencyTraceRecorder(TurnLatencyTraceRecorder recorder) {
+        Objects.requireNonNull(recorder, "recorder");
+        if (latencyTraceRecorder != null && latencyTraceRecorder != recorder) {
+            throw new IllegalStateException("turn latency trace recorder is already frozen");
+        }
+        latencyTraceRecorder = recorder;
+    }
+
+    public PersonaRuntime.PersonaSnapshot getPersonaSnapshot() {
+        return personaSnapshot;
+    }
+
+    public synchronized void freezePersonaSnapshot(PersonaRuntime.PersonaSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (personaSnapshot != null && !personaSnapshot.equals(snapshot)) {
+            throw new IllegalStateException("persona snapshot is already frozen");
+        }
+        personaSnapshot = snapshot;
+    }
+
+    public CapabilityRuntimeFacade.TurnCapabilities getRuntimeCapabilities() {
+        return runtimeCapabilities;
+    }
+
+    public synchronized void freezeRuntimeCapabilities(
+            CapabilityRuntimeFacade.TurnCapabilities capabilities) {
+        Objects.requireNonNull(capabilities, "capabilities");
+        if (runtimeCapabilities != null && !runtimeCapabilities.equals(capabilities)) {
+            throw new IllegalStateException("runtime capabilities are already frozen");
+        }
+        runtimeCapabilities = capabilities;
+    }
+
+    public EffectivePersonaState getEffectivePersonaState() {
+        return effectivePersonaState;
+    }
+
+    public synchronized void freezeEffectivePersonaState(EffectivePersonaState state) {
+        Objects.requireNonNull(state, "state");
+        if (effectivePersonaState != null && !effectivePersonaState.equals(state)) {
+            throw new IllegalStateException("effective persona state is already frozen");
+        }
+        effectivePersonaState = state;
+    }
+
+    public RetrievalBundle getRetrievalBundle() {
+        return retrievalBundle;
+    }
+
+    public synchronized void freezeRetrievalBundle(RetrievalBundle bundle) {
+        Objects.requireNonNull(bundle, "bundle");
+        if (retrievalBundle != null && !retrievalBundle.equals(bundle)) {
+            throw new IllegalStateException("retrieval bundle is already frozen");
+        }
+        retrievalBundle = bundle;
+    }
+
+    public CompanionContextRuntime.BuildResult getContextBuild() {
+        return contextBuild;
+    }
+
+    public synchronized void freezeContextBuild(CompanionContextRuntime.BuildResult build) {
+        Objects.requireNonNull(build, "build");
+        if (contextBuild != null && !contextBuild.equals(build)) {
+            throw new IllegalStateException("context build is already frozen");
+        }
+        contextBuild = build;
+    }
+
+    public ProviderRequest getProviderRequest() {
+        return providerRequest;
+    }
+
+    public synchronized void freezeProviderRequest(ProviderRequest request) {
+        Objects.requireNonNull(request, "request");
+        if (providerRequest != null && !providerRequest.equals(request)) {
+            throw new IllegalStateException("provider request is already frozen");
+        }
+        providerRequest = request;
+    }
+
+    public FrozenSkillSnapshot getSkillSnapshot() { return skillSnapshot; }
+
+    public synchronized void freezeSkillSnapshot(FrozenSkillSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (skillSnapshot != null && !skillSnapshot.equals(snapshot)) {
+            throw new IllegalStateException("Skill snapshot is already frozen");
+        }
+        skillSnapshot = snapshot;
+    }
+
+    public synchronized void updateSkillSnapshot(FrozenSkillSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        if (skillSnapshot == null || !skillSnapshot.turnId().equals(snapshot.turnId())
+                || !skillSnapshot.capabilitySnapshotId().equals(snapshot.capabilitySnapshotId())) {
+            throw new IllegalStateException("Skill snapshot authority mismatch");
+        }
+        skillSnapshot = snapshot;
+    }
+
+    synchronized void restoreSkillSnapshot(FrozenSkillSnapshot snapshot) {
+        skillSnapshot = snapshot;
+    }
+
+    public ChatResponse getResult() {
+        return result;
+    }
+
+    public ChatResponse result() {
+        return result;
+    }
+
+    public void setResult(ChatResponse result) {
+        this.result = result;
+    }
+
+    /** Atomically wins the terminal race only when no cancellation is pending. */
+    public synchronized boolean tryComplete(ChatResponse completedResult) {
+        Objects.requireNonNull(completedResult, "completedResult");
+        if (stage.terminal() || cancelRequested.get()) return false;
+        result = completedResult;
+        status = TurnStatus.COMPLETED;
+        stage = TurnStage.COMPLETED;
+        return true;
+    }
+
+    public synchronized boolean tryCancel() {
+        cancelRequested.set(true);
+        agentCancellation.cancel();
+        if (stage.terminal()) return false;
+        status = TurnStatus.CANCELLED;
+        stage = TurnStage.CANCELLED;
+        return true;
+    }
+
+    public synchronized boolean tryFail(String failure) {
+        return tryFail("TURN_EXECUTION_FAILED", failure);
+    }
+
+    public synchronized boolean tryFail(String code, String failure) {
+        if (stage.terminal() || cancelRequested.get()) return false;
+        status = TurnStatus.FAILED;
+        stage = TurnStage.FAILED;
+        failureCode = Objects.requireNonNull(code, "code");
+        error = failure;
+        return true;
+    }
+
+    public String getError() {
+        return error;
+    }
+
+    public String error() {
+        return error;
+    }
+
+    public void setError(String error) {
+        this.error = error;
+    }
+
+    public String getFailureCode() {
+        return failureCode;
+    }
+
+    public String getRetryOfTurnId() {
+        return retryOfTurnId;
+    }
+
+    public synchronized void setRetryOfTurnId(String retryOfTurnId) {
+        this.retryOfTurnId = retryOfTurnId == null || retryOfTurnId.isBlank()
+                ? null : retryOfTurnId.trim();
+    }
+
+    public long getVersion() {
+        return version;
+    }
+
+    public synchronized void setVersion(long version) {
+        if (version < 0) throw new IllegalArgumentException("version must not be negative");
+        this.version = version;
+    }
+
+    public boolean isCancelRequested() {
+        return cancelRequested.get();
+    }
+
+    public boolean cancelRequested() {
+        return cancelRequested.get();
+    }
+
+    public boolean requestCancel() {
+        boolean changed = cancelRequested.compareAndSet(false, true);
+        agentCancellation.cancel();
+        return changed;
+    }
+
+    public CancellationToken agentCancellation() {
+        return agentCancellation;
+    }
+
+    public CompletableFuture<Void> getDone() {
+        return done;
+    }
+
+    public CompletableFuture<Void> done() {
+        return done;
+    }
+
+    public void completeDone() {
+        done.complete(null);
+    }
+
+    /** Rehydrates durable lifecycle fields without replaying business effects. */
+    public synchronized void restore(TurnStatus status, TurnStage stage,
+                                     ChatResponse result, String error) {
+        restore(status, stage, null, result, error);
+    }
+
+    /** Rehydrates durable lifecycle fields, including the frozen manifest. */
+    public synchronized void restore(TurnStatus status, TurnStage stage,
+                                     HarnessManifest manifest, ChatResponse result, String error) {
+        restore(status, stage, manifest, result, null, error, null, 0L);
+    }
+
+    public synchronized void restore(TurnStatus status, TurnStage stage,
+                                     HarnessManifest manifest, ChatResponse result,
+                                     String failureCode, String error,
+                                     String retryOfTurnId, long version) {
+        this.status = Objects.requireNonNull(status, "status");
+        this.stage = Objects.requireNonNull(stage, "stage");
+        this.manifest = manifest;
+        this.result = result;
+        this.failureCode = failureCode;
+        this.error = error;
+        this.retryOfTurnId = retryOfTurnId;
+        this.version = version;
+        if (stage.terminal()) completeDone();
+    }
+
+    public boolean isTerminal() {
+        return stage.terminal();
+    }
+}

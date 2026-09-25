@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://meguri.local/schemas/model_registry.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "updated_at", "models"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "updated_at": {"type": "string"},
+    "models": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/model"}
+    }
+  },
+  "$defs": {
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_id", "status", "base_model", "base_revision", "tokenizer_revision",
+        "adapter_revision", "adapter_sha256", "artifact_path", "dataset_id", "data_build_id",
+        "prompt_sha256", "response_schema_sha256", "chat_template_sha256", "training_commit",
+        "framework_versions", "training_config", "experiment_manifest", "validation_selection",
+        "locked_eval_report", "comparison_report", "generation_profile", "generation_profile_id",
+        "generation_profile_sha256", "locked_eval_suite_id", "locked_eval_source_build_id",
+        "locked_eval_manifest_sha256",
+        "independent_suite_validation_sha256",
+        "created_at", "parent_model_id", "rollback_model_id"
+      ],
+      "properties": {
+        "model_id": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"},
+        "status": {
+          "enum": [
+            "experimental", "evaluated", "staging_candidate", "staging_active",
+            "production_candidate", "production_active", "retired"
+          ]
+        },
+        "base_model": {"type": "string", "minLength": 1},
+        "base_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tokenizer_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "adapter_revision": {"type": "string", "minLength": 12},
+        "adapter_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "artifact_path": {"type": "string", "minLength": 1},
+        "dataset_id": {"type": "string", "minLength": 1},
+        "data_build_id": {"const": "meguri_v2_02c3db0c507d7c2d"},
+        "prompt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "response_schema_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "chat_template_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "training_commit": {"type": "string", "minLength": 7},
+        "framework_versions": {"type": "object"},
+        "training_config": {"type": "string"},
+        "experiment_manifest": {"type": "string"},
+        "validation_selection": {"type": "string"},
+        "locked_eval_report": {"type": "string"},
+        "comparison_report": {"type": "string"},
+        "generation_profile": {"type": ["string", "null"]},
+        "generation_profile_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"
+        },
+        "generation_profile_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "locked_eval_suite_id": {
+          "type": ["string", "null"],
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{2,127}$"
+        },
+        "locked_eval_source_build_id": {"type": ["string", "null"], "minLength": 3},
+        "locked_eval_manifest_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "independent_suite_validation_sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "created_at": {"type": "string"},
+        "parent_model_id": {"type": ["string", "null"]},
+        "rollback_model_id": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

@@ -2,6 +2,11 @@ import { parseTurnEventEnvelope, type TurnEventEnvelope } from './turn-events.ts
 
 export class SseTurnEventParser {
   private buffer = ''
+  private readonly supportedExtensions: readonly string[]
+
+  constructor(supportedExtensions: readonly string[] = []) {
+    this.supportedExtensions = supportedExtensions
+  }
 
   push(chunk: string): TurnEventEnvelope[] {
     this.buffer += chunk
@@ -41,7 +46,16 @@ export class SseTurnEventParser {
     }
     if (data.length === 0)
       return undefined
-    const envelope = parseTurnEventEnvelope(JSON.parse(data.join('\n')))
+    if (eventName === 'heartbeat') {
+      const heartbeat = JSON.parse(data.join('\n')) as Record<string, unknown>
+      if ('sequence' in heartbeat)
+        throw new Error('heartbeat must not allocate a business sequence')
+      return undefined
+    }
+    const envelope = parseTurnEventEnvelope(
+      JSON.parse(data.join('\n')),
+      { supportedExtensions: this.supportedExtensions },
+    )
     if (id !== undefined && id !== envelope.sequence)
       throw new Error('SSE id does not match event sequence')
     if (eventName !== undefined && eventName !== envelope.type)

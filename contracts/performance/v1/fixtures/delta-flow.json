@@ -1,0 +1,78 @@
+{
+  "fixture_type": "delta_flow",
+  "contract_revision": "performance.v1",
+  "policy": {
+    "max_delay_millis": 25,
+    "max_characters": 48,
+    "flush_first_token_immediately": true
+  },
+  "chunks": [
+    {
+      "delta": "你",
+      "chunk_index": 1,
+      "first_chunk": true,
+      "coalesced": false,
+      "provider_token_count": 1,
+      "flush_reason": "FIRST_TOKEN",
+      "created_at": "2026-08-01T12:00:00.074Z"
+    },
+    {
+      "delta": "好。",
+      "chunk_index": 2,
+      "first_chunk": false,
+      "coalesced": true,
+      "provider_token_count": 2,
+      "flush_reason": "STREAM_COMPLETED",
+      "created_at": "2026-08-01T12:00:00.090Z"
+    }
+  ],
+  "events": [
+    {
+      "protocol_version": "1.0",
+      "event_id": "delta-event-21",
+      "required": true,
+      "replay_policy": "STATE",
+      "type": "text.delta",
+      "turn_id": "turn-delta-fixture",
+      "session_id": "session-delta-fixture",
+      "sequence": 21,
+      "created_at": "2026-08-01T12:00:00.078Z",
+      "data": {
+        "delta": "你",
+        "index": 1,
+        "native": true,
+        "flush_reason": "FIRST_TOKEN"
+      },
+      "metadata": {
+        "trace_id": "trace-delta-fixture",
+        "source": "meguri-core",
+        "created_at": "2026-08-01T12:00:00.078Z",
+        "build_id": "build-fixture"
+      }
+    },
+    {
+      "protocol_version": "1.0",
+      "event_id": "delta-event-22",
+      "required": true,
+      "replay_policy": "STATE",
+      "type": "text.delta",
+      "turn_id": "turn-delta-fixture",
+      "session_id": "session-delta-fixture",
+      "sequence": 22,
+      "created_at": "2026-08-01T12:00:00.093Z",
+      "data": {
+        "delta": "好。",
+        "index": 2,
+        "native": true,
+        "flush_reason": "STREAM_COMPLETED"
+      },
+      "metadata": {
+        "trace_id": "trace-delta-fixture",
+        "source": "meguri-core",
+        "created_at": "2026-08-01T12:00:00.093Z",
+        "build_id": "build-fixture"
+      }
+    }
+  ],
+  "expected_text": "你好。"
+}

@@ -1,0 +1,12 @@
+{
+  "environment": "staging",
+  "compose_overrides": [
+    {
+      "path": "services.postgres.volumes",
+      "value": [
+        "/var/lib/postgresql/data"
+      ]
+    }
+  ],
+  "expected_error": "anonymous_database_volume"
+}

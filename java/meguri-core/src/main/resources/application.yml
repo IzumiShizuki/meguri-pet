@@ -1,0 +1,167 @@
+spring:
+  application:
+    name: meguri-core-java
+  config:
+    import: optional:classpath:application-notion.yml
+  codec:
+    max-in-memory-size: 512KB
+  profiles:
+    default: local-mock
+  main:
+    web-application-type: reactive
+
+server:
+  address: ${MEGURI_CORE_BIND_ADDRESS:127.0.0.1}
+  port: ${SERVER_PORT:18080}
+  shutdown: graceful
+
+meguri:
+  skills:
+    store-mode: ${MEGURI_SKILL_STORE_MODE:memory}
+    data-root: ${MEGURI_SKILL_DATA_ROOT:${user.home}/.meguri}
+    modelscope:
+      enabled: ${MEGURI_MODELSCOPE_SKILLS_ENABLED:false}
+      base-url: https://modelscope.cn
+      bridge-url: ${MEGURI_MODELSCOPE_SKILL_BRIDGE_URL:http://127.0.0.1:8000}
+      bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+      bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+      timeout-ms: ${MEGURI_MODELSCOPE_SKILL_TIMEOUT_MS:15000}
+  build-id: ${MEGURI_BUILD_ID:}
+  public-origin: ${MEGURI_CORE_PUBLIC_ORIGIN:http://127.0.0.1:18080}
+  performance:
+    execution-mode-enabled: ${MEGURI_EXECUTION_MODE_ENABLED:false}
+    fast-path-enabled: ${MEGURI_FAST_PATH_ENABLED:false}
+    limited-react-enabled: ${MEGURI_LIMITED_REACT_ENABLED:false}
+  data-root: ${MEGURI_DATA_ROOT:../../datasets/meguri}
+  turn-journal:
+    mode: ${MEGURI_TURN_JOURNAL_MODE:in-memory}
+  context:
+    structured-compression-enabled: ${MEGURI_CONTEXT_STRUCTURED_COMPRESSION_ENABLED:false}
+    selective-rehydration-enabled: ${MEGURI_CONTEXT_SELECTIVE_REHYDRATION_ENABLED:false}
+    topic-detection-enabled: ${MEGURI_CONTEXT_TOPIC_DETECTION_ENABLED:false}
+    semantic-compression-enabled: ${MEGURI_CONTEXT_SEMANTIC_COMPRESSION_ENABLED:false}
+    strategy-revision: ${MEGURI_CONTEXT_STRATEGY_REVISION:context-refactoring-v1-deterministic}
+  daily-reports:
+    directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
+  rag-path: ${MEGURI_RAG_PATH:../../datasets/meguri/exports/rag/chunks_train.jsonl}
+  rag:
+    bridge-enabled: ${MEGURI_RAG_BRIDGE_ENABLED:false}
+    bridge-url: ${MEGURI_RAG_BRIDGE_URL:${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_RAG_TIMEOUT_MS:2500}
+  memory:
+    bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
+    bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
+    bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
+    timeout-ms: ${MEGURI_MEMORY_TIMEOUT_MS:1500}
+  security:
+    auth-required: ${MEGURI_CORE_AUTH_REQUIRED:false}
+    tenant-id: ${MEGURI_TENANT_ID:meguri-local}
+    shared-token: ${MEGURI_CORE_SHARED_TOKEN:}
+    shared-token-file: ${MEGURI_CORE_SHARED_TOKEN_FILE:}
+    formal-memory-allowed-users: ${MEGURI_FORMAL_MEMORY_ALLOWED_USERS:}
+    formal-memory-allowed-clients: ${MEGURI_FORMAL_MEMORY_ALLOWED_CLIENTS:}
+    capability-scopes: ${MEGURI_CAPABILITY_SCOPES:}
+  web-search:
+    enabled: ${MEGURI_WEB_SEARCH_ENABLED:false}
+    base-url: ${MEGURI_WEB_SEARCH_BASE_URL:https://www.bing.com/search}
+    timeout-ms: ${MEGURI_WEB_SEARCH_TIMEOUT_MS:8000}
+    max-results: ${MEGURI_WEB_SEARCH_MAX_RESULTS:5}
+  weather:
+    enabled: ${MEGURI_WEATHER_ENABLED:true}
+    base-url: ${MEGURI_WEATHER_BASE_URL:https://api.open-meteo.com/v1/forecast}
+    location-file: ${MEGURI_WEATHER_LOCATION_FILE:${user.home}/.meguri/weather-location.json}
+    location-name: ${MEGURI_WEATHER_LOCATION_NAME:浙江省杭州市钱塘区}
+    latitude: ${MEGURI_WEATHER_LATITUDE:30.323040}
+    longitude: ${MEGURI_WEATHER_LONGITUDE:120.493941}
+    timezone: ${MEGURI_WEATHER_TIMEZONE:Asia/Shanghai}
+    work-start-hour: ${MEGURI_WEATHER_WORK_START_HOUR:8}
+    work-end-hour: ${MEGURI_WEATHER_WORK_END_HOUR:22}
+    poll-delay-ms: ${MEGURI_WEATHER_POLL_DELAY_MS:900000}
+    rain-probability-threshold: ${MEGURI_WEATHER_RAIN_THRESHOLD:50}
+    rain-lookahead-hours: ${MEGURI_WEATHER_RAIN_LOOKAHEAD_HOURS:2}
+  sleep-memory:
+    enabled: ${MEGURI_SLEEP_MEMORY_CONSOLIDATION_ENABLED:false}
+    timezone: ${MEGURI_SLEEP_MEMORY_TIMEZONE:Asia/Shanghai}
+    hour: ${MEGURI_SLEEP_MEMORY_HOUR:2}
+    min-messages: ${MEGURI_SLEEP_MEMORY_MIN_MESSAGES:4}
+    check-delay-ms: ${MEGURI_SLEEP_MEMORY_CHECK_DELAY_MS:60000}
+    write-candidates: ${MEGURI_SLEEP_MEMORY_WRITE_CANDIDATES:false}
+  training-feedback:
+    file: ${MEGURI_TRAINING_FEEDBACK_FILE:${user.home}/.meguri/training/behavior-feedback.jsonl}
+    training-mode-probability: ${MEGURI_TRAINING_MODE_COMPARISON_PROBABILITY:0.03}
+    normal-mode-probability: ${MEGURI_NORMAL_MODE_COMPARISON_PROBABILITY:0.001}
+  resources:
+    everything:
+      enabled: ${MEGURI_EVERYTHING_ENABLED:true}
+      es-path: ${MEGURI_EVERYTHING_ES_PATH:D:/Program Files/Everything/es.exe}
+      timeout-ms: ${MEGURI_EVERYTHING_TIMEOUT_MS:1800}
+      query-result-cap: ${MEGURI_EVERYTHING_QUERY_RESULT_CAP:200}
+  bilibili-report:
+    enabled: ${MEGURI_BILIBILI_REPORT_ENABLED:true}
+    python: ${MEGURI_BILIBILI_REPORT_PYTHON:D:/environment/anaconda3/envs/py314/python.exe}
+    script: ${MEGURI_BILIBILI_REPORT_SCRIPT:D:/program/meguri-pet/tools/generate_bilibili_browser_report.py}
+    project-root: ${MEGURI_BILIBILI_REPORT_PROJECT_ROOT:D:/program/meguri-pet}
+    timezone: ${MEGURI_BILIBILI_REPORT_TIMEZONE:Asia/Shanghai}
+    timeout-seconds: ${MEGURI_BILIBILI_REPORT_TIMEOUT_SECONDS:20}
+    mcp-url: ${MEGURI_BHF_MCP_URL:http://127.0.0.1:8899/mcp/}
+    mcp-token-file: ${MEGURI_BHF_MCP_TOKEN_FILE:${user.home}/.meguri/bilibili/mcp-token.txt}
+    mcp-timeout-seconds: ${MEGURI_BHF_MCP_TIMEOUT_SECONDS:5}
+    sync-status-file: ${MEGURI_BHF_SYNC_STATUS_FILE:${user.home}/.meguri/bilibili/state/daily-sync-latest.json}
+    chrome-history: ${MEGURI_CHROME_HISTORY:}
+    edge-history: ${MEGURI_EDGE_HISTORY:}
+  billing-digest:
+    file: ${MEGURI_BILLING_DIGEST_FILE:D:/program/shizuki-site/data/qianji-sync/daily-billing-digest.json}
+    project-root: ${MEGURI_BILLING_REPORT_PROJECT_ROOT:D:/program/meguri-pet}
+  llm:
+    provider: ${MEGURI_LLM_PROVIDER:mock}
+    base-url: ${MEGURI_LLM_BASE_URL:}
+    model: ${MEGURI_LLM_MODEL:}
+    api-key-file: ${MEGURI_LLM_API_KEY_FILE:}
+    response-format: ${MEGURI_LLM_RESPONSE_FORMAT:json_schema}
+    max-concurrency: ${MEGURI_LLM_MAX_CONCURRENCY:4}
+    max-tokens: ${MEGURI_LLM_MAX_TOKENS:1200}
+    prompt-token-budget: ${MEGURI_LLM_PROMPT_TOKEN_BUDGET:12000}
+    tokenizer-model: ${MEGURI_LLM_TOKENIZER_MODEL:gpt-4o-mini}
+    thinking: ${MEGURI_LLM_THINKING:auto}
+  agent:
+    planner:
+      deadline-ms: ${MEGURI_AGENT_PLANNER_DEADLINE_MS:5000}
+      provider-timeout-ms: ${MEGURI_AGENT_PLANNER_PROVIDER_TIMEOUT_MS:4000}
+      queue-timeout-ms: ${MEGURI_AGENT_PLANNER_QUEUE_TIMEOUT_MS:250}
+      max-concurrency: ${MEGURI_AGENT_PLANNER_MAX_CONCURRENCY:1}
+      max-tokens: ${MEGURI_AGENT_PLANNER_MAX_TOKENS:128}
+      model: ${MEGURI_AGENT_PLANNER_MODEL:${MEGURI_LLM_MODEL:}}
+      # Omit this to reuse MEGURI_LLM_API_KEY_FILE; never use an inline key.
+      api-key-file: ${MEGURI_AGENT_PLANNER_API_KEY_FILE:}
+      thinking: ${MEGURI_AGENT_PLANNER_THINKING:disabled}
+    gateway-mode: ${MEGURI_AGENT_GATEWAY_MODE:unavailable}
+    remote:
+      endpoint: ${MEGURI_AGENT_REMOTE_ENDPOINT:https://127.0.0.1/}
+      authorization-environment: ${MEGURI_AGENT_REMOTE_AUTHORIZATION_ENVIRONMENT:}
+      connect-timeout-ms: ${MEGURI_AGENT_REMOTE_CONNECT_TIMEOUT_MS:3000}
+      request-timeout-ms: ${MEGURI_AGENT_REMOTE_REQUEST_TIMEOUT_MS:10000}
+      maximum-response-characters: ${MEGURI_AGENT_REMOTE_MAXIMUM_RESPONSE_CHARACTERS:262144}
+      allow-insecure-localhost: ${MEGURI_AGENT_REMOTE_ALLOW_INSECURE_LOCALHOST:false}
+  prompt-cache-metrics:
+    source-id: ${MEGURI_PROMPT_CACHE_SOURCE_ID:meguri-desktop}
+    file: ${MEGURI_PROMPT_CACHE_METRICS_FILE:${user.home}/.meguri/metrics/prompt-cache.json}
+    export-url: ${MEGURI_PROMPT_CACHE_EXPORT_URL:}
+    export-token-file: ${MEGURI_PROMPT_CACHE_EXPORT_TOKEN_FILE:}
+    export-interval-ms: ${MEGURI_PROMPT_CACHE_EXPORT_INTERVAL_MS:60000}
+    export-timeout-ms: ${MEGURI_PROMPT_CACHE_EXPORT_TIMEOUT_MS:5000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+# No LangChain4j OpenAI properties are present in the default profile.  This
+# keeps local startup offline-first; the runtime may inject its mock provider.
+# Enable the `openai` profile and provide credentials to create a real model.

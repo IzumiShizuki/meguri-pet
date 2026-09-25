@@ -1,0 +1,63 @@
+{
+  "fixture_type": "mode_decisions",
+  "contract_revision": "performance.v1",
+  "decisions": [
+    {
+      "mode": "FAST",
+      "reason_codes": ["DETERMINISTIC_GREETING"],
+      "budget": {
+        "max_pre_provider_stages": 4,
+        "max_model_calls": 1,
+        "max_retrieval_calls": 1,
+        "max_tool_calls": 0,
+        "max_remote_agents": 0,
+        "max_agent_depth": 0,
+        "max_rounds": 0,
+        "repeated_action_limit": 0,
+        "max_tokens": 1200,
+        "max_cost_units": 10,
+        "deadline_at": "2026-08-01T12:00:15Z"
+      },
+      "user_explicit": false,
+      "react_eligible": false
+    },
+    {
+      "mode": "THINK",
+      "reason_codes": ["DETERMINISTIC_COMPLEX_ANALYSIS"],
+      "budget": {
+        "max_pre_provider_stages": 7,
+        "max_model_calls": 2,
+        "max_retrieval_calls": 1,
+        "max_tool_calls": 0,
+        "max_remote_agents": 0,
+        "max_agent_depth": 0,
+        "max_rounds": 0,
+        "repeated_action_limit": 0,
+        "max_tokens": 4000,
+        "max_cost_units": 40,
+        "deadline_at": "2026-08-01T12:00:30Z"
+      },
+      "user_explicit": false,
+      "react_eligible": false
+    },
+    {
+      "mode": "AGENT",
+      "reason_codes": ["EXTERNAL_OBSERVATION_REQUIRED", "MULTI_STEP_EXECUTION_REQUIRED"],
+      "budget": {
+        "max_pre_provider_stages": 10,
+        "max_model_calls": 4,
+        "max_retrieval_calls": 3,
+        "max_tool_calls": 3,
+        "max_remote_agents": 1,
+        "max_agent_depth": 1,
+        "max_rounds": 3,
+        "repeated_action_limit": 1,
+        "max_tokens": 8000,
+        "max_cost_units": 100,
+        "deadline_at": "2026-08-01T12:01:00Z"
+      },
+      "user_explicit": true,
+      "react_eligible": true
+    }
+  ]
+}
