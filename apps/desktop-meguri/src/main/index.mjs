@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Notification, safeStorage, screen, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Notification, safeStorage, screen, shell, Tray } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -10,6 +10,7 @@ import { resolveGeneratedArtifact } from './artifact-policy.mjs'
 import { createClipboardImageAttachment, inspectDroppedAttachment } from './attachment-policy.mjs'
 import { createCharacterPackStore } from './character-pack-store.mjs'
 import { mergeDesktopPreferences, normalizeDesktopPreferences } from './desktop-preferences.mjs'
+import { createDesktopTray, recoverDesktopWindow, revealDesktop } from './desktop-tray.mjs'
 import { ensureEverythingIpc } from './everything-runtime.mjs'
 import { cycleOutfitCode, meguriGlobalShortcutBindings, registerMeguriGlobalShortcuts } from './global-shortcuts.mjs'
 import { createLocalAgentRuntime, LocalAgentError } from './local-agent-runtime.mjs'
@@ -55,6 +56,7 @@ let startupWindow
 let stageWindow
 let settingsWindow
 let studioWindow
+let desktopTray
 let boundsSaveTimer
 let readinessRetryTimer
 let registeredVisibilityShortcut
@@ -569,6 +571,8 @@ async function loadRenderer(window, view) {
 }
 
 function createStartupWindow() {
+  if (startupWindow && !startupWindow.isDestroyed())
+    return Promise.resolve(startupWindow)
   startupWindow = new BrowserWindow({
     title: 'Meguri 正在醒来',
     width: 520,
@@ -615,8 +619,11 @@ function createStageWindow() {
   stageWindow.on('closed', () => {
     stageReadyForReminders = false
     stageWindow = undefined
+    desktopTray?.refresh()
     void pixpinCaptureCoordinator?.cancelActive('桌宠窗口已关闭，PixPin 截图接收已取消。')
   })
+  for (const event of ['show', 'hide', 'minimize', 'restore'])
+    stageWindow.on(event, () => desktopTray?.refresh())
   stageWindow.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url)
@@ -716,6 +723,23 @@ function centerStageWindow() {
   )
 }
 
+function revealDesktopFromTray(options) {
+  return revealDesktop({
+    getStage: () => stageWindow,
+    createStage: createStageWindow,
+    getStartup: () => startupWindow,
+    createStartup: createStartupWindow,
+    isReady: () => readiness.current().status === 'ready',
+    isExiting: () => appExiting,
+    recoverStage: window => recoverDesktopWindow(window, {
+      center: centerStageWindow,
+      alwaysOnTop: readPreferences().window.alwaysOnTop,
+    }),
+    recoverStartup: window => recoverDesktopWindow(window, { center: () => window.center() }),
+    openChat: () => updatePreferences({ chat: { visible: true, expanded: true } }),
+  }, options)
+}
+
 function trustedRenderer(event) {
   const url = event.senderFrame?.url ?? event.sender.getURL()
   try {
@@ -803,6 +827,7 @@ function installIpc() {
     readiness.markRendererReady()
     stageReadyForReminders = true
     stageWindow.show()
+    desktopTray?.refresh()
     for (const reminder of pendingShizukiReminders.splice(0))
       stageWindow.webContents.send(channels.shizukiReminder, reminder)
     setTimeout(() => startupWindow?.close(), 260)
@@ -1264,8 +1289,26 @@ async function start() {
   // Acquire ownership after the Windows elevation handoff, before any reminder writer starts.
   if (!app.requestSingleInstanceLock()) { app.quit(); return }
   app.on('second-instance', () => {
-    const window = stageWindow ?? startupWindow
-    if (window && !window.isDestroyed()) { window.show(); window.focus() }
+    void revealDesktopFromTray().catch(error => console.warn('Failed to reveal Meguri desktop:', error))
+  })
+  desktopTray = createDesktopTray({
+    iconPath: join(appRoot, 'assets/meguri-tray.ico'),
+    createTray: iconPath => {
+      const tray = new Tray(iconPath)
+      console.info('[Meguri tray] registered', JSON.stringify(tray.getBounds()))
+      return tray
+    },
+    buildMenu: template => Menu.buildFromTemplate(template),
+    getState: () => ({
+      readinessStatus: readiness.current().status,
+      rendererReady: stageReadyForReminders,
+      visible: stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible(),
+      minimized: stageWindow && !stageWindow.isDestroyed() && stageWindow.isMinimized(),
+    }),
+    reveal: revealDesktopFromTray,
+    openSettings: openSettingsWindow,
+    quit: () => app.quit(),
+    onError: error => console.warn('Meguri tray error:', error),
   })
   qqReminders().start()
   if (shizukiTimePrism().status().connected)
@@ -1282,6 +1325,7 @@ async function start() {
       agents.startHarnessHost()
   }
   readiness.subscribe(snapshot => {
+    desktopTray?.refresh()
     if (startupWindow && !startupWindow.isDestroyed())
       startupWindow.webContents.send(channels.readinessChanged, snapshot)
   })
@@ -1316,6 +1360,8 @@ app.whenReady().then(start).catch(error => {
 
 app.on('before-quit', () => { appExiting = true })
 app.on('will-quit', () => {
+  desktopTray?.dispose()
+  desktopTray = undefined
   clearInterval(readinessRetryTimer)
   globalShortcut.unregisterAll()
   stopWorkObservation()
@@ -1327,6 +1373,6 @@ app.on('will-quit', () => {
   void localAgentRuntime?.shutdown()
 })
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin')
+  if (process.platform !== 'darwin' && !desktopTray)
     app.quit()
 })

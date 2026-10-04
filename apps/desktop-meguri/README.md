@@ -65,6 +65,32 @@ For renderer development with Electron reloads performed manually:
 D:\environment\nodejs\global\pnpm.cmd dev:desktop
 ```
 
+## Windows notification-area entry
+
+While native Meguri runs, a teal **M** icon remains in the notification area,
+including when the pet is hidden. Look in the bottom-right **显示隐藏的图标**
+(`^`) panel if Windows puts it in overflow. Windows controls this placement;
+you can drag the icon onto the taskbar to keep it visible.
+
+- Click or double-click: restore and center the pet on its current screen,
+  then bring it forward. Repeated clicks keep it visible.
+- Right-click: **显示桌宠（居中）**, **打开聊天**, **设置**, or **退出 Meguri**.
+- Hover/menu status: **正在启动**, **服务未就绪**, **正在运行**, or
+  **桌宠已隐藏**. These report startup/visibility state, not a continuous
+  connection check or proof of reminder/message delivery.
+
+If required startup services are unavailable, clicking reveals the startup
+status window. Closing all windows keeps the tray available to reopen the
+desktop; use **退出 Meguri** to stop the app and remove its tray icon. Explicit
+exit also stops desktop reminder polling. Relaunching the native bat focuses
+the existing owner and creates no duplicate tray/runtime. A fully exited app
+has no active icon (Windows may retain an old visual until its shell refreshes).
+
+Tray errors are recorded in `log/desktop-electron.log` or
+`log/desktop-electron.err.log`. `pnpm --filter @meguri/desktop-meguri test:tray`
+checks real Electron tray registration and hidden/closed-window recovery in
+an isolated test profile; it sends no notification or external message.
+
 ## Current parity
 
 Implemented in the native frontend:
