@@ -34,6 +34,23 @@ The plugin is not installed into an existing AstrBot instance by repository
 tests. Production installation into `/opt/astrbot/data/plugins` remains
 approval-gated, and this code does not modify AstrBot data or host networking.
 
+## Owner TimePrism QQ reminders
+
+The desktop publishes selected main-account Todo occurrences to the remote
+Core's authenticated `/v1/reminders/timeprism` inbox. To enable QQ delivery,
+deploy that Core change with `MEGURI_REMINDER_OWNER_SHIZUKI_USER_ID` set to the
+same positive Shizuki user ID selected in desktop settings, then configure this
+plugin with `timeprism_reminders_enabled=true`,
+`timeprism_owner_user_id=<same ID>`, and `timeprism_reminder_target` set to one
+exact AstrBot `platform:FriendMessage:sender` origin for the owner's QQ private
+chat. The target must come from a real AstrBot message origin; a QQ number alone
+is not a complete origin. The plugin never accepts a destination in reminder
+payloads. It keeps a delivery cursor in `timeprism_reminder_state_file` and
+retries when Core or QQ is unavailable. A send interrupted after QQ accepted it
+but before the cursor was persisted can produce one duplicate. Old events are
+skipped after `timeprism_reminder_max_age_minutes` (default 30). No new events
+are generated while the desktop is stopped.
+
 Because this plugin lives in a monorepo subdirectory, AstrBot URL/marketplace
 installation must not point at the monorepo root. Build the standalone archive
 first, then inspect it and install it through the separately approved AstrBot

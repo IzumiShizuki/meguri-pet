@@ -18,6 +18,8 @@ import com.meguri.core.react.ReactDecision;
 import com.meguri.core.react.ReactPlannerDecision;
 import com.meguri.core.react.ReactPlanningContext;
 import dev.langchain4j.data.message.Content;
+import dev.langchain4j.data.message.ImageContent;
+import dev.langchain4j.data.message.PdfFileContent;
 import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
@@ -1088,10 +1090,15 @@ public final class LangChain4jLlmProvider implements LlmProvider {
         return projected;
     }
 
-    /** Selects the configured fallback only for a turn that actually has file content. */
+    /** Extracted documents remain textual; only image/PDF content requires a vision route. */
     private MultimodalModelRoute.Selection selectMultimodalRoute(List<Content> attachmentContent) {
         return multimodalRoute.select(configuredModelId, model, streamingModel,
-                attachmentContent != null && !attachmentContent.isEmpty());
+                requiresVisualModel(attachmentContent));
+    }
+
+    static boolean requiresVisualModel(List<Content> attachmentContent) {
+        return attachmentContent != null && attachmentContent.stream()
+                .anyMatch(content -> content instanceof ImageContent || content instanceof PdfFileContent);
     }
 
     /** Keeps canonical JSON as the first user part while appending verified visual content. */

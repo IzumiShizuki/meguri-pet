@@ -4,7 +4,7 @@ export function desktopOrigin(request) {
     return origin
   if (origin == null
     && String(request.headers['user-agent'] ?? '').includes('Electron/')
-    && request.headers['x-meguri-desktop-client'] === 'airi') {
+    && ['airi', 'meguri'].includes(request.headers['x-meguri-desktop-client'])) {
     // Originless desktop requests do not need a CORS response header.
     return null
   }

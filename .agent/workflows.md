@@ -75,6 +75,16 @@ pnpm web
 Pop-Location
 ```
 
+原生桌面端（`apps/desktop-meguri`）独立于 Core 运行，也承载本机工作 Agent 转交：
+
+```powershell
+pnpm --filter @meguri/desktop-meguri test        # 单元 + preload smoke
+pnpm --filter @meguri/desktop-meguri typecheck
+pnpm --filter @meguri/desktop-meguri build
+```
+
+`test:preload` 需要 `ELECTRON_RUN_AS_NODE` 未设置；该变量在 agent 会话中可能被注入，运行前先 `Remove-Item Env:\ELECTRON_RUN_AS_NODE`。转交能力的边界、配置项和故障码见 [local work agents](../docs/local-work-agents.md)；真实执行器校验必须先确认，不要顺手发一条真任务。
+
 桌面/本地服务的其他入口见 `apps/desktop-airi/package.json`、`local-services/*/package.json` 和 `ops/scripts/start-*.ps1`。普通浏览器和 Electron 的文件打开、资源选择、origin/IPC 约束不能合并成一个无条件的路径。
 
 ## Performance and evidence

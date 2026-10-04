@@ -130,6 +130,7 @@ class MeguriCoreClient(Protocol):
     async def set_override(self, user_id: str, override: dict[str, Any]) -> dict[str, Any]: ...
     async def clear_override(self, scope: str) -> dict[str, Any]: ...
     async def latest_daily_report(self, kind: str) -> dict[str, Any] | None: ...
+    async def timeprism_reminders(self, after: int, limit: int = 50) -> dict[str, Any]: ...
     async def close(self) -> None: ...
 
 
@@ -577,6 +578,14 @@ class HttpMeguriCoreClient:
         if not isinstance(value, dict):
             raise CoreProtocolError("meguri-core response must be an object")
         return value
+
+    async def timeprism_reminders(self, after: int, limit: int = 50) -> dict[str, Any]:
+        return await self._request(
+            "GET",
+            "/v1/reminders/timeprism",
+            params={"after": after, "limit": limit},
+            headers=self._identity_headers("reminder-poller", "reminder-poller"),
+        )
 
     async def close(self) -> None:
         if self._client is not None:

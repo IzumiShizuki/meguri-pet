@@ -12,9 +12,11 @@ function allPresentValuesMatch(values, expected) {
  * identity envelope. If both shapes are present, every supplied value must
  * agree so a caller cannot smuggle a conflicting Core identity past the gate.
  */
-export function matchesDesktopRequestIdentity(payload, desktopSession) {
+export function matchesDesktopRequestIdentity(payload, desktopSession, desktopClient = 'airi') {
   if (!payload || typeof payload !== 'object')
     return false
+
+  const expectedProfile = desktopClient === 'meguri' ? 'desktop_pet' : 'airi'
 
   const identity = payload.identity && typeof payload.identity === 'object'
     ? payload.identity
@@ -25,7 +27,7 @@ export function matchesDesktopRequestIdentity(payload, desktopSession) {
     'local-airi-user',
   ) && allPresentValuesMatch(
     [payload.client_id, identity.client_instance?.profile],
-    'airi',
+    expectedProfile,
   ) && allPresentValuesMatch(
     [payload.session_id, identity.session?.id],
     desktopSession,

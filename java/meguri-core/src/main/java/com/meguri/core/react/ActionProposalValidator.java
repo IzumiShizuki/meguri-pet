@@ -26,7 +26,9 @@ public final class ActionProposalValidator {
                 || descriptor.kind() == CapabilityDescriptor.Kind.RESOURCE;
         boolean promptSkill = descriptor.kind() == CapabilityDescriptor.Kind.PROMPT_SKILL;
         boolean writeCapability = descriptor.kind() == CapabilityDescriptor.Kind.WRITE_TOOL;
-        if (!readCapability && !promptSkill && !writeCapability) {
+        boolean localControl = descriptor.kind()
+                == CapabilityDescriptor.Kind.LOCAL_CONTROL_TOOL;
+        if (!readCapability && !promptSkill && !writeCapability && !localControl) {
             return ValidationResult.rejected("READ_ONLY_MVP_KIND_REJECTED");
         }
         if (promptSkill && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.NONE) {
@@ -35,6 +37,16 @@ public final class ActionProposalValidator {
         if (readCapability && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.NONE
                 && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.READ) {
             return ValidationResult.rejected("READ_ONLY_MVP_SIDE_EFFECT_REJECTED");
+        }
+        if (localControl && (descriptor.sideEffect()
+                != CapabilityDescriptor.SideEffect.EXTERNAL
+                || descriptor.approval()
+                != CapabilityDescriptor.ApprovalRequirement.NONE
+                || descriptor.network().allowed()
+                || descriptor.scopes().isEmpty()
+                || descriptor.inputSchema().additionalProperties()
+                || descriptor.idempotency().required())) {
+            return ValidationResult.rejected("LOCAL_CONTROL_POLICY_REJECTED");
         }
         if (writeCapability) {
             if (descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE) {

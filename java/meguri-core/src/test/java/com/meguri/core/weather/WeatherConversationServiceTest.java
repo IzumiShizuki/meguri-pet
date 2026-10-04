@@ -288,6 +288,34 @@ class WeatherConversationServiceTest {
                 .contains("tool.started", "tool.completed");
     }
 
+    @Test
+    void weatherTopicObjectionsAreNotTreatedAsFreshWeatherRequests() {
+        // 2026-09-15 fix: 用户抱怨"你怎么一直在说天气"不应触发天气直答,
+        // 否则 core 会跳过 LLM 直接回复今日天气, 话题永远切不出去。
+        WeatherConversationService conversation = new WeatherConversationService(
+                weather(location -> Mono.just(briefing(location))));
+
+        assertThat(List.of(
+                "你怎么一直在说天气",
+                "为什么你总在报天气",
+                "别再说天气了",
+                "不要说天气了烦不烦",
+                "你又在讲天气，能不能聊点别的",
+                "一直正事不干就知道报天气"))
+                .allSatisfy(message -> assertThat(conversation.classify(message))
+                        .as(message).isEqualTo(WeatherConversationService.Intent.NONE));
+
+        // 真正的新天气请求仍应识别
+        List<String> genuine = List.of(
+                "今天天气怎么样",
+                "明天会下雨吗",
+                "现在气温多少度",
+                "湿度大不大");
+        assertThat(genuine)
+                .allSatisfy(message -> assertThat(conversation.classify(message))
+                        .as(message).isEqualTo(WeatherConversationService.Intent.WEATHER));
+    }
+
     private WeatherService weather(WeatherGateway gateway) {
         return new WeatherService(gateway, MAPPER, true, tempDir.resolve("weather-location.json"),
                 QIANTANG, Clock.systemUTC(), 8, 18);

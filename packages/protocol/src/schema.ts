@@ -62,8 +62,9 @@ export function parseTurnCancelResponse(value: unknown): TurnCancelResponse {
 }
 
 export function parseSessionSnapshot(value: unknown): SessionSnapshot {
-  validateDto('SessionSnapshot', value)
-  return value as SessionSnapshot
+  const normalized = normalizeNullableSnapshotErrors(value)
+  validateDto('SessionSnapshot', normalized)
+  return normalized as SessionSnapshot
 }
 
 export function parseErrorResponse(value: unknown): ErrorResponse {
@@ -73,6 +74,21 @@ export function parseErrorResponse(value: unknown): ErrorResponse {
 
 function definitions(): Record<string, Schema> {
   return adapterProtocolSchema.$defs as Record<string, Schema>
+}
+
+function normalizeNullableSnapshotErrors(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.turns))
+    return value
+  let changed = false
+  const turns = value.turns.map((turn) => {
+    if (!isRecord(turn) || turn.error !== null)
+      return turn
+    const normalizedTurn = { ...turn }
+    delete normalizedTurn.error
+    changed = true
+    return normalizedTurn
+  })
+  return changed ? { ...value, turns } : value
 }
 
 function validateNode(schema: Schema, value: unknown, dto: string, path: string): void {

@@ -34,7 +34,14 @@ public record CapabilityDescriptor(
         CachePolicy cache,
         IdempotencyPolicy idempotency) {
 
-    public enum Kind { PROMPT_SKILL, RESOURCE, READ_TOOL, WRITE_TOOL, REMOTE_AGENT }
+    public enum Kind {
+        PROMPT_SKILL,
+        RESOURCE,
+        READ_TOOL,
+        WRITE_TOOL,
+        LOCAL_CONTROL_TOOL,
+        REMOTE_AGENT
+    }
     public enum SideEffect { NONE, READ, WRITE, EXTERNAL }
     public enum ApprovalRequirement { NONE, RISK_BASED, ALWAYS }
     public enum Mode { FAST, BALANCED, DEEP }
@@ -78,6 +85,36 @@ public record CapabilityDescriptor(
 
         if (kind == Kind.WRITE_TOOL && sideEffect != SideEffect.WRITE) {
             throw new IllegalArgumentException("WRITE_TOOL must declare WRITE side effect");
+        }
+        if (kind == Kind.LOCAL_CONTROL_TOOL) {
+            if (sideEffect != SideEffect.EXTERNAL) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL must declare EXTERNAL side effect");
+            }
+            if (approval != ApprovalRequirement.NONE) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL cannot require secondary approval");
+            }
+            if (scopes.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL requires a server-authorized scope");
+            }
+            if (network.allowed()) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL cannot allow network access");
+            }
+            if (!requiredSecrets.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL cannot require configured secrets");
+            }
+            if (inputSchema.additionalProperties()) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL requires a closed input schema");
+            }
+            if (idempotency.required()) {
+                throw new IllegalArgumentException(
+                        "LOCAL_CONTROL_TOOL cannot require idempotency metadata");
+            }
         }
         if (kind == Kind.PROMPT_SKILL && sideEffect != SideEffect.NONE) {
             throw new IllegalArgumentException("PROMPT_SKILL cannot have side effects");

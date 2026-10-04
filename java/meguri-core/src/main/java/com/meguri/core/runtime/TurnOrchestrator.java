@@ -104,6 +104,7 @@ import com.meguri.core.weather.WeatherConversationService.TurnWeatherContext;
 import com.meguri.core.weather.WeatherConversationService.TurnResolution;
 import com.meguri.core.skill.FrozenSkillSnapshot;
 import com.meguri.core.skill.SkillDisclosureService;
+import com.meguri.core.shizuki.ShizukiControlIntent;
 import com.meguri.core.skill.SkillSelectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -1110,9 +1111,11 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 "analysis", "分析", "reason", "推理", "计划")) {
             intents.add("architecture");
         }
-        boolean explicitAgent = request.agentProposal() != null
+        boolean shizukiControl = ShizukiControlIntent.isExplicitRequest(normalized);
+        boolean explicitAgent = request.agentProposal() != null || shizukiControl
                 || containsAny(normalized, "agent", "仓库分析", "repository analysis", "多步骤执行");
         if (explicitAgent) intents.add("repository_analysis");
+        if (shizukiControl) intents.add("tool_required");
         boolean externalObservation = request.retrievalMode() != RetrievalMode.NONE
                 && weatherResolution(record).intent() != WeatherConversationService.Intent.NONE;
         if (externalObservation) intents.add("tool_required");

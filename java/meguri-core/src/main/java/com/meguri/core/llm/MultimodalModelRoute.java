@@ -32,13 +32,13 @@ public final class MultimodalModelRoute {
             String primaryModelId,
             ChatModel primaryModel,
             StreamingChatModel primaryStreamingModel,
-            boolean hasMultimodalContent) {
-        if (!hasMultimodalContent || primaryModels.contains(normalized(primaryModelId))) {
+            boolean hasVisualContent) {
+        if (!hasVisualContent || primaryModels.contains(normalized(primaryModelId))) {
             return new Selection(primaryModel, primaryStreamingModel, primaryModelId);
         }
         if (fallbackModel == null || fallbackModelId.isBlank()) {
             throw new LlmProviderException(
-                    "The selected model is not configured for multimodal attachments and "
+                    "The selected model is not configured for image or PDF attachments and "
                             + "MEGURI_LLM_MULTIMODAL_FALLBACK_MODEL is not configured.");
         }
         return new Selection(fallbackModel, fallbackStreamingModel, fallbackModelId);

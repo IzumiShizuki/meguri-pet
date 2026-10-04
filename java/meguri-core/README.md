@@ -282,6 +282,20 @@ template and sends the resulting image with the existing bilingual delivery
 text. Browser-history fallback uses `--` for watch time and completion because
 page visits cannot supply those values.
 
+### Owner TimePrism reminder inbox
+
+`POST /v1/reminders/timeprism` accepts bounded, idempotent Todo occurrence
+uploads from the authenticated `desktop_pet` client, and `GET` on the same path
+provides a cursor feed to the authenticated `astrbot` reminder poller. Both
+routes are unavailable unless Core authentication is enabled and
+`MEGURI_REMINDER_OWNER_SHIZUKI_USER_ID` is set to the selected positive Shizuki
+user ID. `MEGURI_REMINDER_DIR` selects the durable inbox directory (default
+`${user.home}/.meguri/reminders`). In a read-only container, configure a writable
+persistent mount before enabling reminders. The inbox retains at most 1000 events for
+seven days. The desktop holds the Shizuki token; Core stores only a bounded
+title, account/item IDs, times, event ID, and sequence. AstrBot owns the QQ
+target configuration and successful-send cursor.
+
 The report generator can also be invoked directly:
 
 ```powershell

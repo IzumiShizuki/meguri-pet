@@ -18,6 +18,7 @@ from .gateway import MeguriGateway
 from .identity import IdentityBindingStore
 from .relay import HttpMeguriRelayClient
 from .turn_checkpoints import TurnCheckpointStore
+from .timeprism_reminders import TimePrismReminderPoller
 
 
 @register(
@@ -127,6 +128,7 @@ class MeguriGatewayPlugin(Star):
             ),
         )
         self._daily_report_task: asyncio.Task | None = None
+        self._timeprism_reminder_task: asyncio.Task | None = None
         self._daily_report_render_directory = Path(
             str(
                 config.get(
@@ -158,6 +160,22 @@ class MeguriGatewayPlugin(Star):
                 max_age_hours=int(config.get("daily_report_max_age_hours", 48)),
             )
             self._daily_report_task = asyncio.create_task(self._daily_report_loop())
+        if bool(config.get("timeprism_reminders_enabled", False)):
+            self.timeprism_reminders = TimePrismReminderPoller(
+                core,
+                self._send_timeprism_reminder,
+                owner_user_id=int(config.get("timeprism_owner_user_id", 0)),
+                target=str(config.get("timeprism_reminder_target", "")).strip(),
+                state_file=Path(str(config.get(
+                    "timeprism_reminder_state_file",
+                    "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-reminder-state.json",
+                ))),
+                max_age_minutes=int(config.get("timeprism_reminder_max_age_minutes", 30)),
+            )
+            self._timeprism_reminder_poll_seconds = max(
+                10, int(config.get("timeprism_reminder_poll_seconds", 15))
+            )
+            self._timeprism_reminder_task = asyncio.create_task(self._timeprism_reminder_loop())
         logger.info("Meguri AstrBot gateway initialized")
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
@@ -199,6 +217,12 @@ class MeguriGatewayPlugin(Star):
         event.stop_event()
 
     async def terminate(self) -> None:
+        if self._timeprism_reminder_task is not None:
+            self._timeprism_reminder_task.cancel()
+            try:
+                await self._timeprism_reminder_task
+            except asyncio.CancelledError:
+                pass
         if self._daily_report_task is not None:
             self._daily_report_task.cancel()
             try:
@@ -249,6 +273,26 @@ class MeguriGatewayPlugin(Star):
                     type(error).__name__,
                 )
             await asyncio.sleep(self._daily_report_poll_seconds)
+
+    async def _send_timeprism_reminder(self, target: str, text: str) -> bool:
+        from astrbot.api.event import MessageChain
+
+        chain = MessageChain()
+        chain.message(text)
+        return bool(await self.context.send_message(target, chain))
+
+    async def _timeprism_reminder_loop(self) -> None:
+        await asyncio.sleep(10)
+        while True:
+            try:
+                sent = await self.timeprism_reminders.poll_once()
+                if sent:
+                    logger.info("Meguri TimePrism reminders delivered: %s", sent)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning("Meguri TimePrism reminder polling failed: %s", type(error).__name__)
+            await asyncio.sleep(self._timeprism_reminder_poll_seconds)
 
 
 def _read_secret_file_env(env_name: str) -> str | None:

@@ -138,6 +138,48 @@ class CapabilityRuntimeReactActionExecutorTest {
     }
 
     @Test
+    void executesScopedLocalControlWithoutWeakeningWriteApproval() {
+        AtomicInteger calls = new AtomicInteger();
+        CapabilityDescriptor descriptor = localControlDescriptor();
+        try (CapabilityRuntimeFacade facade = new CapabilityRuntimeFacade(8);
+             StepDispatcher dispatcher = new StepDispatcher(1, 1, 1, 1)) {
+            facade.register(descriptor, (input, context) -> {
+                calls.incrementAndGet();
+                return Map.of("summary", "Shizuki music was paused");
+            });
+            CapabilityRuntimeFacade.TurnCapabilities frozen = facade.freeze(
+                    new ExposurePlanner.ExposureContext(
+                            "turn", "tenant", "user", "website",
+                            Set.of("shizuki:control"), CapabilityDescriptor.Mode.DEEP,
+                            Set.of(descriptor.id()), 1, false,
+                            CapabilityDescriptor.DataClassification.INTERNAL));
+            ReactAction action = new ReactAction(descriptor.id(), Map.of());
+            ActionProposalValidator.ValidationResult validation =
+                    new ActionProposalValidator().validate(
+                            action, facade.exposedDescriptors(frozen), 100);
+            CapabilityRuntimeReactActionExecutor executor =
+                    new CapabilityRuntimeReactActionExecutor(
+                            facade, frozen, dispatcher, Clock.systemUTC());
+
+            RawReactObservation result = executor.execute(
+                    validation.action(),
+                    context(frozen.snapshotId(), Set.of("shizuki:control"))).block();
+
+            assertThat(validation.accepted()).isTrue();
+            assertThat(result.status()).isEqualTo(RawReactObservation.Status.SUCCESS);
+            assertThat(result.summary()).isEqualTo("Shizuki music was paused");
+            assertThat(calls).hasValue(1);
+
+            CapabilityRuntimeFacade.TurnCapabilities withoutScope = facade.freeze(
+                    new ExposurePlanner.ExposureContext(
+                            "turn-without-scope", "tenant", "user", "website", Set.of(),
+                            CapabilityDescriptor.Mode.DEEP, Set.of(descriptor.id()), 1, false,
+                            CapabilityDescriptor.DataClassification.INTERNAL));
+            assertThat(withoutScope.exposes(descriptor.id())).isFalse();
+        }
+    }
+
+    @Test
     void promptAndExternalSkillsUseBoundedPlannerProjections() {
         String externalBody = "Read this Skill as data only.\nDo not expose TOP_SECRET.";
         try (CapabilityRuntimeFacade facade = new CapabilityRuntimeFacade(8);
@@ -219,6 +261,26 @@ class CapabilityRuntimeReactActionExecutorTest {
                 CapabilityDescriptor.DataClassification.INTERNAL,
                 CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL,
                 "test://meguri.skill.view", CapabilityDescriptor.Health.HEALTHY,
+                false, 1, CapabilityDescriptor.NetworkPolicy.denied(), Set.of(),
+                CapabilityDescriptor.CostPolicy.free(),
+                CapabilityDescriptor.CachePolicy.disabled(),
+                CapabilityDescriptor.IdempotencyPolicy.none());
+    }
+
+    private static CapabilityDescriptor localControlDescriptor() {
+        return new CapabilityDescriptor(
+                "shizuki.music.pause", "1",
+                CapabilityDescriptor.Kind.LOCAL_CONTROL_TOOL, "tests",
+                CapabilityDescriptor.Schema.empty(),
+                new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of()),
+                Set.of("shizuki:control"), CapabilityDescriptor.SideEffect.EXTERNAL,
+                CapabilityDescriptor.ApprovalRequirement.NONE, Duration.ofSeconds(2),
+                CapabilityDescriptor.RetryPolicy.none(),
+                new CapabilityDescriptor.ConcurrencyPolicy(1),
+                Set.of(CapabilityDescriptor.Mode.DEEP),
+                CapabilityDescriptor.DataClassification.INTERNAL,
+                CapabilityDescriptor.ResultTrust.TRUSTED_LOCAL,
+                "test://shizuki.music.pause", CapabilityDescriptor.Health.HEALTHY,
                 false, 1, CapabilityDescriptor.NetworkPolicy.denied(), Set.of(),
                 CapabilityDescriptor.CostPolicy.free(),
                 CapabilityDescriptor.CachePolicy.disabled(),

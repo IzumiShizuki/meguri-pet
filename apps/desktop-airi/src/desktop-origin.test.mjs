@@ -16,6 +16,15 @@ test('allows the captured originless AIRI provider request', () => {
   }), null)
 })
 
+test('allows the first-party Meguri desktop request', () => {
+  assert.equal(desktopOrigin({
+    headers: {
+      'user-agent': 'Meguri Desktop Electron/43.1.1',
+      'x-meguri-desktop-client': 'meguri',
+    },
+  }), null)
+})
+
 test('keeps the existing opaque and local development origins', () => {
   assert.equal(desktopOrigin({ headers: { origin: 'null' } }), 'null')
   assert.equal(desktopOrigin({ headers: { origin: 'http://127.0.0.1:5173' } }), 'http://127.0.0.1:5173')

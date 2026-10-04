@@ -172,6 +172,15 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
                     ObservationTrustLabel.UNTRUSTED_EXTERNAL_SKILL,
                     tokenEstimate(summary));
         }
+        if (capabilityId.startsWith("shizuki.")) {
+            String summary = string(result.data().get("summary"));
+            if (summary.isBlank()) summary = "Shizuki local operation completed";
+            return new ProjectedResult(
+                    summary,
+                    result.data(),
+                    ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT,
+                    tokenEstimate(summary));
+        }
         return new ProjectedResult(
                 result.display(), result.data(),
                 ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, 0);

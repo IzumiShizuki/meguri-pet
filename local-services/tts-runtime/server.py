@@ -109,7 +109,7 @@ def start_upstream() -> subprocess.Popen[bytes]:
     if not REF_AUDIO.is_file():
         raise FileNotFoundError(f"TTS reference audio not found: {REF_AUDIO}")
     GPT_ROOT.mkdir(parents=True, exist_ok=True)
-    log_dir = Path(os.getenv("MEGURI_TTS_LOG_DIR", r"D:\environment\logs\meguri"))
+    log_dir = Path(os.getenv("MEGURI_TTS_LOG_DIR", str(ROOT / "log")))
     log_dir.mkdir(parents=True, exist_ok=True)
     log = (log_dir / "gpt-sovits-api-v2.log").open("ab")
     return subprocess.Popen(

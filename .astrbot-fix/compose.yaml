@@ -1,0 +1,23 @@
+services:
+  astrbot:
+    image: m.daocloud.io/docker.io/soulter/astrbot:v4.28.1
+    container_name: astrbot
+    restart: always
+    network_mode: host
+    environment:
+      - TZ=Asia/Shanghai
+      - HTTP_PROXY=${MEGURI_PROXY_URL:?set MEGURI_PROXY_URL}
+      - HTTPS_PROXY=${MEGURI_PROXY_URL:?set MEGURI_PROXY_URL}
+      - ALL_PROXY=${MEGURI_PROXY_URL:?set MEGURI_PROXY_URL}
+      - http_proxy=${MEGURI_PROXY_URL:?set MEGURI_PROXY_URL}
+      - https_proxy=${MEGURI_PROXY_URL:?set MEGURI_PROXY_URL}
+      - all_proxy=${MEGURI_PROXY_URL:?set MEGURI_PROXY_URL}
+      # 2026-09 fix: clash-core 到腾讯(qq.com)线路故障导致 QQ 官方 bot 登录 SSL EOF.
+      # 腾讯域名走直连, 其余流量仍走代理.
+      - NO_PROXY=qq.com,.qq.com
+      - no_proxy=qq.com,.qq.com
+    volumes:
+      - /opt/astrbot/data:/AstrBot/data
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/astrbot/patch_botpy.py:/patch_botpy.py:ro
+    command: ["sh", "-lc", "python /patch_botpy.py && exec python main.py"]

@@ -31,3 +31,8 @@ Agent handoff contracts live under `ops/contracts/`. Runtime staging acceptance
 must replace `ops/acceptance/blocked.staging-acceptance.json` with checksummed,
 all-passed evidence before any promotion claim. The current blocked artifact is
 intentional and is validated by `check_staging_acceptance.py` returning nonzero.
+
+For day-to-day diagnosis across the local AIRI and server AstrBot exits, start
+with the Chinese [Agent two-environment operations runbook](runbooks/agent-two-environment-operations.md).
+It inventories supported capabilities, maintenance work, runtime links,
+timeouts, failure ownership, and minimum safe repair/verification steps.

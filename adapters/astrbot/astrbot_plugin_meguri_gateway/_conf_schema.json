@@ -69,6 +69,36 @@
     "type": "bool",
     "default": false
   },
+  "timeprism_reminders_enabled": {
+    "description": "Send owner TimePrism Todo reminders to one QQ private chat",
+    "type": "bool",
+    "default": false
+  },
+  "timeprism_owner_user_id": {
+    "description": "Exact Shizuki user ID selected as the main account",
+    "type": "int",
+    "default": 0
+  },
+  "timeprism_reminder_target": {
+    "description": "Exact AstrBot FriendMessage origin for the owner's QQ private chat",
+    "type": "string",
+    "default": ""
+  },
+  "timeprism_reminder_poll_seconds": {
+    "description": "Seconds between reminder feed polls; minimum 10",
+    "type": "int",
+    "default": 15
+  },
+  "timeprism_reminder_max_age_minutes": {
+    "description": "Skip old events rather than sending stale reminders after downtime",
+    "type": "int",
+    "default": 30
+  },
+  "timeprism_reminder_state_file": {
+    "description": "Persistent owner reminder delivery cursor outside the plugin source directory",
+    "type": "string",
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-reminder-state.json"
+  },
   "daily_report_targets": {
     "description": "Exact AstrBot unified message origins receiving daily reports",
     "type": "list",

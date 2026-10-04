@@ -41,6 +41,11 @@ LLM unless `MEGURI_LLM_PROVIDER=openai-compatible` and an API-key file are
 configured explicitly. See `java/meguri-core/README.md` for Maven commands and
 the Python memory bridge configuration.
 
+The trusted local launcher also enables a bounded, loopback-only adapter for
+controlling the Shizuki desktop app. See `docs/shizuki-desktop-control.md` for
+startup instructions, supported natural-language operations, security
+boundaries, and troubleshooting.
+
 ## Local text-model MVP
 
 The `codex/mvp-auto-fit` branch carries a reproducible quick-fit path for the

@@ -1,5 +1,6 @@
 export * from './dto.ts'
 export * from './negotiation.ts'
+export * from './observation-events.ts'
 export * from './schema.ts'
 export * from './sse.ts'
 export * from './turn-events.ts'

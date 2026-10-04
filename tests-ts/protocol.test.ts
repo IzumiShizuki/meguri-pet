@@ -5,6 +5,7 @@ import {
   SequenceGapError,
   SessionTurnReducer,
   SseTurnEventParser,
+  parseSessionSnapshot,
   parseTurnEventEnvelope,
   type TurnEventEnvelope,
   type TurnEventType,
@@ -62,6 +63,70 @@ test('event parser advances optional unknown events but rejects required ones', 
     () => parseTurnEventEnvelope({ ...event(1, 'turn.started'), sequence: 0 }),
     /positive integer/,
   )
+})
+
+test('event parser normalizes nullable required extension and keeps present values strict', () => {
+  const nullable = parseTurnEventEnvelope({
+    ...event(1, 'turn.started'),
+    required_extension: null,
+  })
+  assert.equal(nullable.required_extension, undefined)
+
+  const omitted = parseTurnEventEnvelope(event(1, 'turn.started'))
+  assert.equal(omitted.required_extension, undefined)
+
+  const supported = parseTurnEventEnvelope({
+    ...event(1, 'turn.started'),
+    required_extension: 'future.motion.v2',
+  }, { supportedExtensions: ['future.motion.v2'] })
+  assert.equal(supported.required_extension, 'future.motion.v2')
+
+  assert.throws(() => parseTurnEventEnvelope({
+    ...event(1, 'turn.started'),
+    required_extension: '',
+  }), /required_extension must be a non-empty string/)
+  assert.throws(() => parseTurnEventEnvelope({
+    ...event(1, 'turn.started'),
+    required_extension: 42,
+  }), /required_extension must be a non-empty string/)
+})
+
+test('SSE parser accepts Core envelopes with a nullable required extension', () => {
+  const parser = new SseTurnEventParser()
+  const nullableEnvelope = {
+    ...event(1, 'turn.started'),
+    required_extension: null,
+  }
+  const payload = `id: 1\nevent: turn.started\ndata: ${JSON.stringify(nullableEnvelope)}\n\n`
+  const parsed = parser.push(payload)
+  assert.equal(parsed.length, 1)
+  assert.equal(parsed[0].type, 'turn.started')
+  assert.equal(parsed[0].required_extension, undefined)
+  parser.finish()
+})
+
+test('session snapshot normalizes nullable turn errors and keeps present values strict', () => {
+  const snapshot = {
+    protocol_version: '1.0',
+    session_id: 'session-1',
+    sequence: 1,
+    turns: [{ turn_id: 'turn-1', status: 'completed', text: 'ready' }],
+    created_at: '2026-08-19T00:00:00Z',
+  }
+  const nullable = parseSessionSnapshot({
+    ...snapshot,
+    turns: [{ ...snapshot.turns[0], error: null }],
+  })
+  assert.equal(nullable.turns[0].error, undefined)
+  assert.equal(parseSessionSnapshot(snapshot).turns[0].error, undefined)
+  assert.equal(parseSessionSnapshot({
+    ...snapshot,
+    turns: [{ ...snapshot.turns[0], status: 'failed', error: 'provider failed' }],
+  }).turns[0].error, 'provider failed')
+  assert.throws(() => parseSessionSnapshot({
+    ...snapshot,
+    turns: [{ ...snapshot.turns[0], error: 42 }],
+  }), /SessionSnapshot\/turns\/0\/error: must be a string/)
 })
 
 test('reducer assembles text and ignores duplicate replay', () => {

@@ -24,6 +24,7 @@
    - [module-index.md](module-index.md)：按功能定位入口文件、API、包职责和对应测试。
    - [workflows.md](workflows.md)：本机启动、测试、构建、基准和运维命令。
    - [guardrails.md](guardrails.md)：离线默认、秘密、外部状态、Git 和 OpenSpec 安全边界。
+   - [双环境运维手册](../ops/runbooks/agent-two-environment-operations.md)：本机 AIRI、服务器 AstrBot、功能/工作/链接清单及故障修复矩阵。
 
 4. 先执行与任务最接近的只读检查，再编辑文件；完成后运行对应测试和 `git diff --check`。
 

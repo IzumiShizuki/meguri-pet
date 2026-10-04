@@ -151,7 +151,8 @@ export function parseTurnEventEnvelope(
   const type = stringField(value, 'type')
   if (typeof value.required !== 'boolean')
     throw new TypeError('required must be a boolean')
-  if (value.required_extension !== undefined) {
+  const requiredExtension = value.required_extension
+  if (requiredExtension !== undefined && requiredExtension !== null) {
     const extension = stringField(value, 'required_extension')
     assertRequiredExtensions([extension], options.supportedExtensions ?? [])
   }
@@ -181,8 +182,11 @@ export function parseTurnEventEnvelope(
   const createdAt = value.created_at ?? metadata.created_at
   if (typeof createdAt !== 'string' || createdAt.length === 0)
     throw new TypeError('created_at must be a non-empty string')
+  const normalizedValue = { ...value }
+  if (requiredExtension === undefined || requiredExtension === null)
+    delete normalizedValue.required_extension
   return {
-    ...value,
+    ...normalizedValue,
     protocol_version: protocolVersion,
     replay_policy: replayPolicy,
     created_at: createdAt,

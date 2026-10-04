@@ -21,6 +21,19 @@ public final class WeatherConversationService {
     private static final List<String> WEATHER_TERMS = List.of(
             "天气", "下雨", "降雨", "雨伞", "带伞", "温度", "气温", "湿度", "风速",
             "大风", "台风", "晴天", "阴天", "多云", "雷雨", "下雪", "雾霾");
+
+    // 2026-09-15 fix: 抱怨/否定天气话题的句子(如"你怎么一直在说天气""别再说天气了")
+    // 虽然包含天气关键词, 但并不是新的天气请求。若不识别, core 会对这类句子直接
+    // 走 deterministic 天气直答(连 LLM 都不调用), 用户永远绕不出天气话题。
+    private static final List<Pattern> WEATHER_TOPIC_OBJECTIONS = List.of(
+            Pattern.compile("别(?:再|老|总|一直)?(?:说|提|报|谈|问|聊|讲|重复?).{0,6}(?:天气|预报|气温|温度)"),
+            Pattern.compile("不(?:要|想|用|许)(?:再|老)?(?:说|提|报|谈|问|聊|讲|重复?).{0,6}(?:天气|预报|气温|温度)"),
+            Pattern.compile("不(?:提|说|谈|报|聊|讲).{0,4}(?:天气|预报|气温|温度)"),
+            Pattern.compile("(?:怎么|为什么|为啥|为何).{0,8}(?:你|你们|你俩)?(?:一直|总是|老是|反复|天天|总在|又来|还)?(?:在)?(?:说|提|报|谈|问|聊|讲|重复?)?.{0,6}(?:天气|预报|气温|温度|雨)"),
+            Pattern.compile("(?:总是|一直|老是|天天|反复|成天|老).{0,10}(?:说|提|报|谈|聊|讲).{0,6}(?:天气|预报|气温|温度)"),
+            Pattern.compile("又(?:在|来)?(?:说|提|报|谈|聊|讲|念).{0,6}(?:天气|预报|气温|温度)"),
+            Pattern.compile("(?:天气|报天气|天气预报).{0,8}(?:烦|腻|够了|能不能别|别再|别说|不提|不要|别再说)"),
+            Pattern.compile("(?:别再|不要|不能|不准)(?:跟我)?(?:说|提|报|谈|聊|讲).{0,4}(?:天气|预报)"));
     private static final List<String> OUTING_TERMS = List.of(
             "我要出门", "我出门了", "准备出门", "要出门了", "出门一下", "出去一下", "出去一趟",
             "去上班了", "去上学了", "去买菜", "去拿快递", "要回家了", "准备回家", "我先走了");
@@ -59,7 +72,12 @@ public final class WeatherConversationService {
                 .replaceAll("[。！？!?，,~]+$", "");
         if (OUTING_TERMS.stream().anyMatch(normalized::contains)
                 || OUTING_ACTION.matcher(normalized).find()) return Intent.OUTING;
-        if (WEATHER_TERMS.stream().anyMatch(normalized::contains)) return Intent.WEATHER;
+        if (WEATHER_TERMS.stream().anyMatch(normalized::contains)) {
+            for (Pattern objection : WEATHER_TOPIC_OBJECTIONS) {
+                if (objection.matcher(normalized).find()) return Intent.NONE;
+            }
+            return Intent.WEATHER;
+        }
         return Intent.NONE;
     }
 

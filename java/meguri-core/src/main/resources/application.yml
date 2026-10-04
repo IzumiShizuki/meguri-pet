@@ -4,7 +4,9 @@ spring:
   config:
     import: optional:classpath:application-notion.yml
   codec:
-    max-in-memory-size: 512KB
+    # The loopback gateway retains a 1 MB default and only admits this larger
+    # envelope for turns carrying a validated readable-attachment marker.
+    max-in-memory-size: ${MEGURI_HTTP_MAX_IN_MEMORY_SIZE:12MB}
   profiles:
     default: local-mock
   main:
@@ -16,6 +18,12 @@ server:
   shutdown: graceful
 
 meguri:
+  shizuki:
+    # Local desktop control is opt-in. The launcher grants the matching scope.
+    enabled: ${MEGURI_SHIZUKI_ENABLED:false}
+    manifest-path: ${MEGURI_SHIZUKI_MANIFEST_PATH:}
+    connect-timeout-ms: ${MEGURI_SHIZUKI_CONNECT_TIMEOUT_MS:750}
+    request-timeout-ms: ${MEGURI_SHIZUKI_REQUEST_TIMEOUT_MS:2000}
   skills:
     store-mode: ${MEGURI_SKILL_STORE_MODE:memory}
     data-root: ${MEGURI_SKILL_DATA_ROOT:${user.home}/.meguri}
@@ -43,6 +51,9 @@ meguri:
     strategy-revision: ${MEGURI_CONTEXT_STRATEGY_REVISION:context-refactoring-v1-deterministic}
   daily-reports:
     directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
+  reminders:
+    directory: ${MEGURI_REMINDER_DIR:${user.home}/.meguri/reminders}
+    owner-shizuki-user-id: ${MEGURI_REMINDER_OWNER_SHIZUKI_USER_ID:0}
   rag-path: ${MEGURI_RAG_PATH:../../datasets/meguri/exports/rag/chunks_train.jsonl}
   rag:
     bridge-enabled: ${MEGURI_RAG_BRIDGE_ENABLED:false}

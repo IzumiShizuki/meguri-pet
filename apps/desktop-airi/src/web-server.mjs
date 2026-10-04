@@ -52,7 +52,7 @@ function applyDesktopCors(request, response) {
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   response.setHeader(
     'Access-Control-Allow-Headers',
-    'Accept, Content-Type, Idempotency-Key, X-Meguri-Desktop-Client, X-Meguri-Desktop-Session, X-Meguri-Multimodal',
+    'Accept, Content-Type, Idempotency-Key, Last-Event-ID, Meguri-Protocol-Version, X-Meguri-Desktop-Client, X-Meguri-Desktop-Session, X-Meguri-Multimodal',
   )
   return true
 }
@@ -95,9 +95,10 @@ async function proxyCoreRequest(request, response, requestUrl) {
   if (request.method === 'OPTIONS') {
     response.writeHead(204); response.end(); return
   }
+  const desktopClient = String(request.headers['x-meguri-desktop-client'] ?? '')
   if (!String(request.headers['user-agent'] ?? '').includes('Electron/')
-    || request.headers['x-meguri-desktop-client'] !== 'airi') {
-    response.writeHead(403); response.end('AIRI desktop client required'); return
+    || !['airi', 'meguri'].includes(desktopClient)) {
+    response.writeHead(403); response.end('Supported desktop client required'); return
   }
   const desktopSession = String(request.headers['x-meguri-desktop-session'] ?? '')
   if (!/^[A-Za-z0-9._:-]{1,200}$/.test(desktopSession)) {
@@ -106,6 +107,9 @@ async function proxyCoreRequest(request, response, requestUrl) {
   const corePath = requestUrl.pathname.slice(coreProxyPrefix.length)
   const resourceRequest = corePath === '/v1/resources' || corePath.startsWith('/v1/resources/')
   const documentEditRequest = corePath === '/v1/documents' || corePath.startsWith('/v1/documents/')
+  const skillManagementRequest = corePath === '/internal/v1/skills'
+    || corePath.startsWith('/internal/v1/skills/')
+    || corePath.startsWith('/internal/v1/skill-sources/')
   const multimodalRequested = request.headers['x-meguri-multimodal'] === 'true'
   const controller = new AbortController()
   const abortUpstream = () => {
@@ -124,7 +128,7 @@ async function proxyCoreRequest(request, response, requestUrl) {
     try { payload = JSON.parse(body.toString('utf8')) } catch {
       response.writeHead(400); response.end('Invalid JSON body'); return
     }
-    if (!matchesDesktopRequestIdentity(payload, desktopSession)) {
+    if (!matchesDesktopRequestIdentity(payload, desktopSession, desktopClient)) {
       response.writeHead(403); response.end('Desktop request identity mismatch'); return
     }
     hasMultimodalContent = hasMultimodalAttachment(payload)
@@ -135,7 +139,8 @@ async function proxyCoreRequest(request, response, requestUrl) {
       localMultimodalSessions.set(desktopSession, Date.now() + localMultimodalSessionTtlMs)
     }
   }
-  const useLocalCore = resourceRequest || documentEditRequest || sessionUsesLocalMultimodalCore(desktopSession)
+  const useLocalCore = resourceRequest || documentEditRequest || skillManagementRequest
+    || sessionUsesLocalMultimodalCore(desktopSession)
   if (!coreToken && !useLocalCore) {
     response.writeHead(503); response.end('Meguri Core token is not configured'); return
   }
@@ -148,7 +153,7 @@ async function proxyCoreRequest(request, response, requestUrl) {
     'Idempotency-Key': String(request.headers['idempotency-key'] ?? ''),
     'X-Meguri-Tenant-ID': 'meguri-staging',
     'X-Meguri-User-ID': 'local-airi-user',
-    'X-Meguri-Client-ID': 'airi',
+    'X-Meguri-Client-ID': desktopClient === 'meguri' ? 'desktop_pet' : 'airi',
     'X-Meguri-Session-ID': desktopSession,
   }
   // The remote-core bearer token is never sent to the loopback core.

@@ -14,6 +14,7 @@ node_modules/
 dist/
 out/
 coverage/
+.codex-runtime/
 
 # Local datasets and source-derived assets. These stay outside Git.
 /data/
@@ -30,6 +31,8 @@ coverage/
 !/reports/environment-final.md
 /output/
 /tmp/
+/log/
+/apps/desktop-meguri/.meguri-forwarding-test-*/
 /baselines/
 /training/*
 !/training/llm/

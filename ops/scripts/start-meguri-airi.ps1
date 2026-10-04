@@ -50,6 +50,7 @@ $coreHeaders = @{
     Origin = 'null'
     'User-Agent' = 'Mozilla/5.0 Electron/43.1.1'
     'X-Meguri-Desktop-Client' = 'airi'
+    'X-Meguri-Desktop-Session' = 'launcher-health-check'
 }
 $coreHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:5173/core/health' -Headers $coreHeaders -TimeoutSec 10
 if ($coreHealth.status -ne 'ok' -or $coreHealth.runtime -ne 'java') {
