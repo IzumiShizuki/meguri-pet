@@ -55,3 +55,7 @@ The local `shizuki-site` companion change contains zero-minute normalization, bu
 ## Final assessment
 
 No critical implementation/spec mismatch found within the declared local-reminder scope. The production and hardware limits above remain explicit verification warnings. The unrelated PixPin and TTFT changes retain their existing incomplete checkboxes. At this implementation-verification checkpoint, the change had not been archived or deployed.
+
+## Subsequent authorized local deployment
+
+After the user's commit/deployment request, the implementation was committed as `69c696a` and its renderer rebuilt. The native bat first launched it at 20:29:54 on 2026-10-04. After adding the separately specified tray extension (`35addb6`), the final native app was restarted at **20:45:15 Asia/Shanghai**; a new stage renderer and successful tray registration were observed. See `../add-desktop-system-tray/verification.md` for the local deployment receipt. Existing Git history and profile files were preserved. This is local desktop deployment only: it adds no server worker, scheduled action executor or production TimePrism/QQ E2E evidence. Both changes remain unarchived.

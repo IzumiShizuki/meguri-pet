@@ -6,7 +6,7 @@ Implementation checked on 2026-10-04, Asia/Shanghai. This change is unarchived.
 
 | Dimension | Result |
 | --- | --- |
-| Completeness | Five implementation/validation tasks complete; deployment receipt pending |
+| Completeness | All six scoped tasks complete, including observed local deployment |
 | Correctness | Four requirements implemented; 16 focused tray/recovery tests and real Electron smoke pass |
 | Coherence | Main-owned resource after elevation/instance ownership, local callbacks, existing readiness/preferences, no renderer bridge extension |
 
@@ -35,8 +35,12 @@ Windows controls pinning and overflow placement. Native registration and callbac
 
 ## Deployment
 
-Pending local restart through `start-meguri-desktop.bat` after the implementation commit. No remote service deployment is required for this tray extension.
+- Reminder implementation committed as `69c696a`; tray implementation committed as `35addb6`. Existing `f068f85` and `205e85b` commits were preserved; no reset, rebase or amendment.
+- On 2026-10-04 at **20:45:15 Asia/Shanghai**, launched `start-meguri-desktop.bat` through the existing **Meguri Desktop** task (highest run level, same user and repository path). Task result was **0**.
+- Previous native owner PID `28952` was stopped after confirming its native renderer/path; no remaining child processes were observed. No settings/profile files were deleted or migrated. Existing Core/gateway/TTS services were left running.
+- Observed new owner PID `46288`, stage renderer PID `54436` created at **20:45:19**, and exactly one native stage renderer. `desktop-electron.log` contains `[Meguri tray] registered {"x":2250,"y":1392,"width":32,"height":48}`; both Electron error logs and subsequent startup output contain no reported failure.
+- Native main reads this checkout's committed source; the built renderer entry references `index-U4AzRZcA.js`. Launch/deployment receipts are in ignored `log/desktop-deployment.log`. No remote services or production reminder/message records were changed, and GitHub was not pushed.
 
 ## Assessment
 
-No implementation/spec mismatch found. The operational deployment task remains open until the new process and tray registration are observed; do not archive yet.
+No implementation/spec mismatch found. All scoped tasks and checks are complete; local process/tray deployment is observed. Windows visual-placement and production reminder limitations remain explicit. This change stays unarchived because archival was not requested.

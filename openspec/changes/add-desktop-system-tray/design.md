@@ -22,7 +22,7 @@ API behavior was checked against the installed Electron runtime and the official
 
 - [Windows manages pinning] → Explain the taskbar overflow arrow and optional user pinning; do not promise a forced location.
 - [Async recovery and shutdown overlap] → Catch callback failures, gate application reveal on shutdown, make disposal idempotent and remove event handlers.
-- [Administrator desktop cannot be stopped from a normal session] → Rebuild/commit first, use the already configured task for launch, and let the user explicitly quit the current app when Windows denies stopping it.
+- [Windows may deny stopping an administrator desktop] → Rebuild/commit first, scope any restart to the verified native process, use the configured task for launch, and ask the user to quit only if stopping is actually denied.
 - [Cached startup checks are not a live health monitor] → Describe tooltip states as startup/visibility; retain existing detailed status UI.
 
 ## Migration Plan

@@ -11,4 +11,4 @@
 
 - [x] 3.1 Verify status, clicks/menu actions, failures, disposal and real isolated Electron tray/window recovery.
 - [x] 3.2 Update user docs; run desktop tests, typecheck, build, strict OpenSpec validation and verify spec correspondence.
-- [ ] 3.3 Commit without rewriting history, deploy through the native launcher and verify the new process/tray registration without production writes.
+- [x] 3.3 Commit without rewriting history, deploy through the native launcher and verify the new process/tray registration without production writes.
