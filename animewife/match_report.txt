@@ -1,0 +1,172 @@
+======================================================================
+妹系角色筛选报告 (VNDB traits 白名单)
+======================================================================
+wife 列表总行数: 2682
+保留(妹系): 87 行 / 80 个角色名
+排除: 2595 行
+
+----------------------------------------------------------------------
+【保留角色】角色名 -> 匹配到的VNDB角色id (括号内为匹配id数量)
+----------------------------------------------------------------------
+  ALyCE  <img1/多娜多娜>  VNDB:c92322  [img1/多娜多娜!ALyCE.png]
+  I.R.I.S  <img1/鸣潮>  VNDB:c117766,c49749  [img1/鸣潮!I.R.I.S.jpg]
+  Jill  <img1/VA11-HallA>  VNDB:c140060  [img1/VA11-HallA!Jill.jpg]
+  Luce  <img1/梵蒂冈>  VNDB:c134531,c136212  [img1/梵蒂冈!Luce.jpg]
+  May  <img2/罪恶装备>  VNDB:c76638  [img2/罪恶装备!May.jpg]
+  三好夏凛  <img1/结城友奈是勇者>  VNDB:c26513  [img1/结城友奈是勇者!三好夏凛.jpeg]
+  东云希  <img1/初雪樱>  VNDB:c5309  [img1/初雪樱!东云希.png]
+  中野五月  <img2/五等分的花嫁>  VNDB:c94556  [img2/五等分的花嫁!中野五月.jpg]
+  乙姬  <img1/maimai>  VNDB:c8448  [img1/maimai!乙姬.jpg]
+  五河琴里  <img2/约会大作战>  VNDB:c14372  [img2/约会大作战!五河琴里.jpg]
+  五河琴里  <img2/约会大作战>  VNDB:c14372  [img2/约会大作战!五河琴里.png]
+  伊吹风子  <img1/CLANNAD>  VNDB:c501  [img1/CLANNAD!伊吹风子.jpg]
+  优奈  <img2/熊熊勇闯异世界>  VNDB:c153453  [img2/熊熊勇闯异世界!优奈.jpg]
+  佐仓双叶  <img1/女神异闻录>  VNDB:c114632,c43541  [img1/女神异闻录!佐仓双叶.jpg]
+  佐天泪子  <img1/某科学的超电磁炮>  VNDB:c42574  [img1/某科学的超电磁炮!佐天泪子.jpg]
+  八重樱  <img1/崩坏系列>  VNDB:c52618  [img1/崩坏系列!八重樱.jpg]
+  兰  <img1/初雪樱>  VNDB:c73804  [img1/初雪樱!兰.png]
+  初音  <img1/公主连结>  VNDB:c89124  [img1/公主连结!初音.jpeg]
+  北条沙都子  <img1/寒蝉鸣泣之时>  VNDB:c122927,c3789  [img1/寒蝉鸣泣之时!北条沙都子.jpg]
+  南千秋  <img1/南家三姐妹>  VNDB:c48078  [img1/南家三姐妹!南千秋.jpg]
+  古手川唯  <img1/出包王女>  VNDB:c42585  [img1/出包王女!古手川唯.jpg]
+  和泉妃爱  <img1/常轨脱离Creative>  VNDB:c87837  [img1/常轨脱离Creative!和泉妃爱.png]
+  园崎诗音  <img1/寒蝉鸣泣之时>  VNDB:c112752  [img1/寒蝉鸣泣之时!园崎诗音.jpg]
+  土间埋  <img1/干物妹！小埋>  VNDB:c39584  [img1/干物妹！小埋!土间埋.png]
+  在原七海  <img1/RIDDLE JOKER>  VNDB:c66156  [img1/RIDDLE JOKER!在原七海.jpg]
+  在原七海  <img1/RIDDLE JOKER>  VNDB:c66156  [img1/RIDDLE JOKER!在原七海.png]
+  大藏里想奈  <img1/近月少女的礼仪>  VNDB:c9490  [img1/近月少女的礼仪!大藏里想奈.png]
+  天马咲希  <img1/世界计划缤纷舞台>  VNDB:c123760  [img1/世界计划缤纷舞台!天马咲希.png]
+  奈美  <img1/Arcaea>  VNDB:c108502,c52510  [img1/Arcaea!奈美.jpg]
+  宫下爱  <img1/LoveLive>  VNDB:c121606  [img1/LoveLive!宫下爱.jpg]
+  宫永咲  <img2/天才麻将少女>  VNDB:c34904  [img2/天才麻将少女!宫永咲.jpg]
+  宫永咲  <img2/天才麻将少女>  VNDB:c34904  [img2/天才麻将少女!宫永咲.png]
+  小鸟游亚子  <img2/突然＊恋人>  VNDB:c62882  [img2/突然＊恋人!小鸟游亚子.png]
+  川神一子  <img1/认真和我恋爱>  VNDB:c3508  [img1/认真和我恋爱!川神一子.jpg]
+  希  <img1/漂流少年>  VNDB:c156433  [img1/漂流少年!希.jpg]
+  御津井芭华  <img1/关于唯一能让笨蛋妹妹变聪明的方法只有我的xx的事>  VNDB:c23297  [img1/关于唯一能让笨蛋妹妹变聪明的方法只有我的xx的事!御津井芭华.jpg]
+  新海天  <img1/9-nine>  VNDB:c51035  [img1/9-nine!新海天.webp]
+  新见雪月  <img2/银色，遥远>  VNDB:c41741  [img2/银色，遥远!新见雪月.png]
+  日野森志步  <img1/世界计划缤纷舞台>  VNDB:c128183  [img1/世界计划缤纷舞台!日野森志步.png]
+  春原芽衣  <img1/CLANNAD>  VNDB:c123035,c15865  [img1/CLANNAD!春原芽衣.jpg]
+  春日野穹  <img2/缘之空>  VNDB:c553  [img2/缘之空!春日野穹.jpg]
+  春日野穹  <img2/缘之空>  VNDB:c553  [img2/缘之空!春日野穹.png]
+  月社妃  <img2/纸上魔法使>  VNDB:c23363  [img2/纸上魔法使!月社妃.jpg]
+  月见里水雪  <img2/未来广播与人工鸽>  VNDB:c68592  [img2/未来广播与人工鸽!月见里水雪.png]
+  朝雾麻衣  <img1/更胜黎明前的琉璃色>  VNDB:c1361  [img1/更胜黎明前的琉璃色!朝雾麻衣.png]
+  朱雀院椿  <img1/牵绊闪耀的恋之伊吕波>  VNDB:c62574,c92971  [img1/牵绊闪耀的恋之伊吕波!朱雀院椿.png]
+  枣铃  <img1/Little Busters>  VNDB:c1863  [img1/Little Busters!枣铃.jpg]
+  枣铃  <img1/Little_Busters>  VNDB:c1863  [img1/Little_Busters!枣铃.jpg]
+  椎名立希  <img1/BanG Dream>  VNDB:c162105  [img1/BanG Dream!椎名立希.png]
+  椿  <img1/鸣潮>  VNDB:c161039  [img1/鸣潮!椿.jpg]
+  橘美也  <img1/圣诞之吻>  VNDB:c8750  [img1/圣诞之吻!橘美也.jpg]
+  橘麻沙音  <img1/拔作岛>  VNDB:c71530  [img1/拔作岛!橘麻沙音.png]
+  水无月时雨  <img1/猫娘乐园>  VNDB:c20886,c72637  [img1/猫娘乐园!水无月时雨.jpg]
+  水濑秋子  <img1/Kanon>  VNDB:c2943  [img1/Kanon!水濑秋子.jpg]
+  沙耶  <img1/沙耶之歌>  VNDB:c7568  [img1/沙耶之歌!沙耶.jpg]
+  照桥心美  <img1/齐木楠雄的灾难>  VNDB:c127890  [img1/齐木楠雄的灾难!照桥心美.jpg]
+  玛瑙  <img2/异度之刃>  VNDB:c7674  [img2/异度之刃!玛瑙.png]
+  瓜生樱乃  <img1/纯白交响曲>  VNDB:c5092  [img1/纯白交响曲!瓜生樱乃.png]
+  白  <img2/游戏人生>  VNDB:c32035  [img2/游戏人生!白.jpg]
+  秋月爱莉  <img1/鬼父>  VNDB:c23775  [img1/鬼父!秋月爱莉.jpg]
+  秋穰子  <img1/东方Project>  VNDB:c167996  [img1/东方Project!秋穰子.jpg]
+  筒隐月子  <img1/变态王子与不笑猫>  VNDB:c53963  [img1/变态王子与不笑猫!筒隐月子.jpg]
+  结城美柑  <img1/出包王女>  VNDB:c42589,c74166  [img1/出包王女!结城美柑.jpg]
+  结衣  <img1/刀剑神域>  VNDB:c120904,c131167,c17100,c89639  [img1/刀剑神域!结衣.png]
+  绪方理奈  <img1/白色相簿>  VNDB:c14652  [img1/白色相簿!绪方理奈.jpg]
+  绫里真宵  <img1/逆转裁判>  VNDB:c31764,c3944  [img1/逆转裁判!绫里真宵.jpg]
+  羽濑川小鸠  <img2/我的朋友很少>  VNDB:c6432  [img2/我的朋友很少!羽濑川小鸠.webp]
+  翠星石  <img1/蔷薇少女>  VNDB:c123638,c13632  [img1/蔷薇少女!翠星石.jpeg]
+  芽衣  <img1/宝可梦>  VNDB:c15002,c49047  [img1/宝可梦!芽衣.jpg]
+  芽衣  <img1/宝可梦>  VNDB:c15002,c49047  [img1/宝可梦!芽衣.png]
+  薰  <img1/MoonFall>  VNDB:c16552,c20717  [img1/MoonFall!薰.jpg]
+  藤林杏  <img1/CLANNAD>  VNDB:c123031  [img1/CLANNAD!藤林杏.jpg]
+  藤林椋  <img1/CLANNAD>  VNDB:c123032,c6089  [img1/CLANNAD!藤林椋.jpg]
+  赤锖美果子  <img1/青鸟>  VNDB:c63418  [img1/青鸟!赤锖美果子.png]
+  远野秋叶  <img2/月姬>  VNDB:c145494,c78,c94785  [img2/月姬!远野秋叶.jpg]
+  速川六花  <img1/anemoi>  VNDB:c133790  [img1/anemoi!速川六花.webp]
+  间桐樱  <img1/Fate>  VNDB:c35  [img1/Fate!间桐樱.jpg]
+  间桐樱  <img1/Fate>  VNDB:c35  [img1/Fate!间桐樱.png]
+  雪  <img1/深夜冲击>  VNDB:c54770  [img1/深夜冲击!雪.jpg]
+  鞍马小春  <img1/千恋万花>  VNDB:c44772  [img1/千恋万花!鞍马小春.png]
+  高坂桐乃  <img2/我的妹妹哪有这么可爱>  VNDB:c17291  [img2/我的妹妹哪有这么可爱!高坂桐乃.jpeg]
+  鸨田奏海  <img1/千之刃涛，桃花染之皇姬>  VNDB:c39035  [img1/千之刃涛，桃花染之皇姬!鸨田奏海.png]
+  鹰仓杏璃  <img2/幸运草的约定>  VNDB:c17471  [img2/幸运草的约定!鹰仓杏璃.png]
+  鹰仓杏铃  <img2/幸运草的约定>  VNDB:c17470  [img2/幸运草的约定!鹰仓杏铃.png]
+  鹰见泽菜月  <img1/更胜黎明前的琉璃色>  VNDB:c1358  [img1/更胜黎明前的琉璃色!鹰见泽菜月.png]
+  黑崎小夜  <img1/青鸟>  VNDB:c62879  [img1/青鸟!黑崎小夜.png]
+  黑川濑良  <img1/LOVELY×CATION>  VNDB:c10750  [img1/LOVELY×CATION!黑川濑良.png]
+
+----------------------------------------------------------------------
+【歧义提醒】一个角色名匹配到多个VNDB角色(可能存在同名异角, 建议人工核对)
+----------------------------------------------------------------------
+  I.R.I.S  <img1/鸣潮>  -> c117766,c49749
+  Luce  <img1/梵蒂冈>  -> c134531,c136212
+  佐仓双叶  <img1/女神异闻录>  -> c114632,c43541
+  北条沙都子  <img1/寒蝉鸣泣之时>  -> c122927,c3789
+  奈美  <img1/Arcaea>  -> c108502,c52510
+  春原芽衣  <img1/CLANNAD>  -> c123035,c15865
+  朱雀院椿  <img1/牵绊闪耀的恋之伊吕波>  -> c62574,c92971
+  水无月时雨  <img1/猫娘乐园>  -> c20886,c72637
+  结城美柑  <img1/出包王女>  -> c42589,c74166
+  结衣  <img1/刀剑神域>  -> c120904,c131167,c17100,c89639
+  绫里真宵  <img1/逆转裁判>  -> c31764,c3944
+  翠星石  <img1/蔷薇少女>  -> c123638,c13632
+  芽衣  <img1/宝可梦>  -> c15002,c49047
+  芽衣  <img1/宝可梦>  -> c15002,c49047
+  薰  <img1/MoonFall>  -> c16552,c20717
+  藤林椋  <img1/CLANNAD>  -> c123032,c6089
+  远野秋叶  <img2/月姬>  -> c145494,c78,c94785
+
+----------------------------------------------------------------------
+【排除样例】前50条被排除的行
+----------------------------------------------------------------------
+  [VNDB妹系库中无此角色名] img1/16bit的感动!秋里木叶.jpg
+  [VNDB妹系库中无此角色名] img1/2.5次元的诱惑!橘美花莉.jpg
+  [VNDB妹系库中无此角色名] img1/40原!黄豆粉.jpg
+  [VNDB妹系库中无此角色名] img1/86 -不存在的战区-!奥古斯塔·芙蕾德利嘉·艾戴尔阿德勒.jpg
+  [VNDB妹系库中无此角色名] img1/86 -不存在的战区-!芙拉蒂蕾娜·米利杰.jpg
+  [VNDB妹系库中无此角色名] img1/86 -不存在的战区-!芙拉蒂蕾娜·米利杰.png
+  [VNDB妹系库中无此角色名] img1/9-nine!结城希亚.jpg
+  [VNDB妹系库中无此角色名] img1/9-nine!九条都.webp
+  [VNDB妹系库中无此角色名] img1/9-nine!苏菲缇雅.webp
+  [VNDB妹系库中无此角色名] img1/9-nine!香坂春风.webp
+  [VNDB妹系库中无此角色名] img1/阿兹漫画大王!春日步.jpg
+  [VNDB妹系库中无此角色名] img1/哀鸿：城破十日记!林翩翩.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!八六.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!宝生稀咲.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!雏衣波莱特.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!玲奈.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!蓑笠凪.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!右田日日姬.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!右田真暗.jpg
+  [VNDB妹系库中无此角色名] img1/爱上火车!早濑深美.jpg
+  [VNDB妹系库中无此角色名] img1/爱数学!锐锐.jpg
+  [VNDB妹系库中无此角色名] img1/爱相随!高岭爱花.jpg
+  [VNDB妹系库中无此角色名] img1/爱相随!小早川凛子.jpg
+  [VNDB妹系库中无此角色名] img1/爱相随!雪乃玲.jpeg
+  [VNDB妹系库中无此角色名] img1/爱相随!姊崎宁宁.jpg
+  [VNDB妹系库中无此角色名] img1/爱在雨过天晴时!橘晶.jpg
+  [VNDB妹系库中无此角色名] img1/艾尔登法环!玛莉卡.jpg
+  [VNDB妹系库中无此角色名] img1/艾尔登法环!米凯拉&托莉娜.jpg
+  [VNDB妹系库中无此角色名] img1/安达与岛村!安达樱.jpg
+  [VNDB妹系库中无此角色名] img1/安达与岛村!岛村抱月.jpg
+  [VNDB妹系库中无此角色名] img1/八音节奏!Hachiko.jpg
+  [VNDB妹系库中无此角色名] img1/拔作岛!渡会雏见.png
+  [VNDB妹系库中无此角色名] img1/拔作岛!糺川礼.png
+  [VNDB妹系库中无此角色名] img1/拔作岛!冷泉院桐香.png
+  [VNDB妹系库中无此角色名] img1/拔作岛!女部田郁子.jpg
+  [VNDB妹系库中无此角色名] img1/拔作岛!畔美岬.png
+  [VNDB妹系库中无此角色名] img1/拔作岛!片桐奈奈濑.png
+  [VNDB妹系库中无此角色名] img1/拔作岛!琴寄文乃.png
+  [VNDB妹系库中无此角色名] img1/拔作岛!丝丝子.png
+  [VNDB妹系库中无此角色名] img1/白色相簿2!冬马和纱.png
+  [VNDB妹系库中无此角色名] img1/白色相簿2!小木曾雪菜.jpg
+  [VNDB妹系库中无此角色名] img1/白色相簿!观月麻奈.jpg
+  [VNDB妹系库中无此角色名] img1/白圣女与黑牧师!塞西莉亚.jpg
+  [VNDB妹系库中无此角色名] img1/白圣女与黑牧师!塞西莉亚.png
+  [VNDB妹系库中无此角色名] img1/白箱!安原绘麻.jpg
+  [VNDB妹系库中无此角色名] img1/白箱!坂木静香.png
+  [VNDB妹系库中无此角色名] img1/白箱!宫森葵.jpg
+  [VNDB妹系库中无此角色名] img1/白箱!今井绿.png
+  [VNDB妹系库中无此角色名] img1/白箱!矢野艾莉卡.png
+  [VNDB妹系库中无此角色名] img1/白箱!藤堂美沙.jpg

@@ -1,0 +1,13 @@
+{
+    "need_prefix": false,
+    "ntr_max": 3,
+    "ntr_possibility": 0.2,
+    "change_max_per_day": 3,
+    "swap_max_per_day": 2,
+    "reset_max_uses_per_day": 3,
+    "reset_success_rate": 0.3,
+    "reset_mute_duration": 300,
+    "image_base_url": "https://cdn.jsdmirror.com/gh/monbed/wife@main",
+    "image_list_url": "https://animewife.dpdns.org/list.txt",
+    "imouto_only": true
+}
