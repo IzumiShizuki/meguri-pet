@@ -65,6 +65,8 @@ const channels = Object.freeze({
   shizukiDisconnect: 'meguri:shizuki:disconnect',
   shizukiListTodos: 'meguri:shizuki:todos:list',
   shizukiCreateTodo: 'meguri:shizuki:todos:create',
+  shizukiPendingCreates: 'meguri:shizuki:todos:pending-creates',
+  shizukiUpdateTodo: 'meguri:shizuki:todos:update',
   shizukiCompleteTodo: 'meguri:shizuki:todos:complete',
   shizukiReminder: 'meguri:shizuki:reminder',
   voiceStart: 'meguri:voice:start',
@@ -164,7 +166,9 @@ const desktopBridge = {
       } : {
         listTodos: () => ipcRenderer.invoke(channels.shizukiListTodos),
         createTodo: input => ipcRenderer.invoke(channels.shizukiCreateTodo, input),
-        completeTodo: id => ipcRenderer.invoke(channels.shizukiCompleteTodo, id),
+        pendingCreates: () => ipcRenderer.invoke(channels.shizukiPendingCreates),
+        updateTodo: (id, input) => ipcRenderer.invoke(channels.shizukiUpdateTodo, id, input),
+        completeTodo: (id, expectedAccount) => ipcRenderer.invoke(channels.shizukiCompleteTodo, id, expectedAccount),
         onReminder(listener) {
           const handler = (_event, reminder) => listener(reminder)
           ipcRenderer.on(channels.shizukiReminder, handler)

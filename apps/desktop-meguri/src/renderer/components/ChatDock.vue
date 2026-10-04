@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import {
   attachmentAccessLabel,
@@ -22,12 +22,20 @@ import type { DesktopVoiceState } from '../../shared/desktop-contract'
 import { useConversationStore, type ConversationMessage } from '../stores/conversation'
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
 import TodoPanel from './TodoPanel.vue'
+import ReminderReview from './ReminderReview.vue'
+import { ReminderFlow } from '../services/reminder-flow'
 
 const conversation = useConversationStore()
 const preferences = useDesktopPreferencesStore()
 const { messages, sending, error } = storeToRefs(conversation)
 const { value } = storeToRefs(preferences)
 const draft = ref('')
+const reminderFlow = reactive(new ReminderFlow(window.meguriDesktop?.shizuki))
+onMounted(() => { void reminderFlow.restorePending() })
+
+function reminderCreated(source: string) {
+  if (draft.value.trim() === source.trim()) draft.value = ''
+}
 const history = ref<HTMLElement>()
 const composer = ref<HTMLTextAreaElement>()
 const resourceCandidates = ref<LocalResourceCandidate[]>([])
@@ -45,6 +53,7 @@ const captureMode = ref<PixPinCaptureMode>()
 const captureSessionId = ref('')
 const captureHint = ref('')
 const todoOpen = ref(false)
+watch(todoOpen, open => { if (!open) void reminderFlow.restorePending() })
 const voiceState = ref<'idle' | DesktopVoiceState['state']>('idle')
 const voiceHint = ref('')
 let resourceSearchTimer: ReturnType<typeof setTimeout> | undefined
@@ -455,6 +464,10 @@ function dismissResourcePicker() {
 async function send() {
   if (!canSend.value)
     return
+  if (await reminderFlow.prepare(draft.value.trim())) {
+    if (!value.value.chat.expanded) void preferences.update({ chat: { expanded: true } })
+    return
+  }
   if (activeResourceResolution.value || (resourceMarkerPresent(draft.value) && !draft.value.trimStart().startsWith('@@'))) {
     await resolveResourceDraft(draft.value)
     return
@@ -496,7 +509,7 @@ function onVoiceChanged(state: DesktopVoiceState) {
   voiceState.value = state.state
   if (state.state === 'completed' && state.text) {
     draft.value = draft.value.trim() ? `${draft.value.trimEnd()} ${state.text}` : state.text
-    voiceHint.value = '已识别到草稿，可修改后发送或打开待办。'
+    voiceHint.value = '已识别到草稿。发送提醒描述后会先核对时间，确认后才创建。'
     voiceState.value = 'idle'
     void nextTick(() => composer.value?.focus())
   }
@@ -646,6 +659,7 @@ watch(() => conversation.sessionId, (next, previous) => {
     </header>
 
     <TodoPanel v-if="todoOpen" :suggested-title="draft" @close="todoOpen = false" />
+    <ReminderReview :flow="reminderFlow" @created="reminderCreated" />
 
     <div ref="history" class="chat-history no-drag" :class="{ empty: messages.length === 0 }">
       <div v-if="messages.length === 0" class="empty-conversation">

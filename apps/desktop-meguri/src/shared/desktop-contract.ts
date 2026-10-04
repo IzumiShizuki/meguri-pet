@@ -19,6 +19,7 @@ export interface ReadinessSnapshot {
 export interface DesktopResult {
   ok: boolean
   error?: string
+  code?: string
 }
 
 export interface ArtifactIconResult extends DesktopResult {
@@ -338,6 +339,7 @@ export interface ShizukiConnectionStatus {
   qqLastUploadedAt?: number
   qqError?: string
   qqNextAttemptAt?: number
+  reminderError?: string
 }
 
 export interface ShizukiTodo {
@@ -368,6 +370,13 @@ export interface ShizukiReminderEvent {
   triggerAt: number
   late: boolean
   mainAccount?: boolean
+}
+
+export interface PendingTodoCreate {
+  requestId: string
+  title: string
+  dueAt: string
+  state: 'uncertain' | 'rejected'
 }
 
 export interface DesktopVoiceState {
@@ -422,8 +431,10 @@ export interface MeguriDesktopBridge {
     connect(input: { origin: string, email: string, password: string }): Promise<DesktopResult & { status?: ShizukiConnectionStatus }>
     disconnect(): Promise<DesktopResult & { status?: ShizukiConnectionStatus }>
     listTodos(): Promise<DesktopResult & { todos?: ShizukiTodo[] }>
-    createTodo(input: { title: string, dueAt?: string }): Promise<DesktopResult & { todo?: ShizukiTodo }>
-    completeTodo(id: number): Promise<DesktopResult & { todo?: ShizukiTodo }>
+    createTodo(input: { title: string, dueAt?: string, requestId: string, expectedAccount: string, behavior?: 'reminder', timezone?: 'Asia/Shanghai' }): Promise<DesktopResult & { todo?: ShizukiTodo }>
+    pendingCreates(): Promise<DesktopResult & { requests?: PendingTodoCreate[] }>
+    updateTodo(id: number, input: { title?: string, dueAt?: string, cancel?: boolean, expectedAccount: string }): Promise<DesktopResult & { todo?: ShizukiTodo }>
+    completeTodo(id: number, expectedAccount: string): Promise<DesktopResult & { todo?: ShizukiTodo }>
     onReminder(listener: (reminder: ShizukiReminderEvent) => void): () => void
   }
   voice?: {

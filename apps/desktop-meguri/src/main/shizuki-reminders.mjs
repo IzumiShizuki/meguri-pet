@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { parseShanghaiTime } from '../shared/reminder-intent.mjs'
 
 const SCAN_INTERVAL_MS = 30_000
 const SYNC_INTERVAL_MS = 75_000
@@ -7,16 +8,7 @@ const GRACE_MS = 12 * 60_000
 const RETENTION_MS = 7 * 24 * 60 * 60_000
 
 export function parseShizukiLocalTime(value) {
-  const raw = String(value || '').trim()
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(raw)
-  if (!match) return NaN
-  const [year, month, day, hour, minute] = match.slice(1, 6).map(Number)
-  const second = match[6] === undefined ? 0 : Number(match[6])
-  const date = new Date(year, month - 1, day, hour, minute, second)
-  if (date.getFullYear() !== year || date.getMonth() + 1 !== month || date.getDate() !== day
-    || date.getHours() !== hour || date.getMinutes() !== minute || date.getSeconds() !== second)
-    return NaN
-  return date.getTime()
+  return parseShanghaiTime(String(value || '').trim())
 }
 
 function reminderOffsetMs(value, unit) {
@@ -65,11 +57,12 @@ function readDedupe(filePath) {
   if (!existsSync(filePath)) return {}
   try {
     const value = JSON.parse(readFileSync(filePath, 'utf8'))
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid reminder dedupe')
+    if (Object.values(value).some(seenAt => !Number.isFinite(seenAt))) throw new Error('Invalid reminder dedupe entries')
     return value
   }
   catch {
-    return {}
+    throw new Error('提醒防重记录无法读取，已停止触发。请检查本机存储。')
   }
 }
 
@@ -81,7 +74,8 @@ function writeDedupe(filePath, value) {
     renameSync(temp, filePath)
   }
   catch {
-    rmSync(temp, { force: true })
+    try { rmSync(temp, { force: true }) } catch { /* Preserve an unexpected filesystem entry. */ }
+    throw new Error('提醒防重记录无法保存，未触发提醒。')
   }
 }
 
@@ -91,22 +85,32 @@ export function createShizukiReminderRuntime({ client, filePath, onReminder, onE
   let scanTimer
   let syncingGeneration = -1
   let snapshot = []
-  let dedupe = readDedupe(filePath)
+  let dedupe = {}
   let generation = 0
+  let snapshotTimes = new Map()
+  let lastError = ''
+  const pendingDelivery = new Map()
 
   function scan() {
     if (!active || !client.status().connected) return
     const now = clock()
     dedupe = Object.fromEntries(Object.entries(dedupe).filter(([, seenAt]) => Number.isFinite(seenAt)
       && now - seenAt <= RETENTION_MS))
-    for (const reminder of dueTodoReminders(snapshot, client.status().userId, now)) {
-      if (dedupe[reminder.key]) continue
+    const fresh = snapshot.filter(todo => now - (snapshotTimes.get(todo.todoId) ?? -Infinity) <= SYNC_INTERVAL_MS + SCAN_INTERVAL_MS)
+    for (const reminder of dueTodoReminders(fresh, client.status().userId, now)) {
+      if (Object.hasOwn(dedupe, reminder.key) && !pendingDelivery.has(reminder.key)) continue
       try {
+        if (!Object.hasOwn(dedupe, reminder.key)) {
+          const next = { ...dedupe, [reminder.key]: now }
+          writeDedupe(filePath, next)
+          dedupe = next
+        }
         onReminder(reminder)
-        dedupe[reminder.key] = now
-        writeDedupe(filePath, dedupe)
+        pendingDelivery.delete(reminder.key)
       }
       catch (error) {
+        if (Object.hasOwn(dedupe, reminder.key)) pendingDelivery.set(reminder.key, reminder)
+        lastError = error.message
         onError(error)
       }
     }
@@ -121,10 +125,17 @@ export function createShizukiReminderRuntime({ client, filePath, onReminder, onE
       const todos = await client.listTodos()
       if (!active || generation !== startedGeneration || client.status().userId !== startedUserId) return
       snapshot = todos
+      snapshotTimes = new Map(todos.map(todo => [todo.todoId, clock()]))
+      lastError = ''
       scan()
     }
     catch (error) {
-      onError(error)
+      if (generation === startedGeneration) {
+        snapshot = []
+        snapshotTimes.clear()
+        lastError = error.message
+        onError(error)
+      }
     }
     finally {
       if (syncingGeneration === startedGeneration)
@@ -136,7 +147,8 @@ export function createShizukiReminderRuntime({ client, filePath, onReminder, onE
     if (active) return
     generation += 1
     active = true
-    dedupe = readDedupe(filePath)
+    try { dedupe = readDedupe(filePath) }
+    catch (error) { active = false; lastError = error.message; onError(error); return }
     void sync()
     syncTimer = setInterval(() => { void sync() }, SYNC_INTERVAL_MS)
     scanTimer = setInterval(scan, SCAN_INTERVAL_MS)
@@ -152,13 +164,27 @@ export function createShizukiReminderRuntime({ client, filePath, onReminder, onE
     syncTimer = undefined
     scanTimer = undefined
     snapshot = []
+    snapshotTimes.clear()
+    pendingDelivery.clear()
   }
 
   function useSnapshot(todos) {
     if (!active || !client.status().connected) return
     snapshot = Array.isArray(todos) ? todos : []
+    snapshotTimes = new Map(snapshot.map(todo => [todo.todoId, clock()]))
     scan()
   }
 
-  return { start, stop, sync, scan, useSnapshot }
+  function applyTodo(todo) {
+    if (!active || !client.status().connected) return
+    // Invalidate in-flight reads so an older schedule cannot replace an acknowledged edit.
+    generation += 1
+    snapshot = [todo, ...snapshot.filter(item => item.todoId !== todo.todoId)]
+    snapshotTimes.set(todo.todoId, clock())
+    scan()
+  }
+
+  function invalidate() { generation += 1; snapshot = []; snapshotTimes.clear() }
+
+  return { start, stop, sync, scan, useSnapshot, applyTodo, invalidate, status: () => ({ reminderError: lastError }) }
 }

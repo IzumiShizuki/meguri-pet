@@ -9,9 +9,10 @@
     "dev:renderer": "vite --host 127.0.0.1 --port 4174",
     "build": "vite build",
     "start": "electron src/main/index.mjs",
-    "test": "pnpm run test:unit && pnpm run test:preload",
+    "test": "pnpm run test:unit && pnpm run test:preload && pnpm run test:instance",
     "test:unit": "vitest run",
     "test:preload": "electron scripts/preload-smoke.mjs",
+    "test:instance": "electron scripts/reminder-instance-smoke.mjs",
     "test:visual-skills": "electron scripts/skills-visual-smoke.mjs",
     "test:visual-presentation": "electron scripts/presentation-visual-smoke.mjs",
     "typecheck": "vue-tsc --noEmit"

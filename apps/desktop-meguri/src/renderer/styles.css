@@ -227,6 +227,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .dark .shizuki-todo-form input { color: var(--dark-text); border-color: var(--dark-border); background: var(--dark-input); color-scheme: dark; }
 .shizuki-todo-form button { justify-self: end; color: #fff; border-color: #c2410c; background: #c2410c; }
 .shizuki-todo-preview, .shizuki-todo-feedback, .shizuki-todo-error { margin: 0; font-size: 9px; line-height: 1.45; }
+.reminder-review { flex-shrink: 0; display: grid; gap: 6px; margin: 6px; padding: 9px; max-height: 210px; overflow: auto; border: 1px solid #d97706; border-radius: 10px; color: #44403c; background: #fffbeb; font-size: 10px; }
+.reminder-review p { margin: 0; line-height: 1.5; }
+.reminder-review label { display: grid; gap: 3px; }
+.reminder-review input { width: 100%; min-width: 0; padding: 5px; font: inherit; }
+.reminder-review button { padding: 5px; border: 1px solid #d97706; border-radius: 6px; color: inherit; background: transparent; cursor: pointer; font: inherit; }
+.reminder-review button:disabled { opacity: .5; cursor: default; }
+.dark .reminder-review { color: var(--dark-text); background: #332d2a; }
 .shizuki-todo-preview { color: #9a3412; }
 .shizuki-todo-feedback { color: #166534; }
 .shizuki-todo-error { color: #b91c1c; }

@@ -102,6 +102,8 @@ app.whenReady().then(async () => {
       shizukiDisconnectType: typeof window.meguriDesktop?.shizuki?.disconnect,
       shizukiListType: typeof window.meguriDesktop?.shizuki?.listTodos,
       shizukiCreateType: typeof window.meguriDesktop?.shizuki?.createTodo,
+      shizukiPendingType: typeof window.meguriDesktop?.shizuki?.pendingCreates,
+      shizukiUpdateType: typeof window.meguriDesktop?.shizuki?.updateTodo,
       shizukiCompleteType: typeof window.meguriDesktop?.shizuki?.completeTodo,
       shizukiReminderType: typeof window.meguriDesktop?.shizuki?.onReminder,
       voiceStartType: typeof window.meguriDesktop?.voice?.start,
@@ -184,7 +186,7 @@ app.whenReady().then(async () => {
     const stagePresentationAvailable = stage.characterPresentationType === 'function'
     const shizukiStageAvailable = [
       stage.shizukiStatusType, stage.shizukiListType, stage.shizukiCreateType, stage.shizukiCompleteType,
-      stage.shizukiReminderType, stage.voiceStartType, stage.voiceCancelType,
+      stage.shizukiReminderType, stage.shizukiPendingType, stage.shizukiUpdateType, stage.voiceStartType, stage.voiceCancelType,
       stage.voiceChangedType,
     ].every(value => value === 'function')
       && stage.shizukiConnectType === 'undefined'
@@ -195,6 +197,8 @@ app.whenReady().then(async () => {
     ].every(value => value === 'function')
       && settings.shizukiListType === 'undefined'
       && settings.shizukiCreateType === 'undefined'
+      && settings.shizukiUpdateType === 'undefined'
+      && settings.shizukiPendingType === 'undefined'
       && settings.voiceStartType === 'undefined'
     const sensitiveBridgeHidden = startup.shizukiStatusType === 'undefined'
       && startup.voiceStartType === 'undefined'

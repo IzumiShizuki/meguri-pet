@@ -32,6 +32,11 @@ D:\program\meguri-pet\start-meguri-desktop.bat
 ```
 
 The launcher starts Electron independently and exits after launching it.
+`start-meguri-desktop.bat` reads the main-process source from this checkout and
+loads the renderer from `dist/renderer`; it does not run a build. After changing
+renderer code, run `build:desktop`, fully quit Meguri, then launch this bat again.
+An already running instance keeps its loaded code. `start-meguri-airi.bat`
+starts the separate AIRI frontend and does not include native reminder changes.
 Launcher errors are appended to
 `D:\program\meguri-pet\log\desktop-launcher.log`; Core, TTS, and Electron output
 is written to `desktop-core.log`, `desktop-core.err.log`, `desktop-gateway.log`,
@@ -121,15 +126,59 @@ and password, then choose **连接 Shizuki**. The default site is
 Electron user data; the password is used only for login. The current connection
 flow requires an account password and does not import a browser or QQ session.
 
-Use the **☑** button in the native chat dock to list, create, and complete Todo
-items in the same TimePrism account. A new item can include a local date and
-time for an exact-time reminder. The item is shown as saved only after Shizuki
-confirms it. Voice recognition text may be used as a draft title, but creation
-always requires a click on **存入 Shizuki**.
+Type a request such as **明天上午 9 点提醒我开会** or **今晚 8 点提醒我给小王回电话**
+in the chat dock and press send. Meguri opens a review showing the title,
+reminder behavior, exact date/time, and **Asia/Shanghai (UTC+08:00)**. Choose
+**确认创建提醒** to write it to the connected TimePrism account. Spoken text goes
+into the editable draft and uses this same review path when sent. It never
+creates a Todo automatically. The parser supports today/tomorrow/day-after,
+explicit year-month-day, Chinese hour/minute numerals and minute/hour offsets.
+Relative offsets round up to the next minute; the review displays that time.
+Bare hours such as **明天 3 点**, missing fields, past/invalid dates, approximate
+times and other timezones open a clarification form. Relative dates are frozen
+at review; a time that passes before confirmation must be reviewed again.
 
-Meguri checks reminders while its desktop process is running and shows an
-in-app card plus a Windows notification when available. It can deliver a missed
-reminder once within twelve minutes after its scheduled time when relaunched.
+Use **☑** to list, create, complete, edit and cancel a selected Todo's reminder.
+Manual **确认存入 Shizuki** also shows the intended title/time. Modification and
+cancellation require selecting a particular Todo and confirming the review;
+**取消提醒** disables the reminder and retains the Todo. A failed edit is
+unconfirmed: refresh and inspect the same record before retrying. Natural
+language edits/cancellations direct you to this panel to select the target.
+
+Creation succeeds only when the server returns an ID and the reviewed title,
+time and enabled **0 MINUTE** reminder fields. If the site drops these fields,
+Meguri shows an error with the available Todo ID instead of claiming a reminder
+was created. Check that record in TimePrism rather than creating another copy.
+Definite server rejections permit correction/retry. Timeouts, lost responses
+and server errors keep the draft and request ID; **重试 / 核对写入结果** searches
+the original record instead of blindly repeating POST. If its existence cannot
+be established, it remains unconfirmed. **稍后核对** leaves the server record
+untouched. Unconfirmed writes can be restored after restart or by resending the
+same title/time. The additive `shizuki-session.json.requests.json` file in
+Electron user data stores account-bound request receipts, without credentials.
+Its identifiable `meguri-request:<UUID>` Todo detail is used for reconciliation;
+editing/removing it can prevent recovery. Preserve the journal when diagnosing
+a failed write; deleting it removes local duplicate-write protection.
+
+TimePrism stores Todo data; **Meguri's running desktop process** synchronizes
+about every 75 seconds and scans for due reminders every 30 seconds. It shows
+an in-app card plus a Windows notification when available. All Todo wall times
+are interpreted in Asia/Shanghai independently of the computer timezone; other
+zones/DST schedules are unsupported. A failed synchronization clears stale
+records, and records older than 105 seconds are suppressed until refreshed.
+This avoids firing known-stale cancellations during outages, but cannot
+guarantee timing or discover remote edits during network partition. On restart
+with a successful sync, it can deliver a missed reminder once within twelve
+minutes of its time. Older tasks remain in the Todo list without a late alert.
+Occurrence IDs persist across restarts; corrupt/unwritable deduplication storage
+stops triggering and shows an error in Shizuki settings. Local issuance does
+not prove the user saw a notification. A process crash between recording the
+occurrence and presenting it can lose presentation; repeated successful scans
+do not reissue it. Transient delivery callbacks retry within the running process;
+already displayed local cards are suppressed while the existing QQ outbox retries.
+Only one desktop instance owns reminder polling for a user-data profile. The
+ownership check runs after the existing Windows administrator handoff; opening
+another instance focuses the existing desktop instead of starting another writer.
 Choose **设为主账号** in Shizuki settings to bind one Shizuki user ID. Due reminders
 for that account also invoke the existing local GPT-SoVITS speech setting. The
 desktop queues those occurrences for QQ delivery through remote Core and
@@ -142,10 +191,28 @@ The desktop reads `MEGURI_REMINDER_CORE_TOKEN_FILE` (default
 `MEGURI_REMINDER_CORE_URL` defaults to `https://bot.shizuki.online/meguri-core`;
 `MEGURI_REMINDER_CORE_TENANT_ID` defaults to `meguri-staging`. Core and AstrBot
 must be deployed and configured separately. No new reminder triggers while the
-desktop process is stopped. If you want the Shizuki website to accept and display
-exact-time reminders too, deploy its companion OpenSpec change
-`support-timeprism-at-time-reminders` before saving zero-minute reminders to
-the production site. Until then, the production API may reject them.
+desktop process is stopped or the computer is off. Always-on behavior requires
+a **server-side persistent scheduler/worker**, which this desktop feature does
+not provide. Core's event inbox is not such a scheduler, and Core acceptance
+does not mean AstrBot delivered a QQ message. Speech/OS notification failure
+does not remove the local reminder card. Existing owner speech/QQ settings
+remain separate from creation confirmation.
+
+The only scheduling capability currently allowed is **remind me**. A request
+such as **明天下午 3 点帮我检查订单** is rejected as an unsupported scheduled
+action. Order checks, shell commands, computer control, external messages,
+recurring jobs and offline-guaranteed reminders are not arranged. A reminder
+whose title says “检查订单” only notifies you; it does not inspect an order.
+
+The companion Shizuki change `support-timeprism-at-time-reminders` is required
+for zero-minute Todo support. Read-only probes on **2026-10-04** found the public
+site reachable and the Todo API requiring login; the public documentation URL
+returned frontend HTML and the Core reminder path required authentication.
+These results establish neither deployed zero-minute persistence nor offline
+scheduling or QQ delivery. Production end-to-end remains **unverified**. Mock,
+loopback HTTP, rendered UI and preload tests are recorded separately in
+`openspec/changes/add-natural-language-reminders/verification.md`. No production
+test reminders or external messages were created.
 
 ## Local voice input
 

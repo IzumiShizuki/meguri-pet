@@ -94,7 +94,7 @@ function qqReminders() {
 }
 
 function shizukiStatus() {
-  return { ...shizukiTimePrism().status(), ...qqReminders().status() }
+  return { ...shizukiTimePrism().status(), ...qqReminders().status(), ...shizukiReminderRuntime?.status() }
 }
 
 function deliverShizukiReminder(reminder) {
@@ -860,28 +860,51 @@ function installIpc() {
       return { ok: true, todos }
     }
     catch (error) {
+      shizukiReminders().invalidate()
       return shizukiFailure(error)
     }
   })
   ipcMain.handle(channels.shizukiCreateTodo, async (event, input) => {
     if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    if (!input?.requestId || !input?.expectedAccount) return { ok: false, error: '请先核对提醒和账号后确认。' }
     try {
       const todo = await shizukiTimePrism().createTodo(input)
+      shizukiReminders().applyTodo(todo)
       void shizukiReminders().sync()
       return { ok: true, todo }
     }
     catch (error) {
+      shizukiReminders().invalidate()
       return shizukiFailure(error)
     }
   })
-  ipcMain.handle(channels.shizukiCompleteTodo, async (event, id) => {
+  ipcMain.handle(channels.shizukiPendingCreates, event => {
     if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    try { return { ok: true, requests: shizukiTimePrism().pendingCreates() } }
+    catch (error) { return shizukiFailure(error) }
+  })
+  ipcMain.handle(channels.shizukiUpdateTodo, async (event, id, input) => {
+    if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    if (!input?.expectedAccount) return { ok: false, error: '请先核对待办和账号。' }
     try {
-      const todo = await shizukiTimePrism().completeTodo(id)
+      const todo = await shizukiTimePrism().updateTodo(id, input)
+      shizukiReminders().applyTodo(todo)
+      void shizukiReminders().sync()
+      return { ok: true, todo }
+    }
+    catch (error) { shizukiReminders().invalidate(); return shizukiFailure(error) }
+  })
+  ipcMain.handle(channels.shizukiCompleteTodo, async (event, id, expectedAccount) => {
+    if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    if (!expectedAccount) return { ok: false, error: '请先核对待办和账号。' }
+    try {
+      const todo = await shizukiTimePrism().completeTodo(id, expectedAccount)
+      shizukiReminders().applyTodo(todo)
       void shizukiReminders().sync()
       return { ok: true, todo }
     }
     catch (error) {
+      shizukiReminders().invalidate()
       return shizukiFailure(error)
     }
   })
@@ -1235,14 +1258,20 @@ function installIpc() {
 
 async function start() {
   installIpc()
+  await createStartupWindow()
+  if (!(await synchronizeStartupSettings()))
+    return
+  // Acquire ownership after the Windows elevation handoff, before any reminder writer starts.
+  if (!app.requestSingleInstanceLock()) { app.quit(); return }
+  app.on('second-instance', () => {
+    const window = stageWindow ?? startupWindow
+    if (window && !window.isDestroyed()) { window.show(); window.focus() }
+  })
   qqReminders().start()
   if (shizukiTimePrism().status().connected)
     shizukiReminders().start()
   registerVisibilityShortcut(readPreferences().shortcuts.toggleVisibility)
   registerInheritedMeguriShortcuts()
-  await createStartupWindow()
-  if (!(await synchronizeStartupSettings()))
-    return
   const everything = await ensureEverythingIpc()
   if (!everything.ready)
     console.warn(everything.detail)

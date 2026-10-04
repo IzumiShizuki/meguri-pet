@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import type { ShizukiConnectionStatus, ShizukiTodo } from '../../shared/desktop-contract'
+import { REMINDER_ZONE_LABEL } from '../../shared/reminder-intent.mjs'
 
 const emit = defineEmits<{ close: [] }>()
 const props = defineProps<{ suggestedTitle?: string }>()
@@ -14,6 +15,10 @@ const busy = ref(false)
 const loading = ref(false)
 const error = ref('')
 const feedback = ref('')
+const creationInput = ref<{ title: string, dueAt?: string, requestId: string, expectedAccount: string }>()
+const selectedTodo = ref<ShizukiTodo>()
+const mutation = ref<'edit' | 'cancel'>()
+const selectedAccount = ref('')
 
 const pending = computed(() => todos.value.filter(todo => !todo.done)
   .sort((left, right) => {
@@ -39,7 +44,9 @@ async function refresh() {
   loading.value = true
   error.value = ''
   try {
+    const previousAccount = status.value ? `${status.value.origin}:${status.value.userId}` : ''
     status.value = await bridge.status()
+    if (previousAccount !== `${status.value.origin}:${status.value.userId}`) todos.value = []
     if (!status.value.connected) {
       todos.value = []
       return
@@ -70,17 +77,34 @@ async function create() {
   error.value = ''
   feedback.value = ''
   try {
-    const result = await bridge.createTodo({ title: finalTitle, dueAt: dueAt.value || undefined })
+    if (!status.value?.connected) { error.value = '请先连接 Shizuki。'; return }
+    const expectedAccount = selectedTodo.value ? selectedAccount.value : `${status.value.origin}:${status.value.userId}`
+    if (!selectedTodo.value && !creationInput.value) {
+      const requests = await bridge.pendingCreates()
+      if (!requests.ok) { error.value = requests.error || '无法核对创建记录。'; return }
+      const original = requests.requests?.find(item => item.title === finalTitle && item.dueAt === dueAt.value)
+      creationInput.value = { title: finalTitle, dueAt: dueAt.value || undefined, requestId: original?.requestId || crypto.randomUUID(), expectedAccount }
+    }
+    const result = selectedTodo.value
+      ? await bridge.updateTodo(selectedTodo.value.todoId, { title: finalTitle, dueAt: dueAt.value, cancel: mutation.value === 'cancel', expectedAccount })
+      : await bridge.createTodo(creationInput.value!)
     if (!result.ok || !result.todo) {
+      if (['request_rejected', 'invalid_due_at', 'invalid_title', 'not_connected', 'account_changed'].includes(result.code || '')) creationInput.value = undefined
       error.value = result.error || 'Shizuki 尚未确认待办已创建。'
       return
     }
     todos.value = [result.todo, ...todos.value.filter(todo => todo.todoId !== result.todo?.todoId)]
-    feedback.value = dueAt.value
+    feedback.value = selectedTodo.value
+      ? (mutation.value === 'cancel' ? `已取消提醒：${result.todo.title}` : `服务器已确认修改：${result.todo.title}，${showTime(result.todo.dueAt)}`)
+      : dueAt.value
       ? `已存入 Shizuki，提醒时间：${showTime(result.todo.dueAt)}`
       : '待办已存入 Shizuki。'
     title.value = ''
     dueAt.value = ''
+    creationInput.value = undefined
+    selectedTodo.value = undefined
+    mutation.value = undefined
+    selectedAccount.value = ''
   }
   catch {
     error.value = '写入 Shizuki 失败，请检查网络后重试。'
@@ -90,13 +114,33 @@ async function create() {
   }
 }
 
+function selectMutation(todo: ShizukiTodo, kind: 'edit' | 'cancel') {
+  if (busy.value || loading.value || creationInput.value || !status.value?.connected) return
+  selectedTodo.value = todo
+  mutation.value = kind
+  selectedAccount.value = `${status.value.origin}:${status.value.userId}`
+  title.value = todo.title
+  dueAt.value = todo.dueAt.slice(0, 16)
+  feedback.value = ''
+  error.value = ''
+}
+
+function cancelReview() {
+  if (busy.value) return
+  selectedTodo.value = undefined
+  mutation.value = undefined
+  selectedAccount.value = ''
+  title.value = ''
+  dueAt.value = ''
+}
+
 async function complete(todo: ShizukiTodo) {
-  if (!bridge || busy.value) return
+  if (!bridge || busy.value || loading.value || !status.value?.connected) return
   busy.value = true
   error.value = ''
   feedback.value = ''
   try {
-    const result = await bridge.completeTodo(todo.todoId)
+    const result = await bridge.completeTodo(todo.todoId, `${status.value.origin}:${status.value.userId}`)
     if (!result.ok || !result.todo) {
       error.value = result.error || 'Shizuki 尚未确认待办已完成。'
       return
@@ -136,18 +180,22 @@ onBeforeUnmount(() => window.removeEventListener('focus', refreshOnFocus))
     </div>
     <template v-else>
       <form class="shizuki-todo-form" @submit.prevent="create">
-        <label>待办内容<input v-model="title" maxlength="200" placeholder="例如：睡觉" :disabled="busy" /></label>
-        <label>到点提醒 <small>可选，本机时间</small><input v-model="dueAt" type="datetime-local" step="60" :disabled="busy" /></label>
-        <p v-if="dueAt" class="shizuki-todo-preview">将于 {{ showTime(dueAt) }} 提醒：{{ title.trim() || '待办内容' }}</p>
-        <button type="submit" :disabled="busy || !title.trim()">{{ busy ? '正在保存…' : '存入 Shizuki' }}</button>
+        <label>待办内容<input v-model="title" maxlength="200" placeholder="例如：睡觉" :disabled="busy || !!creationInput || mutation === 'cancel'" /></label>
+        <label>到点提醒 <small>{{ REMINDER_ZONE_LABEL }}</small><input v-model="dueAt" type="datetime-local" step="60" :disabled="busy || !!creationInput || mutation === 'cancel'" /></label>
+        <p class="shizuki-todo-preview">{{ selectedTodo ? `待办 #${selectedTodo.todoId} · ` : '' }}{{ mutation === 'cancel' ? '取消提醒（保留待办）：' : dueAt ? `提醒 · ${showTime(dueAt)} · ${REMINDER_ZONE_LABEL}：` : '创建无提醒待办：' }}{{ title.trim() || '待办内容' }}</p>
+        <p v-if="creationInput" class="shizuki-todo-preview">保留原请求，重试使用相同编号；结果未确认时不要另建同一待办。</p>
+        <button type="submit" :disabled="busy || !title.trim()">{{ busy ? '正在核对服务器…' : mutation === 'cancel' ? '确认取消提醒' : mutation === 'edit' ? '确认修改提醒' : creationInput ? '重试 / 核对原请求' : '确认存入 Shizuki' }}</button>
+        <button v-if="selectedTodo" type="button" :disabled="busy" @click="cancelReview">放弃本次修改</button>
       </form>
       <p v-if="feedback" class="shizuki-todo-feedback" role="status">{{ feedback }}</p>
       <div class="shizuki-todo-list" :aria-busy="loading">
         <p v-if="loading">正在读取待办…</p>
         <p v-else-if="pending.length === 0">没有未完成的待办。</p>
         <div v-for="todo in pending" :key="todo.todoId" class="shizuki-todo-item">
-          <button type="button" :disabled="busy" :aria-label="`完成 ${todo.title}`" @click="complete(todo)">○</button>
+          <button type="button" :disabled="busy || loading" :aria-label="`完成 ${todo.title}`" @click="complete(todo)">○</button>
           <span><strong>{{ todo.title }}</strong><small v-if="todo.dueAt">{{ showTime(todo.dueAt) }}{{ todo.reminderEnabled ? ' · 已设提醒' : '' }}</small></span>
+          <button type="button" :disabled="busy || loading || !!creationInput" @click="selectMutation(todo, 'edit')">修改</button>
+          <button v-if="todo.reminderEnabled" type="button" :disabled="busy || loading || !!creationInput" @click="selectMutation(todo, 'cancel')">取消提醒</button>
         </div>
       </div>
       <small v-if="completedCount" class="shizuki-todo-completed">已完成 {{ completedCount }} 项</small>

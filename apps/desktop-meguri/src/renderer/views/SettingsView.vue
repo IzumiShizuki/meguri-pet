@@ -553,6 +553,7 @@ async function testRelay() {
               <div class="relay-actions"><button v-if="!shizukiStatus.mainUserId" type="button" :disabled="shizukiSaving" @click="setShizukiMainAccount(true)">设为主账号</button><button v-else type="button" :disabled="shizukiSaving" @click="setShizukiMainAccount(false)">取消主账号绑定</button></div>
               <p v-if="shizukiStatus.mainUserId" class="settings-catalog-note">QQ Core 上传凭据：{{ shizukiStatus.qqUploadConfigured ? '本机已配置' : '本机未配置' }}；待上传 {{ shizukiStatus.qqPending ?? 0 }} 条。Core 接收后仍需 AstrBot 配置并成功投递，才会出现在 QQ。</p>
               <p v-if="shizukiStatus.qqError" class="relay-feedback error" role="status">{{ shizukiStatus.qqError }}</p>
+              <p v-if="shizukiStatus.reminderError" class="relay-feedback error" role="alert">桌面提醒：{{ shizukiStatus.reminderError }}</p>
               <div class="relay-actions"><button type="button" @click="refreshShizukiDeliveryStatus">刷新提醒投递状态</button></div>
               <div class="relay-actions"><button type="button" :disabled="shizukiSaving" @click="disconnectShizuki">{{ shizukiSaving ? '正在断开…' : '断开连接' }}</button></div>
             </div>

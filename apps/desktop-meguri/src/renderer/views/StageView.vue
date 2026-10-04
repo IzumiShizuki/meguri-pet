@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
       <article v-for="reminder in reminderCards" :key="`${reminder.todoId}:${reminder.triggerAt}`" class="shizuki-reminder-card">
         <div><strong>{{ reminder.late ? '补发提醒' : '到点提醒' }}</strong><button type="button" :aria-label="`关闭 ${reminder.title} 提醒`" @click="dismissReminder(reminder)">×</button></div>
         <p>{{ reminder.title }}</p>
-        <small>{{ new Date(reminder.triggerAt).toLocaleString('zh-CN') }}</small>
+        <small>{{ new Date(reminder.triggerAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) }} · Asia/Shanghai</small>
       </article>
     </div>
     <Transition name="skills-sheet">

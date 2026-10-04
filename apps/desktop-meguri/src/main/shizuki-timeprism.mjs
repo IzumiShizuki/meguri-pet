@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { parseShanghaiTime, REMINDER_TIMEZONE } from '../shared/reminder-intent.mjs'
+import { createWriteJournal, requestMarker } from './shizuki-write-journal.mjs'
 
 const DEFAULT_ORIGIN = 'https://site.shizuki.online'
 const AUTH_PATH = '/api/v1/auth/tokens'
@@ -9,10 +12,11 @@ const MAX_RESPONSE_BYTES = 1024 * 1024
 const REQUEST_TIMEOUT_MS = 15_000
 
 export class ShizukiTimePrismError extends Error {
-  constructor(code, message) {
+  constructor(code, message, status = 0) {
     super(message)
     this.name = 'ShizukiTimePrismError'
     this.code = code
+    this.status = status
   }
 }
 
@@ -52,8 +56,8 @@ export function normalizeShizukiTodo(raw) {
     done: value.done === true,
     dueAt: String(valueOf(value, 'dueAt', 'due_at') || ''),
     showOnCalendar: valueOf(value, 'showOnCalendar', 'show_on_calendar') !== false,
-    timePrecision: String(valueOf(value, 'timePrecision', 'time_precision') || 'MINUTE').toUpperCase(),
-    timingMode: String(valueOf(value, 'timingMode', 'timing_mode') || 'DEADLINE').toUpperCase(),
+    timePrecision: String(valueOf(value, 'timePrecision', 'time_precision') || '').toUpperCase(),
+    timingMode: String(valueOf(value, 'timingMode', 'timing_mode') || '').toUpperCase(),
     rangeStartAt: String(valueOf(value, 'rangeStartAt', 'range_start_at') || ''),
     reminderEnabled: valueOf(value, 'reminderEnabled', 'reminder_enabled') === true,
     startRemindValue: valueOf(value, 'startRemindValue', 'start_remind_value') ?? null,
@@ -87,19 +91,17 @@ export function todoToShizukiPayload(todo, done = todo.done) {
   return payload
 }
 
-export function normalizeLocalDueAt(value) {
+export function normalizeLocalDueAt(value, now = Date.now()) {
   if (value === undefined || value === null || value === '')
     return ''
   const input = String(value).trim()
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(input))
     throw new ShizukiTimePrismError('invalid_due_at', '提醒时间需要精确到分钟。')
-  const date = new Date(input)
-  if (!Number.isFinite(date.getTime()) || date.getFullYear() !== Number(input.slice(0, 4))
-    || date.getMonth() + 1 !== Number(input.slice(5, 7)) || date.getDate() !== Number(input.slice(8, 10))
-    || date.getHours() !== Number(input.slice(11, 13)) || date.getMinutes() !== Number(input.slice(14, 16))) {
+  const epoch = parseShanghaiTime(input)
+  if (!Number.isFinite(epoch)) {
     throw new ShizukiTimePrismError('invalid_due_at', '提醒时间不是有效的本地日期和时间。')
   }
-  if (date.getTime() <= Date.now())
+  if (epoch <= now)
     throw new ShizukiTimePrismError('invalid_due_at', '提醒时间需要晚于当前时间。')
   return `${input}:00`
 }
@@ -157,6 +159,15 @@ export function createShizukiTimePrismClient({
   let accessExpiresAt = 0
   let refreshPromise
   let lastError = ''
+  const journal = createWriteJournal(`${filePath}.requests.json`, (code, message) => new ShizukiTimePrismError(code, message))
+  let operationQueue = Promise.resolve()
+  function serialized(operation) {
+    return (...args) => {
+      const next = operationQueue.then(() => operation(...args))
+      operationQueue = next.catch(() => {})
+      return next
+    }
+  }
 
   function status() {
     return { connected: Boolean(refreshToken), origin, email, userId, error: lastError }
@@ -232,14 +243,14 @@ export function createShizukiTimePrismClient({
         signal: controller.signal,
         redirect: 'error',
       })
-      const parsed = await readBoundedResponse(response)
       if (!response.ok) {
         const code = response.status === 401 ? 'unauthorized' : response.status === 403 ? 'forbidden' : 'site_error'
         const message = response.status === 401 ? 'Shizuki 登录已失效，请重新连接。'
           : response.status === 403 ? '当前 Shizuki 账号无权执行此操作。'
             : `Shizuki 请求失败（HTTP ${response.status}）。`
-        throw new ShizukiTimePrismError(code, message)
+        throw new ShizukiTimePrismError(code, message, response.status)
       }
+      const parsed = await readBoundedResponse(response)
       return unwrapApiData(parsed)
     }
     catch (error) {
@@ -355,13 +366,52 @@ export function createShizukiTimePrismClient({
   }
 
   async function createTodo(input) {
+    if (input?.expectedAccount && input.expectedAccount !== `${origin}:${userId}`)
+      throw new ShizukiTimePrismError('account_changed', 'Shizuki 账号已改变，请重新核对后确认。')
+    if (input?.behavior && input.behavior !== 'reminder')
+      throw new ShizukiTimePrismError('unsupported_action', '当前只允许创建提醒，未安排定时动作。')
+    if (input?.timezone && input.timezone !== REMINDER_TIMEZONE)
+      throw new ShizukiTimePrismError('unsupported_timezone', '请使用 Asia/Shanghai 时间。')
+    if (!refreshToken)
+      throw new ShizukiTimePrismError('not_connected', '请先在设置中连接 Shizuki 账号。')
     const title = String(input?.title || '').trim()
     if (!title || title.length > 200)
       throw new ShizukiTimePrismError('invalid_title', '待办标题需要 1 到 200 个字符。')
-    const dueAt = normalizeLocalDueAt(input?.dueAt)
+    const rawDue = String(input?.dueAt || '')
+    const requestId = input?.requestId || randomUUID()
+    const signature = JSON.stringify([origin, userId, title, rawDue])
+    const existing = journal.get(requestId)
+    const unresolvedTwin = journal.pending(origin, userId).find(entry => entry.state === 'uncertain'
+      && entry.requestId !== requestId && entry.title === title && entry.dueAt === rawDue)
+    if (unresolvedTwin)
+      throw new ShizukiTimePrismError('pending_duplicate', '相同内容和时间已有未确认请求。请恢复并核对原请求，不能另建重复待办。')
+    if (existing && existing.signature !== signature)
+      throw new ShizukiTimePrismError('request_conflict', '请求内容或账号已改变，请先核对原请求，不要重复创建。')
+    const verify = todo => {
+      if (!todo.todoId || todo.title !== title || todo.done
+        || (rawDue && (todo.dueAt !== `${rawDue}:00` || !todo.reminderEnabled || todo.timePrecision !== 'MINUTE'
+          || todo.timingMode !== 'DEADLINE' || todo.deadlineRemindValue !== 0 || todo.deadlineRemindUnit !== 'MINUTE'))) {
+        throw new ShizukiTimePrismError('unconfirmed_reminder', `服务器未确认完整提醒字段${todo.todoId ? `（待办编号 ${todo.todoId}）` : ''}。请在待办面板核对；没有确认创建成功。`)
+      }
+      return todo
+    }
+    if (existing?.state === 'confirmed') {
+      const current = (await listTodos()).find(todo => todo.todoId === existing.todo?.todoId)
+      if (!current) throw new ShizukiTimePrismError('request_consumed', '这个请求已创建过待办，记录可能已删除；不会重复创建。')
+      return verify(current)
+    }
+    if (existing?.state === 'uncertain') {
+      const matches = (await listTodos()).filter(todo => todo.detail === requestMarker(requestId))
+      if (matches.length !== 1)
+        throw new ShizukiTimePrismError('write_uncertain', '服务器写入结果仍不确定。已保留请求；本次仅核对记录，没有重复创建。请稍后重试核对或在 TimePrism 检查。')
+      const todo = verify(matches[0])
+      journal.put(requestId, { ...existing, state: 'confirmed', todo })
+      return todo
+    }
+    const dueAt = normalizeLocalDueAt(rawDue, clock())
     const payload = {
       title,
-      detail: '',
+      detail: requestMarker(requestId),
       priority: 'MEDIUM',
       done: false,
       ...(dueAt ? {
@@ -374,14 +424,52 @@ export function createShizukiTimePrismClient({
         deadline_remind_unit: 'MINUTE',
       } : {}),
     }
-    const data = await authorized(TODOS_PATH, { method: 'POST', body: payload })
-    const todo = normalizeShizukiTodo(data)
-    if (!todo.todoId)
-      throw new ShizukiTimePrismError('invalid_response', 'Shizuki 未返回已创建的待办。')
-    return todo
+    // Refresh before recording dispatch so auth outages cannot leave a phantom POST.
+    if (!accessToken || clock() >= accessExpiresAt - 60_000) await renew()
+    const entry = { signature, origin, userId, title, dueAt: rawDue, state: 'uncertain' }
+    journal.put(requestId, entry)
+    try {
+      const data = await authorized(TODOS_PATH, { method: 'POST', body: payload })
+      const todo = verify(normalizeShizukiTodo(data))
+      journal.put(requestId, { ...entry, state: 'confirmed', todo })
+      return todo
+    }
+    catch (error) {
+      // Only explicit rejecting 4xx responses permit POST again. Timeouts/5xx may have committed.
+      if ([400, 401, 403, 404, 405, 422, 429].includes(error.status)) {
+        journal.put(requestId, { ...entry, state: 'rejected' })
+        throw new ShizukiTimePrismError('request_rejected', `${error.message}服务器已拒绝本次写入，可修改或重试。`, error.status)
+      }
+      throw error
+    }
   }
 
-  async function completeTodo(id) {
+  function pendingCreates() { return journal.pending(origin, userId) }
+
+  async function updateTodo(id, input) {
+    if (input?.expectedAccount && input.expectedAccount !== `${origin}:${userId}`)
+      throw new ShizukiTimePrismError('account_changed', 'Shizuki 账号已改变，请重新选择待办。')
+    const todoId = positiveId(id)
+    if (!todoId) throw new ShizukiTimePrismError('invalid_id', '待办编号无效。')
+    const current = (await listTodos()).find(todo => todo.todoId === todoId)
+    if (!current) throw new ShizukiTimePrismError('not_found', '找不到该待办，请刷新。')
+    const cancellation = input?.cancel === true
+    const title = cancellation ? current.title : String(input?.title || '').trim()
+    if (!title || title.length > 200) throw new ShizukiTimePrismError('invalid_title', '待办标题需要 1 到 200 个字符。')
+    const dueAt = cancellation ? current.dueAt : normalizeLocalDueAt(input?.dueAt, clock())
+    if (!cancellation && !dueAt) throw new ShizukiTimePrismError('invalid_due_at', '修改提醒需要准确的未来时间。')
+    const next = cancellation ? { ...current, reminderEnabled: false }
+      : { ...current, title, dueAt, reminderEnabled: true, timePrecision: 'MINUTE', timingMode: 'DEADLINE', deadlineRemindValue: 0, deadlineRemindUnit: 'MINUTE' }
+    const saved = normalizeShizukiTodo(await authorized(`${TODOS_PATH}/${todoId}`, { method: 'PUT', body: todoToShizukiPayload(next) }))
+    if (saved.todoId !== todoId || saved.title !== title || saved.dueAt !== dueAt || saved.reminderEnabled !== next.reminderEnabled
+      || (!cancellation && (saved.timePrecision !== 'MINUTE' || saved.timingMode !== 'DEADLINE' || saved.deadlineRemindValue !== 0 || saved.deadlineRemindUnit !== 'MINUTE')))
+      throw new ShizukiTimePrismError('invalid_response', '服务器尚未确认修改。请刷新核对原记录后重试。')
+    return saved
+  }
+
+  async function completeTodo(id, expectedAccount) {
+    if (expectedAccount && expectedAccount !== `${origin}:${userId}`)
+      throw new ShizukiTimePrismError('account_changed', 'Shizuki 账号已改变，请重新选择待办。')
     const todoId = positiveId(id)
     if (!todoId)
       throw new ShizukiTimePrismError('invalid_id', '待办编号无效。')
@@ -395,7 +483,7 @@ export function createShizukiTimePrismClient({
       body: todoToShizukiPayload(current, true),
     })
     const saved = normalizeShizukiTodo(data)
-    if (!saved.todoId || !saved.done)
+    if (saved.todoId !== todoId || !saved.done)
       throw new ShizukiTimePrismError('invalid_response', 'Shizuki 未确认待办已完成。')
     return saved
   }
@@ -415,5 +503,6 @@ export function createShizukiTimePrismClient({
     return status()
   }
 
-  return { initialize, status, connect, disconnect, listTodos, createTodo, completeTodo }
+  return { initialize, status, pendingCreates, connect: serialized(connect), disconnect: serialized(disconnect),
+    listTodos: serialized(listTodos), createTodo: serialized(createTodo), completeTodo: serialized(completeTodo), updateTodo: serialized(updateTodo) }
 }
