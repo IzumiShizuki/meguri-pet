@@ -129,6 +129,16 @@
     "type": "string",
     "default": "data/plugin_data/astrbot_plugin_meguri_gateway/rendered-reports"
   },
+  "persona_routing_enabled": {
+    "description": "按当前生效的 AstrBot 人格选择聊天后端。开启后，只有下面名单内的人格自动进入 Meguri，其余使用 AstrBot 默认流程。显式 /meguri 命令仍可使用。",
+    "type": "bool",
+    "default": false
+  },
+  "meguri_persona_ids": {
+    "description": "使用 Meguri 的 AstrBot 人格 ID 列表（精确匹配、区分大小写；通常就是人格名称）。需同时开启对应私聊或群聊的自动接管。人格路由开启但名单为空时，普通聊天全部使用 AstrBot。",
+    "type": "list",
+    "default": []
+  },
   "allowed_senders": {
     "description": "Optional sender allowlist using platform:bot_account:sender_id",
     "type": "list",

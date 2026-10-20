@@ -107,6 +107,38 @@ MEGURI_ASTRBOT_SHARED_TOKEN_FILE
 MEGURI_RELAY_TOKEN_FILE
 ```
 
+## 按人格选择 Meguri 或 AstrBot
+
+同一个机器人可以让指定人格使用 Meguri，其余人格保留 AstrBot 自己的模型、
+工具和上下文。在 Meguri 网关插件配置中设置：
+
+```json
+{
+  "persona_routing_enabled": true,
+  "meguri_persona_ids": ["爱莉"],
+  "route_all_private_messages": true
+}
+```
+
+把示例中的 `爱莉` 换成 AstrBot 中实际的人格 ID（通常就是人格名称），精确匹配、
+区分大小写。多个 Meguri 人格可填入同一列表。其他人格的普通消息交回 AstrBot，
+不会创建 Core 回合或 Meguri 待办草稿。需先在 AstrBot 配置好默认模型。
+群聊还需 `allow_group_messages=true` 和 `route_all_group_messages=true`；
+人格名单不会绕过原有发送者白名单、群聊限制或自动接管开关。
+
+每条消息读取自己会话的当前生效人格，支持默认人格和会话强制人格规则；切换人格后，
+下一条消息即按新选择处理。使用 AstrBot v4.28.1 的原生人格解析接口；旧版或接口
+读取失败时，普通消息交回 AstrBot。显式 `/meguri ...` 不受人格名单限制，仍需
+通过原有权限检查。已有其他插件的命令仍优先处理。
+
+`persona_routing_enabled` 默认关闭，关闭后恢复原来的路由行为；开启后如果
+`meguri_persona_ids` 为空，普通聊天全部交回 AstrBot。`[%None]`（不使用人格）
+始终使用 AstrBot。切换后端不会迁移或合并 AstrBot 与 Core 的历史、长期记忆；
+Meguri 的后台日报和提醒投递配置独立于当前聊天人格。
+
+上游接口依据：[人格解析](https://github.com/AstrBotDevs/AstrBot/blob/v4.28.1/astrbot/core/persona_mgr.py)
+和[会话管理](https://github.com/AstrBotDevs/AstrBot/blob/v4.28.1/astrbot/core/conversation_mgr.py)。
+
 ## Command ownership
 
 With `route_all_private_messages=true` (or `route_all_group_messages=true`) the

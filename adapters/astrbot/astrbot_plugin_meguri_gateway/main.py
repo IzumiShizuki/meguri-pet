@@ -16,6 +16,7 @@ from .client import HttpMeguriCoreClient
 from .daily_reports import DailyReportPoller
 from .gateway import MeguriGateway
 from .identity import IdentityBindingStore
+from .persona_routing import PersonaBackendRouting
 from .relay import HttpMeguriRelayClient
 from .turn_checkpoints import TurnCheckpointStore
 from .timeprism_reminders import TimePrismReminderPoller
@@ -25,7 +26,7 @@ from .timeprism_reminders import TimePrismReminderPoller
     "astrbot_plugin_meguri_gateway",
     "IzumiShizuki",
     "Routes AstrBot messages to the shared Meguri Core runtime.",
-    "0.5.0",
+    "0.8.0",
 )
 class MeguriGatewayPlugin(Star):
     """Routes selected AstrBot events into the authoritative Meguri services."""
@@ -33,6 +34,14 @@ class MeguriGatewayPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
         self.config = config
+        self.persona_routing = PersonaBackendRouting(
+            enabled=bool(config.get("persona_routing_enabled", False)),
+            meguri_persona_ids=frozenset(
+                value.strip()
+                for value in (config.get("meguri_persona_ids", []) or [])
+                if isinstance(value, str) and value.strip()
+            ),
+        )
         salt_env = str(config.get("identity_salt_env", "MEGURI_IDENTITY_SALT"))
         identity_salt = os.getenv(salt_env, "").strip()
         if not identity_salt:
@@ -194,6 +203,11 @@ class MeguriGatewayPlugin(Star):
         if self.route_policy.matches_passthrough(message.text):
             return
         explicit = is_meguri_command(message.text)
+        if (
+            not is_meguri_command(message.text)
+            and not await self.persona_routing.should_use_meguri(self.context, event)
+        ):
+            return
         if not self.route_policy.should_route(message):
             return
         if not self.route_policy.is_allowed(message):
