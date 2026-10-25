@@ -18,20 +18,31 @@ import {
   toLocalResourceAttachment,
 } from '../services/local-resources'
 import type { PixPinCaptureEvent, PixPinCaptureMode } from '../../shared/desktop-contract'
-import type { DesktopVoiceState } from '../../shared/desktop-contract'
 import { useConversationStore, type ConversationMessage } from '../stores/conversation'
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
+import { speechPlaybackState, waitForSpeechPlayback } from '../services/speech-playback'
+import { createVoiceConversationController, type VoiceConversationPhase } from '../services/voice-conversation'
+import { useCompanionDirectorStore } from '../stores/companion-director'
 import TodoPanel from './TodoPanel.vue'
 import ReminderReview from './ReminderReview.vue'
 import { ReminderFlow } from '../services/reminder-flow'
+import MessageContent from './MessageContent.vue'
+import MessageReplayButton from './MessageReplayButton.vue'
+import TrainingFeedbackPanel from './TrainingFeedbackPanel.vue'
+import { useTrainingFeedbackStore } from '../stores/training-feedback'
 
+const emit = defineEmits<{ panel: [open: boolean] }>()
 const conversation = useConversationStore()
 const preferences = useDesktopPreferencesStore()
+const trainingFeedback = useTrainingFeedbackStore()
 const { messages, sending, error } = storeToRefs(conversation)
 const { value } = storeToRefs(preferences)
 const draft = ref('')
 const reminderFlow = reactive(new ReminderFlow(window.meguriDesktop?.shizuki))
-onMounted(() => { void reminderFlow.restorePending() })
+onMounted(() => {
+  void reminderFlow.restorePending()
+  void trainingFeedback.refresh(conversation.sessionId)
+})
 
 function reminderCreated(source: string) {
   if (draft.value.trim() === source.trim()) draft.value = ''
@@ -54,7 +65,7 @@ const captureSessionId = ref('')
 const captureHint = ref('')
 const todoOpen = ref(false)
 watch(todoOpen, open => { if (!open) void reminderFlow.restorePending() })
-const voiceState = ref<'idle' | DesktopVoiceState['state']>('idle')
+const voiceCallState = ref<VoiceConversationPhase>('idle')
 const voiceHint = ref('')
 let resourceSearchTimer: ReturnType<typeof setTimeout> | undefined
 let resourceSearchController: AbortController | undefined
@@ -68,8 +79,55 @@ const resourceScopeLabel = computed(() => hasReadableAttachments.value ? '发送
 const screenshotQuestion = '请看看这张截图，告诉我你注意到什么。'
 const canSend = computed(() => (draft.value.trim().length > 0 || selectedAttachments.value.length > 0)
   && !sending.value && !attachmentBusy.value)
+const voiceCallActive = computed(() => ['listening', 'thinking', 'speaking'].includes(voiceCallState.value))
 const captureActive = computed(() => captureInProgress.value)
-const screenshotActionsDisabled = computed(() => captureActive.value || attachmentBusy.value)
+const screenshotActionsDisabled = computed(() => captureActive.value || attachmentBusy.value || voiceCallActive.value)
+const reminderReviewOpen = computed(() => reminderFlow.phase !== 'idle' || reminderFlow.pending.length > 0)
+const expanded = computed(() => value.value.chat.expanded || todoOpen.value || reminderReviewOpen.value
+  || resourcePanelVisible.value)
+const latestReply = computed(() => messages.value.filter(message => message.role === 'meguri').at(-1))
+const compactReply = computed(() => latestReply.value?.text.trim()
+  || (sending.value ? '正在想怎么回答你…' : '我在这里，想聊点什么？'))
+
+const voiceCallController = createVoiceConversationController({
+  recognize: async () => {
+    const bridge = window.meguriDesktop?.voice
+    return bridge
+      ? bridge.start()
+      : { ok: false, code: 'bridge_unavailable', error: '本机语音识别尚未就绪，请重启 Meguri。' }
+  },
+  cancelRecognition: () => window.meguriDesktop?.voice?.cancel(),
+  send: text => {
+    speechPlaybackState.error = ''
+    return conversation.send(text)
+  },
+  cancelConversation: () => conversation.cancel(),
+  waitForSpeech: async () => {
+    await waitForSpeechPlayback()
+    return speechPlaybackState.error
+  },
+  getSendError: () => conversation.error,
+  onState: (state, message) => {
+    voiceCallState.value = state
+    void useCompanionDirectorStore().setRuntimeContext({ voiceActive: ['listening', 'thinking', 'speaking'].includes(state) })
+    if (state === 'listening') voiceHint.value = message
+      ? `回复语音暂不可用：${message}；通话继续聆听。`
+      : '语音通话中，正在听…'
+    else if (state === 'thinking') voiceHint.value = message ? `识别到「${message}」，正在发送并等待回复…` : '正在发送，等待回复…'
+    else if (state === 'speaking') voiceHint.value = 'Meguri 正在回复…'
+    else if (state === 'error') voiceHint.value = message || '语音通话失败，已结束。'
+    else voiceHint.value = ''
+  },
+})
+
+watch(expanded, async open => {
+  emit('panel', open)
+  if (open) {
+    await nextTick()
+    if (history.value) history.value.scrollTop = history.value.scrollHeight
+  }
+}, { immediate: true })
+onBeforeUnmount(() => emit('panel', false))
 
 watch(() => messages.value.map(message => message.text).join('|'), async () => {
   await nextTick()
@@ -462,10 +520,21 @@ function dismissResourcePicker() {
 }
 
 async function send() {
-  if (!canSend.value)
+  if (!canSend.value || voiceCallActive.value)
     return
-  if (await reminderFlow.prepare(draft.value.trim())) {
+  const composingSessionId = conversation.sessionId
+  const reminderPrepared = await reminderFlow.prepare(draft.value.trim())
+  if (conversation.sessionId !== composingSessionId)
+    return
+  if (reminderPrepared) {
     if (!value.value.chat.expanded) void preferences.update({ chat: { expanded: true } })
+    if (reminderFlow.phase === 'review' && reminderFlow.account && !reminderFlow.dispatched) {
+      const source = draft.value.trim()
+      if (await reminderFlow.confirm() && conversation.sessionId === composingSessionId) {
+        draft.value = ''
+        reminderCreated(source)
+      }
+    }
     return
   }
   if (activeResourceResolution.value || (resourceMarkerPresent(draft.value) && !draft.value.trimStart().startsWith('@@'))) {
@@ -484,12 +553,14 @@ async function send() {
       // Escaping is a convenience; ordinary text remains sendable if resolution is temporarily unavailable.
     }
   }
+  if (conversation.sessionId !== composingSessionId)
+    return
   const attachments = selectedAttachments.value.map(attachment => ({ ...attachment }))
   draft.value = ''
   selectedAttachments.value = []
   clearResourceDiscovery()
   const completed = await conversation.send(message, attachments)
-  if (!completed) {
+  if (!completed && conversation.sessionId === composingSessionId) {
     if (!draft.value.trim())
       draft.value = message
     const selectedIds = new Set(selectedAttachments.value.map(attachment => attachment.reference_id))
@@ -501,48 +572,33 @@ async function send() {
 
 function toggleTodoPanel() {
   todoOpen.value = !todoOpen.value
-  if (todoOpen.value && !value.value.chat.expanded)
-    void preferences.update({ chat: { expanded: true } })
 }
 
-function onVoiceChanged(state: DesktopVoiceState) {
-  voiceState.value = state.state
-  if (state.state === 'completed' && state.text) {
-    draft.value = draft.value.trim() ? `${draft.value.trimEnd()} ${state.text}` : state.text
-    voiceHint.value = '已识别到草稿。发送提醒描述后会先核对时间，确认后才创建。'
-    voiceState.value = 'idle'
-    void nextTick(() => composer.value?.focus())
-  }
-  else if (state.state === 'error') {
-    voiceHint.value = state.error || '语音识别失败。'
-    voiceState.value = 'idle'
-  }
-  else if (state.state === 'cancelled') {
-    voiceHint.value = '语音输入已取消。'
-    voiceState.value = 'idle'
-  }
-  else if (state.state === 'listening') {
-    voiceHint.value = '正在听，请说话…'
-  }
+function toggleHistory() {
+  todoOpen.value = false
+  void preferences.update({ chat: { expanded: !value.value.chat.expanded } })
 }
 
 async function toggleVoice() {
+  if (voiceCallController.isActive()) {
+    await voiceCallController.stop()
+    voiceHint.value = '语音通话已结束。'
+    return
+  }
   const bridge = window.meguriDesktop?.voice
   if (!bridge) {
     voiceHint.value = '本机语音识别尚未就绪，请重启 Meguri。'
     return
   }
-  if (voiceState.value === 'listening' || voiceState.value === 'recognizing') {
-    await bridge.cancel()
+  if (sending.value) {
+    voiceHint.value = '请等当前回复完成后再开始语音通话。'
     return
   }
-  voiceHint.value = '正在启动麦克风…'
-  voiceState.value = 'listening'
-  const result = await bridge.start()
-  if (!result.ok && result.code !== 'cancelled') {
-    voiceHint.value = result.error || '语音识别失败。'
-    voiceState.value = 'idle'
+  if (speechPlaybackState.busy) {
+    voiceHint.value = '请等当前语音播报结束后再开始通话。'
+    return
   }
+  voiceCallController.start()
 }
 
 function onComposerKeydown(event: KeyboardEvent) {
@@ -566,6 +622,11 @@ function onComposerKeydown(event: KeyboardEvent) {
   if (resourcePanelVisible.value && event.key === 'Escape') {
     event.preventDefault()
     dismissResourcePicker()
+    return
+  }
+  if (event.key === 'Escape') {
+    if (todoOpen.value) todoOpen.value = false
+    else if (value.value.chat.expanded) void preferences.update({ chat: { expanded: false } })
     return
   }
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -594,9 +655,7 @@ onBeforeUnmount(() => {
   dragDepth = 0
   disposePixPinCapture()
   disposeClipboardImport()
-  disposeVoiceChanged()
-  if (voiceState.value === 'listening' || voiceState.value === 'recognizing')
-    void window.meguriDesktop?.voice?.cancel()
+  void voiceCallController.stop()
   if (captureId.value)
     void window.meguriDesktop?.screenshots.cancel(captureId.value)
 })
@@ -605,7 +664,6 @@ const disposePixPinCapture = window.meguriDesktop?.screenshots.onChanged(onPixPi
 const disposeClipboardImport = window.meguriDesktop?.attachments.onClipboardImportRequested(() => {
   void stageClipboardImage()
 }) ?? (() => {})
-const disposeVoiceChanged = window.meguriDesktop?.voice?.onChanged(onVoiceChanged) ?? (() => {})
 void window.meguriDesktop?.screenshots.status().then(status => {
   if (status.state === 'starting' || status.state === 'selecting') {
     captureId.value = status.captureId || ''
@@ -619,6 +677,10 @@ void window.meguriDesktop?.screenshots.status().then(status => {
   }
 })
 watch(() => conversation.sessionId, (next, previous) => {
+  if (next !== previous)
+    void trainingFeedback.refresh(next)
+  if (next !== previous && voiceCallController.isActive())
+    void voiceCallController.stop()
   if (captureId.value && next !== previous)
     void cancelPixPinCapture()
 })
@@ -627,19 +689,39 @@ watch(() => conversation.sessionId, (next, previous) => {
 <template>
   <section
     class="chat-dock"
-    :class="{ expanded: value.chat.expanded, 'is-drop-target': dropActive }"
+    :class="{ expanded, compact: !expanded, 'tool-only': expanded && !value.chat.expanded, 'is-drop-target': dropActive }"
     aria-label="与 Meguri 对话"
     @dragenter.prevent="onDragEnter"
     @dragover.prevent="onDragOver"
     @dragleave.prevent="onDragLeave"
     @drop.prevent.stop="onDrop"
   >
+    <article
+      v-if="!expanded"
+      class="compact-reply no-drag"
+      aria-label="Meguri 最新回复"
+    >
+      <span class="compact-reply-text" role="status" :aria-live="sending ? 'off' : 'polite'">{{ compactReply }}</span>
+      <div class="compact-reply-actions">
+        <small v-if="sending">正在回应…</small>
+        <MessageReplayButton v-if="latestReply" :message="latestReply" :disabled="voiceCallActive" />
+        <button type="button" class="compact-expand" aria-label="展开聊天" @click="toggleHistory">展开聊天 ↗</button>
+      </div>
+      <details v-if="sending && latestReply?.progress?.length" class="compact-turn-progress">
+        <summary role="status" aria-live="polite">{{ latestReply.progress.at(-1)?.label }} · 查看进度</summary>
+        <ol>
+          <li v-for="(step, index) in latestReply.progress" :key="`compact-progress-${index}`">
+            {{ step.label }}<small v-if="step.detail">{{ step.detail }}</small>
+          </li>
+        </ol>
+      </details>
+    </article>
     <div v-if="dropActive" class="attachment-drop-overlay no-drag" role="status" aria-live="polite">
       <strong>松开后让 Meguri 读取</strong>
       <span>图片、PDF、文本文档与 DOCX</span>
     </div>
     <header class="chat-header drag-region">
-      <div class="chat-title no-drag">
+      <div class="chat-title">
         <span class="chat-presence" />
         <div>
           <strong>Meguri</strong>
@@ -647,41 +729,62 @@ watch(() => conversation.sessionId, (next, previous) => {
         </div>
       </div>
       <div class="chat-actions no-drag">
-        <button type="button" title="Shizuki 待办" aria-label="打开 Shizuki 待办" @click="toggleTodoPanel">☑</button>
-        <button type="button" title="开始新对话" aria-label="开始新对话" @click="conversation.newConversation()">＋</button>
+        <button type="button" title="Shizuki 待办" aria-label="打开 Shizuki 待办" :aria-pressed="todoOpen" @click="toggleTodoPanel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4" /><path d="m8 12 3 3 5-6" /></svg>
+        </button>
+        <button type="button" title="开始新对话" aria-label="开始新对话" @click="conversation.newConversation()">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+        </button>
+        <slot v-if="expanded" name="controls" />
         <button
           type="button"
+          class="chat-collapse"
           :title="value.chat.expanded ? '收起记录' : '展开记录'"
           :aria-label="value.chat.expanded ? '收起聊天记录' : '展开聊天记录'"
-          @click="preferences.update({ chat: { expanded: !value.chat.expanded } })"
-        >{{ value.chat.expanded ? '⌄' : '⌃' }}</button>
+          :aria-expanded="value.chat.expanded"
+          @click="toggleHistory"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path :d="value.chat.expanded ? 'm6 9 6 6 6-6' : 'm6 15 6-6 6 6'" /></svg>
+        </button>
       </div>
     </header>
 
-    <TodoPanel v-if="todoOpen" :suggested-title="draft" @close="todoOpen = false" />
-    <ReminderReview :flow="reminderFlow" @created="reminderCreated" />
+    <div v-show="value.chat.expanded || todoOpen || reminderReviewOpen" class="chat-body no-drag" :class="{ 'todo-active': todoOpen }">
+      <TodoPanel v-if="todoOpen" :suggested-title="draft" @close="todoOpen = false" />
+      <div v-show="!todoOpen" class="chat-conversation">
+        <ReminderReview :flow="reminderFlow" @created="reminderCreated" />
 
-    <div ref="history" class="chat-history no-drag" :class="{ empty: messages.length === 0 }">
-      <div v-if="messages.length === 0" class="empty-conversation">
-        <span>傍晚好。</span>
-        <p>想聊点什么，或者让我帮你处理一件事？</p>
+        <div v-show="value.chat.expanded" ref="history" class="chat-history no-drag" :class="{ empty: messages.length === 0 }">
+          <div v-if="messages.length === 0" class="empty-conversation">
+            <span>我在这里。</span>
+            <p>想聊点什么，或者让我帮你处理一件事？</p>
+          </div>
+          <article v-for="message in messages" v-else :key="message.id" class="message" :class="[message.role, message.status]">
+            <span class="message-role">{{ roleLabel(message) }}</span>
+            <button v-if="message.role === 'artifact'" type="button" class="artifact-history-link" @click="openArtifact(message)">
+              <span>↗</span>{{ message.text }}
+            </button>
+            <MessageContent v-else :text="message.text" :rich="message.role === 'meguri'" :streaming="message.status === 'streaming'" :message="message" :replay-disabled="voiceCallActive" />
+            <details v-if="message.role === 'meguri' && message.progress?.length" class="turn-progress">
+              <summary>
+                <span role="status" aria-live="polite">{{ message.progress.at(-1)?.label }}</span>
+                <span>查看执行进度</span>
+              </summary>
+              <ol>
+                <li v-for="(step, index) in message.progress" :key="`${message.id}-progress-${index}`" :data-state="step.state">
+                  <span>{{ step.label }}</span><small v-if="step.detail">{{ step.detail }}</small>
+                </li>
+              </ol>
+            </details>
+            <TrainingFeedbackPanel v-if="message.role === 'meguri' && message.turnId && message.status === 'complete'" :session-id="conversation.sessionId" :turn-id="message.turnId" />
+          </article>
+        </div>
+
+        <p v-if="value.chat.expanded && conversation.memoryNotice" class="conversation-memory-notice" role="status">{{ conversation.memoryNotice }}</p>
       </div>
-      <article v-for="message in messages" v-else :key="message.id" class="message" :class="[message.role, message.status]">
-        <span class="message-role">{{ roleLabel(message) }}</span>
-        <button v-if="message.role === 'artifact'" type="button" class="artifact-history-link" @click="openArtifact(message)">
-          <span>↗</span>{{ message.text }}
-        </button>
-        <p v-else>{{ message.text || (message.status === 'streaming' ? '…' : '') }}</p>
-      </article>
     </div>
-
-    <div v-if="error" class="conversation-error no-drag" role="alert">
-      <span>{{ error }}</span>
-      <button type="button" :disabled="sending" @click="conversation.retry()">重试</button>
-    </div>
-
     <section
-      v-if="resourcePanelVisible"
+      v-if="resourcePanelVisible && !todoOpen"
       class="resource-panel no-drag"
       :class="`is-${resourceState}`"
       aria-label="Everything 本地资源选择"
@@ -725,7 +828,7 @@ watch(() => conversation.sessionId, (next, previous) => {
       </div>
     </section>
 
-    <div class="screenshot-actions no-drag" aria-label="PixPin 截图">
+    <div v-if="expanded" class="screenshot-actions no-drag" aria-label="PixPin 截图">
       <button type="button" class="screenshot-action" :disabled="screenshotActionsDisabled" @click="startPixPinCapture('draft')">
         截图问 Meguri
       </button>
@@ -733,18 +836,30 @@ watch(() => conversation.sessionId, (next, previous) => {
         截图直接发送
       </button>
       <button v-if="captureActive" type="button" class="screenshot-cancel" :disabled="!captureId" @click="cancelPixPinCapture">取消</button>
-      <span class="screenshot-hint" role="status" aria-live="polite">
+      <span
+        class="screenshot-hint"
+        :class="{ 'has-message': Boolean(voiceHint || captureHint) }"
+        :title="voiceHint || captureHint || 'PixPin 截图后也可按 Ctrl+Alt+Shift+P 导入剪贴板'"
+        role="status"
+        aria-live="polite"
+      >
         {{ voiceHint || captureHint || 'PixPin 截图后也可按 Ctrl+Alt+Shift+P 导入剪贴板' }}
       </span>
     </div>
 
-    <form class="composer no-drag" :aria-busy="attachmentBusy" @submit.prevent="send">
+    <div v-if="error" class="conversation-error no-drag" role="alert">
+      <span :title="error">{{ error }}</span>
+      <button type="button" :disabled="sending || voiceCallActive" @click="conversation.retry()">重试</button>
+    </div>
+
+    <form class="composer no-drag" :aria-busy="attachmentBusy || voiceCallActive" @submit.prevent="send">
       <textarea
         ref="composer"
         v-model="draft"
         rows="1"
         maxlength="8000"
-        placeholder="输入消息；@文件名 仅引用，或拖入文件 / 粘贴截图…"
+        :disabled="voiceCallActive"
+        :placeholder="expanded ? '输入消息；@文件名，或拖入文件 / 粘贴截图…' : '和 Meguri 说点什么…'"
         aria-label="消息"
         aria-autocomplete="list"
         :aria-expanded="resourceListOpen"
@@ -753,9 +868,10 @@ watch(() => conversation.sessionId, (next, previous) => {
         @keydown="onComposerKeydown"
         @paste="onComposerPaste"
       />
-      <button type="button" class="voice-button" :class="{ listening: voiceState === 'listening' }" :aria-label="voiceState === 'listening' ? '取消语音输入' : '开始语音输入'" :title="voiceState === 'listening' ? '取消语音输入' : '语音输入'" @click="toggleVoice">{{ voiceState === 'listening' ? '■' : '🎙' }}</button>
+      <button type="button" class="voice-button" :class="{ active: voiceCallActive, error: voiceCallState === 'error' }" :disabled="!voiceCallActive && sending" :aria-pressed="voiceCallActive" :aria-label="voiceCallActive ? '结束语音通话' : '开始语音通话'" :title="voiceCallActive ? '结束语音通话' : '语音通话'" @click="toggleVoice">{{ voiceCallActive ? '■' : '🎙' }}</button>
       <button v-if="sending" type="button" class="send-button cancel" aria-label="取消回复" @click="conversation.cancel()">■</button>
-      <button v-else type="submit" class="send-button" :disabled="!canSend" aria-label="发送消息">↑</button>
+      <button v-else type="submit" class="send-button" :disabled="!canSend || voiceCallActive" aria-label="发送消息">↑</button>
     </form>
+    <p v-if="!expanded && (voiceHint || captureHint)" class="compact-input-hint" role="status">{{ voiceHint || captureHint }}</p>
   </section>
 </template>

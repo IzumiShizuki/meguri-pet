@@ -16,6 +16,35 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CoreIdentityVerifierTest {
     @Test
+    void privilegedScopeAlwaysAuthenticatesWhenLegacyChatAuthIsDisabled() {
+        CoreIdentityVerifier verifier = new CoreIdentityVerifier(
+                false, "tenant-a", "", "shared-secret");
+
+        assertThat(verifier.verifyPrivilegedScope(exchange(false), "user-a", "airi", "session-a"))
+                .isEqualTo(new CoreIdentityVerifier.Identity("user-a", "airi", "session-a"));
+        assertThatThrownBy(() -> verifier.verifyPrivilegedScope(
+                MockServerWebExchange.from(MockServerHttpRequest.post("/v1/reminders/timeprism/todos")),
+                "user-a", "airi", "session-a"))
+                .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode().value()).isEqualTo(401));
+        assertThatThrownBy(() -> verifier.verifyPrivilegedScope(exchange(false), "other", "airi", "session-a"))
+                .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode().value()).isEqualTo(403));
+        assertThat(verifier.verifyScope(
+                MockServerWebExchange.from(MockServerHttpRequest.post("/v1/turns")),
+                "legacy-user", "website", "legacy-session").userId()).isEqualTo("legacy-user");
+    }
+
+    @Test
+    void privilegedScopeFailsClosedWithoutServerCredentials() {
+        CoreIdentityVerifier verifier = new CoreIdentityVerifier(false, "tenant-a", "", "");
+
+        assertThatThrownBy(() -> verifier.verifyPrivilegedScope(exchange(false), "user-a", "airi", "session-a"))
+                .isInstanceOfSatisfying(org.springframework.web.server.ResponseStatusException.class,
+                        error -> assertThat(error.getStatusCode().value()).isEqualTo(503));
+    }
+
+    @Test
     void hostedMemoryPermissionRequiresAuthenticatedHeaderAndServerPolicy() {
         CoreIdentityVerifier verifier = new CoreIdentityVerifier(
                 true, "tenant-a", "", "shared-secret", "user-a", "airi");

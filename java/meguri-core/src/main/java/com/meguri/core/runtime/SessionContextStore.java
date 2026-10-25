@@ -214,14 +214,36 @@ public final class SessionContextStore {
         }
     }
 
+    /** Adds a displayed assistant initiative only while its source branch is still current. */
+    public boolean appendAssistantIfCurrent(String userId, String clientId, String sessionId,
+                                             String expectedLeaf, String messageId, String text) {
+        GraphState graph = sessions.get(key(userId, clientId, sessionId));
+        if (graph == null) return false;
+        synchronized (graph) {
+            MessageNode existing = graph.nodes.get(messageId);
+            if (existing != null)
+                return "assistant".equals(existing.role()) && text.equals(existing.content())
+                        && Objects.equals(expectedLeaf, existing.parentMessageId());
+            if (!Objects.equals(expectedLeaf, graph.activeLeafMessageId)) return false;
+            appendNode(userId, clientId, sessionId, messageId, expectedLeaf, new Message("assistant", text));
+            return true;
+        }
+    }
+
     /** Selects a new immutable leaf instead of mutating the original assistant node. */
     public boolean replaceLastAssistant(String userId, String clientId, String sessionId,
                                         String expectedContent, String replacementContent) {
+        return replaceLastAssistant(userId, clientId, sessionId, null, expectedContent, replacementContent);
+    }
+
+    public boolean replaceLastAssistant(String userId, String clientId, String sessionId,
+                                        String expectedMessageId, String expectedContent, String replacementContent) {
         GraphState graph = sessions.get(key(userId, clientId, sessionId));
         if (graph == null || replacementContent == null || replacementContent.isBlank()) return false;
         synchronized (graph) {
             MessageNode current = graph.activeLeafMessageId == null ? null : graph.nodes.get(graph.activeLeafMessageId);
-            if (current == null || !"assistant".equals(current.role()) || !current.content().equals(expectedContent)) {
+            if (current == null || !"assistant".equals(current.role()) || !current.content().equals(expectedContent)
+                    || (expectedMessageId != null && !expectedMessageId.equals(current.messageId()))) {
                 return false;
             }
             GraphState before = copyOf(graph);

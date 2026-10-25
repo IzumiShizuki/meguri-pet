@@ -16,6 +16,20 @@ export function shanghaiWallTime(epoch) {
   return new Date(epoch + OFFSET).toISOString().slice(0, 16)
 }
 
+function nextShanghaiDate(date) {
+  const midnight = parseShanghaiTime(`${date}T00:00`)
+  return Number.isFinite(midnight) ? shanghaiWallTime(midnight + 86400_000).slice(0, 10) : ''
+}
+
+function inferredReminderClock(title, now) {
+  if (/(?:睡觉|睡眠|上床|就寝)/.test(title))
+    return { hour: 12, minute: 0, reason: 'sleep' }
+  const wall = new Date(now + OFFSET)
+  const minutes = wall.getUTCHours() * 60 + wall.getUTCMinutes()
+  const rounded = Math.ceil((minutes + 1) / 30) * 30
+  return { hour: Math.floor(rounded / 60) % 24, minute: rounded % 60, reason: 'next-half-hour' }
+}
+
 function chineseNumber(value) {
   if (/^\d+$/.test(value)) return Number(value)
   const digits = '零一二三四五六七八九'
@@ -37,10 +51,24 @@ const DATE = /(\d{4})[-年](\d{1,2})[-月](\d{1,2})(?:日|号)?/
 /** Bounded grammar: unknown temporal qualifiers never become an executable instruction. */
 export function parseReminderIntent(input, now = Date.now(), overrides = {}) {
   const text = String(input || '').trim()
-  const reminder = /提醒(?:我|一下|我们)?/.exec(text)
-  const temporal = /今天|明天|后天|今晚|今早|明早|明晚|稍后|一会|待会|点|时|[:：]|\d+[-年]\d+|\d+\s*月\s*\d+|定时|分钟后|小时后|下周|周[一二三四五六日天]|下个月|月底/.test(text)
-  const action = /帮我|替我|自动|执行|发送|运行|打开|关闭|检查订单|关机|重启|删除|下载|上传|发消息|发邮件|回电话|拨打|购买/.test(text)
-  if (!reminder && !(temporal && action)) return { status: 'none' }
+  const routingText = text.replace(/“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』|"[^"]*"|'[^']*'/g, quoted => `${quoted[0]}${' '.repeat(Math.max(0, quoted.length - 2))}${quoted.at(-1) || ''}`)
+  const reminderKeyword = /提醒/.exec(routingText)
+  const temporal = /明天|后天|今晚|今夜|今早|明早|明晚|稍后|一会|待会|\d+\s*(?:分钟|小时)后|下周|周[一二三四五六日天]|下个月|月底|\d{1,2}\s*月\s*\d{1,2}(?:日|号)?|\d{4}[-年]\d{1,2}[-月]\d{1,2}/.test(routingText)
+    || /(?:上午|下午|晚上|早上|傍晚)?\s*[零〇一二两三四五六七八九十\d]+\s*(?:点|时|[:：])/.test(routingText)
+  const explicitClock = /(?:上午|下午|晚上|早上|傍晚)?\s*[零〇一二两三四五六七八九十\d]+\s*(?:点|时|[:：])/.test(routingText)
+  const action = /自动|执行|发送|运行|检查订单|关机|重启|删除|下载|上传|发消息|发邮件|回电话|拨打|购买/.test(routingText)
+    || (explicitClock && /打开|关闭/.test(routingText))
+    || (/安排|计划|定时|预约/.test(routingText) && /打开|关闭/.test(routingText))
+  const reminderManagement = /(?:取消|修改|更改|改到|推迟|不要|不用|别再?).*(?:提醒|定时)|(?:提醒).*(?:取消|改到)/.test(routingText)
+  const explicitReminder = /提醒(?:我|我们|一下(?:我|我们)?)/.exec(routingText)
+  const reminderTail = reminderKeyword ? routingText.slice(reminderKeyword.index + reminderKeyword[0].length).trim() : ''
+  const taskAfterBareReminder = Boolean(reminderTail && !/^(?:功能|设置|列表|事项|用法|说明|怎么|如何|是什么|是什么意思|有哪些|为什么|卡片)/.test(reminderTail))
+  const bareReminderCommand = Boolean(reminderKeyword && taskAfterBareReminder
+    && (/^\s*(?:请|帮我|替我)?\s*提醒/.test(routingText) || temporal))
+  const reminder = explicitReminder || (bareReminderCommand ? reminderKeyword : undefined)
+  const reminderDiscussion = /提醒(?:功能|的功能|设置|我(?:是什么意思|是什么|怎么用|如何使用|有哪些|为什么))|(?:分析|解释|讨论|核对|查看|检查).{0,20}提醒.{0,12}(?:设置|功能|列表|用法|说明)|为什么(?:没有|没收到|未收到)?提醒我|我的提醒(?:有哪些|是什么|怎么用)?/.test(routingText)
+  if (reminderDiscussion) return { status: 'none' }
+  if (!reminder && !reminderManagement && !(temporal && action)) return { status: 'none' }
   const behavior = reminder ? 'reminder' : 'action'
   const unsupported = message => ({ status: 'unsupported', behavior, message })
   const clarify = (message, title = '') => ({ status: 'clarify', behavior, message, title, timezone: REMINDER_TIMEZONE })
@@ -72,10 +100,10 @@ export function parseReminderIntent(input, now = Date.now(), overrides = {}) {
     return { status: 'ready', behavior, title, dueAt: String(overrides.dueAt).slice(0, 16), timezone: REMINDER_TIMEZONE }
   }
 
-  const exactDates = [...text.matchAll(new RegExp(DATE.source, 'g'))]
-  const days = [...text.matchAll(new RegExp(DAY.source, 'g'))]
-  const clocks = [...text.matchAll(CLOCK)]
-  const offsets = [...text.matchAll(new RegExp(`(${NUM})\\s*(分钟|小时)后`, 'g'))]
+  const exactDates = [...routingText.matchAll(new RegExp(DATE.source, 'g'))]
+  const days = [...routingText.matchAll(new RegExp(DAY.source, 'g'))]
+  const clocks = [...routingText.matchAll(CLOCK)]
+  const offsets = [...routingText.matchAll(new RegExp(`(${NUM})\\s*(分钟|小时)后`, 'g'))]
   if (exactDates.length + days.length > 1 || clocks.length > 1 || offsets.length > 1
     || (offsets.length && (clocks.length || days.length || exactDates.length)))
     return clarify('发现多个时间，请选择唯一的提醒日期和时间。', title)
@@ -88,16 +116,36 @@ export function parseReminderIntent(input, now = Date.now(), overrides = {}) {
   }
   if (/下周|周[一二三四五六日天]|下个月|月底|稍后|一会|左右|大约|差不多|或者|或是|还是|之前|以后|之后/.test(text))
     return clarify('这个时间还不确定，请填写一个准确的日期和时间。', title)
-  if (!exactDates.length && !days.length) return clarify('是哪一天？请填写明确日期。', title)
-  if (!clocks.length) return clarify('具体几点几分？请填写准确时间。', title)
+  if (!clocks.length) {
+    const inferred = inferredReminderClock(title, now)
+    const day = exactDates.length
+      ? `${exactDates[0][1]}-${exactDates[0][2].padStart(2, '0')}-${exactDates[0][3].padStart(2, '0')}`
+      : days.length
+        ? shanghaiWallTime(now + (days[0][0] === '明天' ? 86400_000 : days[0][0] === '后天' ? 2 * 86400_000 : 0)).slice(0, 10)
+        : shanghaiWallTime(now).slice(0, 10)
+    const dueAt = `${day}T${String(inferred.hour).padStart(2, '0')}:${String(inferred.minute).padStart(2, '0')}`
+    if (parseShanghaiTime(dueAt) <= now) {
+      if (exactDates.length || days.length)
+        return clarify('这个提醒缺少时间，而且默认时间已经过去，请补充具体时间。', title)
+      return {
+        status: 'ready',
+        behavior,
+        title,
+        dueAt: `${nextShanghaiDate(day)}T${String(inferred.hour).padStart(2, '0')}:${String(inferred.minute).padStart(2, '0')}`,
+        timezone: REMINDER_TIMEZONE,
+        inferred: inferred.reason,
+      }
+    }
+    return { status: 'ready', behavior, title, dueAt, timezone: REMINDER_TIMEZONE, inferred: inferred.reason }
+  }
   const clock = clocks[0]
   if ((/[:：]/.test(clock[0]) && !clock[3]) || /^\s*(?:[:：]|\d+\s*秒)/.test(text.slice(clock.index + clock[0].length)))
     return clarify('请填写完整的小时和分钟；当前不安排精确到秒的提醒。', title)
   let hour = chineseNumber(clock[1])
   const minute = clock[2] ? ({ 半: 30, 一刻: 15, 三刻: 45 })[clock[2]] : (clock[3] ? chineseNumber(clock[3]) : 0)
-  const part = text.match(PART)?.[0] || (days[0]?.[0] === '今晚' ? '晚上' : /今早|今晨/.test(days[0]?.[0] || '') ? '上午' : '')
+  const part = routingText.match(PART)?.[0] || (days[0]?.[0] === '今晚' ? '晚上' : /今早|今晨/.test(days[0]?.[0] || '') ? '上午' : '')
   const is24 = /[:：]/.test(clock[0]) || hour === 0 || hour > 12
-  if (!part && !is24) return clarify('这个钟点是上午还是下午？请填写 24 小时制时间。', title)
+  let candidateHours
   if (part) {
     if (hour < 1 || hour > 12) return clarify('时段与钟点冲突，请填写 24 小时制时间。', title)
     if (/下午|傍晚|晚上|夜里/.test(part)) {
@@ -110,18 +158,30 @@ export function parseReminderIntent(input, now = Date.now(), overrides = {}) {
       if (hour === 1) hour = 13
     }
     else if (hour === 12) return clarify('上午十二点有歧义，请填写 24 小时制时间。', title)
+    candidateHours = [hour]
   }
+  else if (is24) candidateHours = [hour]
+  else candidateHours = [hour === 12 ? 0 : hour, hour === 12 ? 12 : hour + 12]
   let day
   if (exactDates.length) {
     const [, y, m, d] = exactDates[0]
     day = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`
   }
-  else {
+  else if (days.length) {
     const delta = days[0][0] === '明天' ? 1 : days[0][0] === '后天' ? 2 : 0
     day = shanghaiWallTime(now + delta * 86400_000).slice(0, 10)
   }
-  const dueAt = `${day}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-  if (!Number.isFinite(parseShanghaiTime(dueAt)) || parseShanghaiTime(dueAt) <= now)
+  else day = shanghaiWallTime(now).slice(0, 10)
+
+  const hasExplicitDay = exactDates.length > 0 || days.length > 0
+  const candidateDays = hasExplicitDay ? [day] : [day, nextShanghaiDate(day)].filter(Boolean)
+  const futureCandidates = candidateDays.flatMap(candidateDay => candidateHours.map(candidateHour => {
+    const dueAt = `${candidateDay}T${String(candidateHour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+    return { dueAt, at: parseShanghaiTime(dueAt) }
+  })).filter(candidate => Number.isFinite(candidate.at) && candidate.at > now)
+    .sort((left, right) => left.at - right.at)
+  const selected = futureCandidates[0]
+  if (!selected)
     return clarify('该时间无效或已经过去，请填写未来的日期和时间。', title)
-  return { status: 'ready', behavior, title, dueAt, timezone: REMINDER_TIMEZONE }
+  return { status: 'ready', behavior, title, dueAt: selected.dueAt, timezone: REMINDER_TIMEZONE }
 }

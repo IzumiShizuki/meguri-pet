@@ -12,14 +12,24 @@ import type {
 } from '../../shared/desktop-contract'
 
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
+import PersonalizationSettings from '../components/PersonalizationSettings.vue'
+import PrivacySettings from '../components/PrivacySettings.vue'
+import UpdateSettings from '../components/UpdateSettings.vue'
+import MemorySettings from '../components/MemorySettings.vue'
+import TrainingSettings from '../components/TrainingSettings.vue'
+import Live2DSettings from '../components/Live2DSettings.vue'
+import SpeechSettings from '../components/SpeechSettings.vue'
+import CompanionSettings from '../components/CompanionSettings.vue'
+import { useCompanionDirectorStore } from '../stores/companion-director'
 
-type SettingsSection = 'general' | 'chat' | 'character' | 'window' | 'startup' | 'speech' | 'shizuki' | 'shortcuts' | 'multimodal' | 'agents' | 'services'
+type SettingsSection = 'general' | 'chat' | 'character' | 'companion' | 'memory' | 'training' | 'privacy' | 'updates' | 'window' | 'startup' | 'speech' | 'shizuki' | 'shortcuts' | 'multimodal' | 'agents' | 'services'
 type RelayFeedback = { kind: 'neutral' | 'success' | 'error', message: string }
 
 const preferences = useDesktopPreferencesStore()
+const companionDirector = useCompanionDirectorStore()
 const { value } = storeToRefs(preferences)
 const active = ref<SettingsSection>()
 const readiness = ref<ReadinessSnapshot>({ runId: 0, status: 'checking', items: [] })
@@ -77,6 +87,11 @@ const sections: Array<{ id: SettingsSection, label: string, description: string,
   { id: 'general', label: '外观', description: '颜色模式和界面动效', icon: '◐' },
   { id: 'chat', label: '对话', description: '嵌入式聊天坞和历史记录', icon: '▤' },
   { id: 'character', label: '角色', description: 'Meguri 立绘与表现方式', icon: '◇' },
+  { id: 'companion', label: '陪伴与主动性', description: '专注、主动提醒和本机跟进', icon: '♡' },
+  { id: 'memory', label: '正式记忆', description: '授权、查看、审核与整理记忆', icon: '◈' },
+  { id: 'training', label: '监督与训练', description: '可选回复纠正、比较与训练许可', icon: '↗' },
+  { id: 'privacy', label: '隐私与数据', description: '数据授权、隐私政策和脱敏诊断', icon: '▧' },
+  { id: 'updates', label: '应用更新', description: '检查 GitHub 的最新正式版本', icon: '↻' },
   { id: 'window', label: '窗口', description: '置顶、位置和舞台行为', icon: '▣' },
   { id: 'startup', label: '启动与权限', description: '登录启动和管理员权限', icon: '↥' },
   { id: 'speech', label: '语音', description: '本地语音输入、回复语音和音量', icon: '♪' },
@@ -211,6 +226,7 @@ function sectionDescription(section: (typeof sections)[number]) {
 
 onMounted(async () => {
   await preferences.initialize()
+  companionDirector.initialize()
   const [snapshot, savedRelay, savedAgents] = await Promise.all([
     window.meguriDesktop?.readiness.get(),
     window.meguriDesktop?.multimodalRelay.get(),
@@ -253,6 +269,8 @@ onMounted(async () => {
   }
   shizukiLoading.value = false
 })
+
+onBeforeUnmount(() => companionDirector.dispose())
 
 async function connectShizuki() {
   if (shizukiSaving.value) return
@@ -474,7 +492,7 @@ async function testRelay() {
           <div><strong>{{ section.label }}</strong><small>{{ sectionDescription(section) }}</small></div>
           <span aria-hidden="true">{{ section.icon }}</span>
         </button>
-        <p class="settings-catalog-note">AIRI 的供应商、插件、更新器和高级模型渲染器会在 Meguri 具备对应运行能力后再加入。</p>
+        <p class="settings-catalog-note">设置在本机保存。正式记忆、Live2D 与语音资源会显示各自的实际运行状态。</p>
       </div>
 
       <div v-else class="settings-detail">
@@ -488,12 +506,21 @@ async function testRelay() {
         <template v-else-if="active === 'chat'">
           <label class="setting-row"><span><strong>显示嵌入式聊天</strong><small>在角色舞台底部保留 AIRI 风格聊天坞。</small></span><input type="checkbox" :checked="value.chat.visible" @change="preferences.update({ chat: { visible: ($event.target as HTMLInputElement).checked } })"></label>
           <label class="setting-row"><span><strong>默认展开历史</strong><small>使用 55vh 的对话历史区域。</small></span><input type="checkbox" :checked="value.chat.expanded" @change="preferences.update({ chat: { expanded: ($event.target as HTMLInputElement).checked } })"></label>
+          <PersonalizationSettings />
         </template>
 
         <template v-else-if="active === 'character'">
           <div class="setting-group"><div><strong>默认立绘</strong><small>选择 Meguri 01–06 套立绘。</small></div><div class="outfit-settings"><button v-for="code in ['01','02','03','04','05','06']" :key="code" type="button" :class="{ active: value.character.outfitCode === code }" @click="preferences.update({ character: { outfitCode: code } })">{{ code }}</button></div></div>
           <label class="setting-row"><span><strong>减少动态效果</strong><small>关闭呼吸、摆动和界面过渡。</small></span><input type="checkbox" :checked="value.character.reducedMotion" @change="preferences.update({ character: { reducedMotion: ($event.target as HTMLInputElement).checked } })"></label>
+          <Live2DSettings />
         </template>
+
+        <CompanionSettings v-else-if="active === 'companion'" />
+
+        <MemorySettings v-else-if="active === 'memory'" />
+        <TrainingSettings v-else-if="active === 'training'" />
+        <PrivacySettings v-else-if="active === 'privacy'" />
+        <UpdateSettings v-else-if="active === 'updates'" />
 
         <template v-else-if="active === 'window'">
           <label class="setting-row"><span><strong>保持窗口置顶</strong><small>让 Meguri 保持在其他应用上方。</small></span><input type="checkbox" :checked="value.window.alwaysOnTop" @change="setAlwaysOnTop(($event.target as HTMLInputElement).checked)"></label>
@@ -530,8 +557,7 @@ async function testRelay() {
 
         <template v-else-if="active === 'speech'">
           <div class="setting-group"><div><strong>语音输入</strong><small>聊天坞麦克风使用本机 Windows 中文语音识别。识别结果先放进草稿，供你修改后发送。</small></div></div>
-          <label class="setting-row"><span><strong>播放回复与主账号提醒语音</strong><small>使用本地 GPT-SoVITS 朗读回复和到点提醒。</small></span><input type="checkbox" :checked="value.speech.ttsEnabled" @change="preferences.update({ speech: { ttsEnabled: ($event.target as HTMLInputElement).checked } })"></label>
-          <label class="setting-slider"><span><strong>播放音量</strong><small>{{ Math.round(value.speech.volume * 100) }}%</small></span><input type="range" min="0" max="1" step="0.05" :value="value.speech.volume" @input="preferences.update({ speech: { volume: Number(($event.target as HTMLInputElement).value) } })"></label>
+          <SpeechSettings />
         </template>
 
         <template v-else-if="active === 'shizuki'">
@@ -552,6 +578,7 @@ async function testRelay() {
               <p class="settings-catalog-note">{{ shizukiStatus.mainUserId === shizukiStatus.userId ? '当前账号是主账号；到点会尝试语音播报并上传 QQ 提醒。' : shizukiStatus.mainUserId ? `主账号已绑定编号 ${shizukiStatus.mainUserId}；当前账号不会向主账号 QQ 推送。` : '尚未选择主账号。' }}</p>
               <div class="relay-actions"><button v-if="!shizukiStatus.mainUserId" type="button" :disabled="shizukiSaving" @click="setShizukiMainAccount(true)">设为主账号</button><button v-else type="button" :disabled="shizukiSaving" @click="setShizukiMainAccount(false)">取消主账号绑定</button></div>
               <p v-if="shizukiStatus.mainUserId" class="settings-catalog-note">QQ Core 上传凭据：{{ shizukiStatus.qqUploadConfigured ? '本机已配置' : '本机未配置' }}；待上传 {{ shizukiStatus.qqPending ?? 0 }} 条。Core 接收后仍需 AstrBot 配置并成功投递，才会出现在 QQ。</p>
+              <p v-if="shizukiStatus.mainUserId" class="settings-catalog-note">桌面端可在这里配置 Shizuki 登录和主账号；AstrBot 的提醒开关、Owner Shizuki ID 与 QQ 私聊目标属于服务端插件配置，桌面端不会保存或修改它们。服务端需启用 <code>timeprism_reminders_enabled</code>，并填写 <code>timeprism_owner_user_id</code> 和 <code>timeprism_reminder_target</code>。</p>
               <p v-if="shizukiStatus.qqError" class="relay-feedback error" role="status">{{ shizukiStatus.qqError }}</p>
               <p v-if="shizukiStatus.reminderError" class="relay-feedback error" role="alert">桌面提醒：{{ shizukiStatus.reminderError }}</p>
               <div class="relay-actions"><button type="button" @click="refreshShizukiDeliveryStatus">刷新提醒投递状态</button></div>

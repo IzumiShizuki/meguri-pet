@@ -52,7 +52,7 @@ public final class UnifiedRetrievalFacade implements AutoCloseable {
                 new BundleAssembler(), new InMemoryRetrievalTraceRepository(),
                 java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(),
                 Duration.ofSeconds(2), Duration.ofMillis(500), true,
-                RetrievalAuthorizationPolicy.allowAll());
+                RetrievalAuthorizationPolicy.allowAll(), Duration.ofSeconds(10));
         return new UnifiedRetrievalFacade(bridge, runtime);
     }
 

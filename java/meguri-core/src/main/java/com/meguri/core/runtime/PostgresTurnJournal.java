@@ -500,8 +500,7 @@ public final class PostgresTurnJournal implements TurnJournal {
     }
 
     void recoverInterruptedTurns() {
-        List<TurnRecord> interrupted = jdbc.query("""
-                        SELECT """ + TURN_COLUMNS + """
+        List<TurnRecord> interrupted = jdbc.query("SELECT " + TURN_COLUMNS + """
                         FROM turn_runtime
                         WHERE status NOT IN ('completed', 'failed', 'cancelled')
                           AND (owner_id IS NULL OR lease_until IS NULL

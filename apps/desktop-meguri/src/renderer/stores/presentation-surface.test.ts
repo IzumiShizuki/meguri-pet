@@ -41,12 +41,9 @@ describe('presentation surface recovery ledger', () => {
     expect(conversation.messages[0].text).toBe('仍在继续的回复。')
   })
 
-  it('consumes a one-shot effect at most once and tracks interruption generations', () => {
+  it('tracks interruption generations for pending presentation work', () => {
     const surface = usePresentationSurfaceStore()
 
-    expect(surface.consumeOneShot('event-1')).toBe(true)
-    expect(surface.consumeOneShot('event-1')).toBe(false)
-    expect(surface.consumedEffectIds).toEqual(['event-1'])
     expect(surface.interruptPresentation()).toBe(1)
     expect(surface.interruptPresentation()).toBe(2)
   })

@@ -1,6 +1,7 @@
 package com.meguri.core.context;
 
 import com.meguri.core.llm.ProviderTokenizer;
+import com.meguri.core.llm.OpenAiProviderTokenizer;
 import com.meguri.core.runtime.SessionContextStore;
 import org.junit.jupiter.api.Test;
 
@@ -15,6 +16,98 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class CompanionContextRuntimeTest {
     private final WordTokenizer tokenizer = new WordTokenizer();
+
+    @Test
+    void oversizedRetrievedPageIsBoundedWithRealTokenizerBeforeContextAssembly() {
+        SessionContextStore store = new SessionContextStore(20);
+        append(store, null, "user", "帮我查看一下今天 Codex 是否更新了");
+        ProviderTokenizer realTokenizer = new OpenAiProviderTokenizer("gpt-4o-mini");
+        CompanionContextRuntime runtime = new CompanionContextRuntime(
+                store, new InMemoryContextRuntimePersistence(), realTokenizer);
+        String page = ("Codex current release notes describe compatibility and security changes. ")
+                .repeat(900);
+        String citation = "\n[Citation: https://example.test/codex (Codex release)]";
+        ContextBuildRequest.ExternalBlock retrieved = new ContextBuildRequest.ExternalBlock(
+                ContextBundle.BlockType.RETRIEVAL,
+                List.of("WEB", "https://example.test/codex", "trace:web-result-1"),
+                ContextBundle.Trust.UNTRUSTED_EXTERNAL, page + citation, false);
+        ContextBuildRequest.ExternalBlock persona = new ContextBuildRequest.ExternalBlock(
+                ContextBundle.BlockType.PERSONA, List.of("core-persona"),
+                ContextBundle.Trust.SYSTEM, "Core persona policy remains mandatory.", true);
+        EnumMap<ContextBundle.BlockType, ContextProfile.SourceBudget> budgets =
+                new EnumMap<>(ContextBundle.BlockType.class);
+        for (ContextBundle.BlockType type : ContextBundle.BlockType.values()) {
+            budgets.put(type, new ContextProfile.SourceBudget(0, 13_700));
+        }
+        budgets.put(ContextBundle.BlockType.RETRIEVAL,
+                new ContextProfile.SourceBudget(512, 3_500));
+        ContextProfile profile = new ContextProfile(
+                "gpt-4o-mini", 16_000, 1_600, 700, 0.70, 0.90, budgets);
+
+        ContextBundle bundle = runtime.build(new ContextBuildRequest(
+                "u", "web", "c", profile, "current information", 0.8,
+                List.of(retrieved, persona), "帮我查看一下今天 Codex 是否更新了",
+                TopicSignal.fromLegacy("current information", 0.8),
+                RehydrationPolicy.disabled()))
+                .bundle();
+
+        ContextBundle.Block bounded = bundle.blocks().stream()
+                .filter(block -> block.blockType() == ContextBundle.BlockType.RETRIEVAL)
+                .findFirst().orElseThrow();
+        assertThat(bounded.tokenCount()).isLessThanOrEqualTo(3_500);
+        assertThat(bounded.sourceIds()).contains("WEB", "https://example.test/codex",
+                "trace:web-result-1");
+        assertThat(bounded.content()).contains("Codex current release notes", "https://example.test/codex");
+        assertThat(bundle.truncations()).anySatisfy(truncation -> {
+            assertThat(truncation.reason()).isEqualTo("retrieval_excerpt_source_max");
+            assertThat(truncation.sourceIds()).contains("https://example.test/codex");
+        });
+        assertThat(bundle.blocks()).anySatisfy(block -> {
+            assertThat(block.blockType()).isEqualTo(ContextBundle.BlockType.PERSONA);
+            assertThat(block.content()).isEqualTo("Core persona policy remains mandatory.");
+            assertThat(block.trust()).isEqualTo(ContextBundle.Trust.SYSTEM);
+        });
+        assertThat(bundle.blocks()).anySatisfy(block -> {
+            assertThat(block.blockType()).isEqualTo(ContextBundle.BlockType.RECENT_RAW);
+            assertThat(block.content()).contains("帮我查看一下今天 Codex 是否更新了");
+        });
+    }
+
+    @Test
+    void retrievalWithinSourceMaximumIsNotUnnecessarilyTrimmed() {
+        SessionContextStore store = new SessionContextStore(20);
+        append(store, null, "user", "compare these pages");
+        ProviderTokenizer realTokenizer = new OpenAiProviderTokenizer("gpt-4o-mini");
+        CompanionContextRuntime runtime = new CompanionContextRuntime(
+                store, new InMemoryContextRuntimePersistence(), realTokenizer);
+        String first = ("Codex release notes include compatibility details. ").repeat(300);
+        String second = "Short supplemental page with an exact detail.";
+        ContextBuildRequest.ExternalBlock large = new ContextBuildRequest.ExternalBlock(
+                ContextBundle.BlockType.RETRIEVAL, List.of("WEB", "https://example.test/large"),
+                ContextBundle.Trust.UNTRUSTED_EXTERNAL, first, false);
+        ContextBuildRequest.ExternalBlock small = new ContextBuildRequest.ExternalBlock(
+                ContextBundle.BlockType.RETRIEVAL, List.of("WEB", "https://example.test/small"),
+                ContextBundle.Trust.UNTRUSTED_EXTERNAL, second, false);
+        EnumMap<ContextBundle.BlockType, ContextProfile.SourceBudget> budgets =
+                new EnumMap<>(ContextBundle.BlockType.class);
+        for (ContextBundle.BlockType type : ContextBundle.BlockType.values()) {
+            budgets.put(type, new ContextProfile.SourceBudget(0, 13_700));
+        }
+        budgets.put(ContextBundle.BlockType.RETRIEVAL, new ContextProfile.SourceBudget(512, 3_500));
+        ContextProfile profile = new ContextProfile(
+                "gpt-4o-mini", 16_000, 1_600, 700, 0.70, 0.90, budgets);
+
+        ContextBundle bundle = runtime.build(new ContextBuildRequest(
+                "u", "web", "c", profile, "comparison", 0.8,
+                List.of(large, small), "compare these pages", TopicSignal.fromLegacy("comparison", 0.8),
+                RehydrationPolicy.disabled())).bundle();
+
+        assertThat(bundle.blocks()).filteredOn(block -> block.blockType() == ContextBundle.BlockType.RETRIEVAL)
+                .extracting(ContextBundle.Block::content)
+                .containsExactly(first, second);
+        assertThat(bundle.truncations()).noneMatch(
+                truncation -> truncation.reason().equals("retrieval_excerpt_source_max"));
+    }
 
     @Test
     void activeBranchNeverContainsSiblingMessagesAndStaleSummaryIsExcluded() {

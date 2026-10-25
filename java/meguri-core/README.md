@@ -1,8 +1,9 @@
 # Meguri Core (Java)
 
-This directory is an isolated Java 21 / Spring Boot 3.5 reactive module. It
-provides the JVM boundary for the Meguri runtime while leaving the existing
-Python and TypeScript implementations authoritative and untouched.
+This directory is the Java 21 / Spring Boot 3.5 reactive Core used by the native
+desktop runtime. It shares the TypeScript wire contracts and can connect to
+the optional Python memory bridge; the offline Python mock harness remains a
+separate development path.
 
 ## Dependency baseline
 
@@ -22,8 +23,7 @@ does not make model network calls; runtime code should use its deterministic
 mock provider until a real provider is explicitly enabled.
 
 ```powershell
-$env:JAVA_HOME = 'D:\environment\jdk\temurin-21\jdk-21.0.11+10'
-$env:Path = "$env:JAVA_HOME\bin;D:\environment\maven\runtime\apache-maven-3.9.16\bin;$env:Path"
+. 'D:\environment\activate-dev-env.ps1' 21
 & 'D:\environment\maven\runtime\apache-maven-3.9.16\bin\mvn.cmd' -B test
 & 'D:\environment\maven\runtime\apache-maven-3.9.16\bin\mvn.cmd' -B spring-boot:run
 ```
@@ -332,6 +332,23 @@ and performs no content access. The explicit gate is
 `POST /v1/daily/bilibili/selected-summary`; it is never called by the daily
 pipeline and rejects an empty selection.
 
+## Owner TimePrism Todo writer
+
+The AstrBot owner writer uses `MEGURI_REMINDER_OWNER_SHIZUKI_USER_ID`, external
+absolute credential files `MEGURI_TIMEPRISM_OWNER_EMAIL_FILE` and
+`MEGURI_TIMEPRISM_OWNER_PASSWORD_FILE`, and the persistent
+`MEGURI_REMINDER_DIR` journal. Set `MEGURI_CORE_SHARED_TOKEN_FILE` to the shared
+adapter credential. `POST /v1/reminders/timeprism/todos` always authenticates the
+exact owner, `astrbot` client and `timeprism-todo-writer` session, including when
+legacy chat authentication is disabled. Missing writer authorization fails closed.
+
+`MEGURI_TIMEPRISM_HTTP_TIMEOUT_MS` defaults to 15000 per exchange and covers the
+complete body, with a 1 MiB response limit. A potentially committed write remains
+uncertain and reconciles its original request marker. Verified receipts return
+minute precision to match the draft contract; cached and reloaded receipts use
+the same format. The QQ reminder poller remains separately configured. See the
+[AstrBot setup](../../adapters/astrbot/README.md#create-timeprism-reminders-from-private-chat).
+
 ## Prefix input contract
 
 The desktop home uses the loopback `POST /v1/input/resolve` endpoint before a
@@ -371,3 +388,43 @@ Use `POST /v1/memory/sleep-consolidation` for an explicit local run and
 summaries are not automatically promoted into long-term facts and never modify
 the protected canonical RAG; durable facts still use the existing reviewed
 memory-candidate workflow.
+
+## Native supervision and durable Turn recovery
+
+Native feedback is optional, requires explicit submission consent, and stores
+recoverable pending records, receipts and withdrawal markers. The offline
+feedback bridge and training gates are documented in the
+[P0 learning record](../../docs/p0-learning-and-runtime-recovery-2026-10-08.md).
+
+Use the [Turn Runtime activation runbook](../../ops/runbooks/turn-runtime-activation.md)
+for the dedicated database/role connection, startup configuration, isolated
+PostgreSQL checks and actual desktop restart acceptance. The opt-in recovery
+check now exercises both storage components and three independently launched
+Spring Core JVMs over authenticated HTTP and SSE. It does not restart a live Core.
+
+## Current desktop runtime and response boundary
+
+The application defaults are deliberately conservative: the `local-mock`
+profile, loopback port `18080`, mock LLM, and in-memory turn journal. The
+trusted local Core launcher sets execution mode and Limited ReAct on for that
+desktop launch. It selects PostgreSQL turn persistence only when the separate
+runtime database configuration is present and valid. The Python memory bridge
+is controlled independently; when no explicit bridge setting is inherited, the
+launcher enables it only if both required local secret files exist. An explicit
+environment setting takes precedence. The launcher configures the
+OpenAI-compatible provider when its local API-key file exists; otherwise
+inherited provider settings or the application mock default apply. None of
+those launcher choices changes the application defaults in `application.yml`.
+
+`TurnResponseCoordinator` owns provider response behavior: native stream
+sanitization and aggregation, visible-delta emission through the orchestrator
+boundary, cancellation checks, provider latency marks, final response
+fallback, and optional candidate/training observation. The `TurnOrchestrator`
+remains responsible for public runtime APIs, turn lifecycle, retrieval/context
+assembly, stage transitions, journal recovery, terminal events, and replay
+windows. The extraction adds no new protocol or runtime switch; rollback
+requires restoring the preceding Core source release. It introduces no journal
+schema migration.
+
+See the [P2 runtime map](../../docs/p2-runtime-map-2026-10-08.md) for launcher
+overrides, local dependency boundaries, recovery, and acceptance evidence.

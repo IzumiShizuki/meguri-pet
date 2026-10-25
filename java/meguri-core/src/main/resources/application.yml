@@ -2,7 +2,7 @@ spring:
   application:
     name: meguri-core-java
   config:
-    import: optional:classpath:application-notion.yml
+    import: optional:classpath:application-notion.yml,optional:file:${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}/ai-news.properties
   codec:
     # The loopback gateway retains a 1 MB default and only admits this larger
     # envelope for turns carrying a validated readable-attachment marker.
@@ -51,6 +51,11 @@ meguri:
     strategy-revision: ${MEGURI_CONTEXT_STRATEGY_REVISION:context-refactoring-v1-deterministic}
   daily-reports:
     directory: ${MEGURI_DAILY_REPORT_DIR:${user.home}/.meguri/daily-reports}
+  ai-news:
+    enabled: ${MEGURI_AI_NEWS_ENABLED:false}
+    start-hour: ${MEGURI_AI_NEWS_START_HOUR:8}
+    poll-delay-ms: ${MEGURI_AI_NEWS_POLL_DELAY_MS:600000}
+    desktop-directory: ${MEGURI_AI_NEWS_DESKTOP_DIRECTORY:}
   reminders:
     directory: ${MEGURI_REMINDER_DIR:${user.home}/.meguri/reminders}
     owner-shizuki-user-id: ${MEGURI_REMINDER_OWNER_SHIZUKI_USER_ID:0}
@@ -62,6 +67,8 @@ meguri:
     bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}
     timeout-ms: ${MEGURI_RAG_TIMEOUT_MS:2500}
   memory:
+    desktop-token-file: ${MEGURI_DESKTOP_AUTH_TOKEN_FILE:}
+    desktop-user-id: ${MEGURI_DESKTOP_USER_ID:local-airi-user}
     bridge-url: ${MEGURI_MEMORY_BRIDGE_URL:http://127.0.0.1:8000}
     bridge-token: ${MEGURI_INTERNAL_BRIDGE_TOKEN:}
     bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}

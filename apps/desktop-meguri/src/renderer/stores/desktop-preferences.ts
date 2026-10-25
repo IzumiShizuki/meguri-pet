@@ -1,20 +1,37 @@
 import type { DesktopPreferences, DesktopPreferencesPatch } from '../../shared/desktop-contract'
+import type { CompanionPreferences, CompanionPreferencesPatch } from '../../shared/companion-contract'
 
 import { defineStore } from 'pinia'
+import { conversationPalette } from '../utils/conversation-palette'
 
 export const fallbackDesktopPreferences: DesktopPreferences = {
   version: 1,
-  appearance: 'system',
-  chat: { visible: true, expanded: false },
-  character: { outfitCode: '04', reducedMotion: false },
+  appearance: 'light',
+  chat: { visible: true, expanded: false, wallpaperDataUrl: '', wallpaperBlur: 0, bubbleOpacity: 1, colorPalette: 'mint' },
+  character: { outfitCode: '04', reducedMotion: false, renderer: 'png', live2dModelId: '' },
   window: { alwaysOnTop: true, fadeOnHover: true },
-  speech: { ttsEnabled: true, volume: 0.9 },
+  speech: { ttsEnabled: true, volume: 0.9, speed: 1, ambientEnabled: true, galgameEnabled: true },
+  memory: { enabled: false, autoSummarize: true, summaryEveryTurns: 10 },
+  companion: { initiative: 'normal', focus: 'available', expressionsEnabled: true, motionEnabled: true, commitments: [] },
+  training: { enabled: false },
+  privacy: { acceptedPolicyVersion: '', remoteChatAllowed: false, saveHistory: true, checkUpdatesOnStartup: true },
   shortcuts: { toggleVisibility: 'CommandOrControl+Shift+M' },
   startup: { openAtLogin: true, runAsAdministrator: true },
 }
 
 const legacyStorageKey = 'meguri.desktop.presentation.v1'
 const legacyMigrationMarker = 'meguri.desktop.presentation.host-migrated.v1'
+
+type ReversibleCompanionPreferences = Pick<CompanionPreferences, 'initiative' | 'focus' | 'expressionsEnabled' | 'motionEnabled'>
+
+function presentationSnapshot(companion: CompanionPreferences): ReversibleCompanionPreferences {
+  return {
+    initiative: companion.initiative,
+    focus: companion.focus,
+    expressionsEnabled: companion.expressionsEnabled,
+    motionEnabled: companion.motionEnabled,
+  }
+}
 
 export function parseLegacyPresentation(raw: string | null): DesktopPreferencesPatch {
   if (!raw)
@@ -49,11 +66,19 @@ function effectiveDark(appearance: DesktopPreferences['appearance']) {
 function applyAppearance(preferences: DesktopPreferences) {
   document.documentElement.dataset.appearance = preferences.appearance
   document.documentElement.classList.toggle('dark', effectiveDark(preferences.appearance))
+  document.documentElement.dataset.palette = preferences.chat.colorPalette
+  const palette = conversationPalette(preferences.chat.colorPalette, effectiveDark(preferences.appearance), preferences.systemAccentColor)
+  for (const [name, value] of Object.entries(palette))
+    document.documentElement.style.setProperty(`--conversation-${name.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`)}`, value)
+  document.documentElement.style.setProperty('--chat-wallpaper', /^data:image\/(?:png|jpeg|webp);base64,[a-z0-9+/=]+$/iu.test(preferences.chat.wallpaperDataUrl) ? `url("${preferences.chat.wallpaperDataUrl}")` : 'none')
+  document.documentElement.style.setProperty('--chat-wallpaper-blur', `${preferences.chat.wallpaperBlur * .24}px`)
+  document.documentElement.style.setProperty('--chat-bubble-opacity', String(preferences.chat.bubbleOpacity))
 }
 
 export const useDesktopPreferencesStore = defineStore('desktop-preferences', {
   state: () => ({
     value: structuredClone(fallbackDesktopPreferences),
+    previousCompanion: undefined as ReversibleCompanionPreferences | undefined,
     loaded: false,
     disposeHostListener: undefined as (() => void) | undefined,
     disposeMediaListener: undefined as (() => void) | undefined,
@@ -95,6 +120,28 @@ export const useDesktopPreferencesStore = defineStore('desktop-preferences', {
       if (next)
         this.apply(next)
       return this.value
+    },
+    async updateCompanion(patch: CompanionPreferencesPatch) {
+      this.previousCompanion = presentationSnapshot(this.value.companion)
+      return this.update({ companion: patch })
+    },
+    async resetCompanionPreferences() {
+      this.previousCompanion = presentationSnapshot(this.value.companion)
+      return this.update({
+        companion: {
+          initiative: fallbackDesktopPreferences.companion.initiative,
+          focus: fallbackDesktopPreferences.companion.focus,
+          expressionsEnabled: fallbackDesktopPreferences.companion.expressionsEnabled,
+          motionEnabled: fallbackDesktopPreferences.companion.motionEnabled,
+        },
+      })
+    },
+    async undoCompanionPreferences() {
+      if (!this.previousCompanion)
+        return this.value
+      const previous = this.previousCompanion
+      this.previousCompanion = undefined
+      return this.update({ companion: previous })
     },
     dispose() {
       this.disposeHostListener?.()

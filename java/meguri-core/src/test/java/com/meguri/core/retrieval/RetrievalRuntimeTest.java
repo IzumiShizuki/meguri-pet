@@ -178,6 +178,76 @@ class RetrievalRuntimeTest {
         }
     }
 
+    @Test
+    void webLaneGetsItsOwnBoundedBudgetWithoutExtendingLocalLaneBudget() {
+        RetrievalPlanner planner = plannerFor(Set.of(SourceType.LORE, SourceType.WEB));
+        RetrievalProvider slow = (query, limit, context) -> {
+            sleepIgnoringInterrupt(80);
+            return List.of(item(SourceType.LORE, "local", context.traceId()));
+        };
+        RetrievalProvider web = (query, limit, context) -> {
+            sleepIgnoringInterrupt(80);
+            return List.of(item(SourceType.WEB, "web", context.traceId()));
+        };
+
+        try (RetrievalRuntime runtime = new RetrievalRuntime(
+                planner, new RetrievalGate(), Map.of(SourceType.LORE, slow, SourceType.WEB, web),
+                (query, limit, context) -> List.of(), null, new BundleAssembler(),
+                new InMemoryRetrievalTraceRepository(),
+                java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(),
+                Duration.ofMillis(20), Duration.ofMillis(200), true,
+                RetrievalAuthorizationPolicy.allowAll(), Duration.ofMillis(200))) {
+            RetrievalBundle bundle = runtime.retrieve("current update", RetrievalMode.SLOW, context());
+
+            assertThat(bundle.lanes().get(SourceType.LORE).degradations())
+                    .containsExactly("lane_timeout");
+            assertThat(bundle.lanes().get(SourceType.WEB).items())
+                    .extracting(RetrievalItem::sourceId).containsExactly("web");
+        }
+    }
+
+    @Test
+    void webLaneBudgetIsStillCappedByTurnDeadline() {
+        RetrievalPlanner planner = plannerFor(Set.of(SourceType.WEB));
+        RetrievalProvider web = (query, limit, context) -> {
+            sleepIgnoringInterrupt(120);
+            return List.of(item(SourceType.WEB, "late-web", context.traceId()));
+        };
+        RetrievalContext shortDeadline = new RetrievalContext(
+                "user", Set.of(), "snapshot", 7, Instant.now(),
+                Instant.now().plusMillis(40), "deadline-trace");
+
+        try (RetrievalRuntime runtime = new RetrievalRuntime(
+                planner, new RetrievalGate(), Map.of(SourceType.WEB, web),
+                (query, limit, context) -> List.of(), null, new BundleAssembler(),
+                new InMemoryRetrievalTraceRepository(),
+                java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(),
+                Duration.ofMillis(20), Duration.ofMillis(200), true,
+                RetrievalAuthorizationPolicy.allowAll(), Duration.ofMillis(200))) {
+            RetrievalBundle bundle = runtime.retrieve("current update", RetrievalMode.SLOW, shortDeadline);
+
+            assertThat(bundle.lanes().get(SourceType.WEB).degradations())
+                    .containsExactly("lane_timeout");
+        }
+    }
+
+    private static RetrievalPlanner plannerFor(Set<SourceType> sources) {
+        return (query, mode, deadline) -> {
+            Map<SourceType, Integer> budgets = sources.stream().collect(
+                    java.util.stream.Collectors.toMap(source -> source, source -> 1));
+            return new RetrievalPlan(mode, new QueryRewriteResult(query, query, List.of(), false),
+                    sources, budgets, budgets, false, sources.size(), sources.size(), deadline);
+        };
+    }
+
+    private static void sleepIgnoringInterrupt(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private static RetrievalRuntime runtime(
             KnowledgeGraphRetrievalService graph,
             Map<SourceType, RetrievalProvider> providers,

@@ -16,6 +16,19 @@ import reactor.core.publisher.Mono;
  * a particular vendor.
  */
 public interface LlmProvider {
+    /** Optional tool-free assistant initiative. Empty means there is nothing useful to say. */
+    default Mono<String> generateReachOut(List<String> recentContext) {
+        return Mono.empty();
+    }
+
+    /** Optional public-news context source, wired by the enabled background service. */
+    default void configureAiNewsContext(java.util.function.Supplier<List<String>> source) {}
+
+    /** Optional background summarization; mock providers never invent a bulletin. */
+    default Mono<String> summarizeAiNews(String article) {
+        return Mono.empty();
+    }
+
     /** Canonical 20.x boundary. Legacy implementations are adapted without losing typed inputs upstream. */
     default Mono<LlmResponse> respond(ProviderRequest request) {
         return respond(request.turn(), request.runtimeState(), request.legacyCanon(),

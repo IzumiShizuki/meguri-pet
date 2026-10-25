@@ -9,6 +9,7 @@ import com.meguri.core.dto.RuntimeState;
 import com.meguri.core.dto.TurnRequest;
 import com.meguri.core.dto.VoiceStyle;
 import com.meguri.core.llm.LlmProvider;
+import com.meguri.core.llm.ProviderRequest;
 import com.meguri.core.memory.NoopMemoryGateway;
 import com.meguri.core.runtime.ExpressionResolver;
 import com.meguri.core.runtime.RuntimeStateMachine;
@@ -73,11 +74,13 @@ class TrainingFeedbackServiceTest {
                         "这里应当先严肃制止，再表达关心。", true));
 
         assertThat(receipt.get("status")).isEqualTo("training_candidate_saved");
-        assertThat(Files.readString(output)).contains("meguri-behavior-feedback-v1")
+        assertThat(Files.readString(output)).contains("meguri-behavior-feedback-v2")
                 .contains("这里应当先严肃制止")
                 .contains(selectedId);
         assertThat(orchestrator.sessionMessages("user-a", "desktop_pet", "session-a").getLast().content())
                 .isEqualTo("这件事不可以继续，先停下来，我是担心你。");
+        assertThat(orchestrator.eventsFor("session-a").stream().filter(item -> "turn.completed".equals(item.type()))
+                .findFirst().orElseThrow().data().get("reply")).isEqualTo("先关心你一下。");
     }
 
     @Test
@@ -88,5 +91,122 @@ class TrainingFeedbackServiceTest {
 
         assertThat(feedback.shouldCompare(true)).isTrue();
         assertThat(feedback.shouldCompare(false)).isFalse();
+    }
+
+    @Test
+    void optionalArchiveFailureDoesNotFailAnOtherwiseSuccessfulReply() throws Exception {
+        Path blocker = tempDir.resolve("blocker");
+        Files.writeString(blocker, "not a directory");
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var feedback = new TrainingFeedbackService(mapper, blocker.resolve("feedback.jsonl"), 0, 0, () -> 1);
+        LlmProvider llm = (request, state, canon, memories, recent) -> Mono.just(new LlmResponse("reply remains available"));
+        var orchestrator = new TurnOrchestrator(llm, (query, state, limit) -> List.of(),
+                new RuntimeStateMachine(), new ExpressionResolver(), Duration.ZERO, mapper,
+                new NoopMemoryGateway(), new NoopWebSearchGateway(), feedback);
+        var result = orchestrator.runInline(new TurnRequest("user-a", "desktop_pet", "session-a", null,
+                "hello", List.of(), new ClientCapabilities(), null, null, false, true)).block();
+        assertThat(result).isNotNull();
+        assertThat(result.response().reply()).isEqualTo("reply remains available");
+        assertThat(orchestrator.eventsFor("session-a").getLast().type()).isEqualTo("turn.completed");
+    }
+
+    @Test
+    void alternativeProviderFailureKeepsFirstReplyAndRegistersSingleTrainingObservation() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var feedback = new TrainingFeedbackService(
+                mapper, tempDir.resolve("alternative-failure.jsonl"), 1, 0, () -> 0);
+        AtomicInteger alternativeCalls = new AtomicInteger();
+        LlmProvider llm = new LlmProvider() {
+            @Override
+            public Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
+                                              List<String> canon, List<String> memories,
+                                              List<String> recentContext) {
+                return Mono.just(new LlmResponse("first reply remains authoritative"));
+            }
+
+            @Override
+            public Mono<LlmResponse> respondAlternative(ProviderRequest request) {
+                alternativeCalls.incrementAndGet();
+                return Mono.error(new IllegalStateException("alternative provider unavailable"));
+            }
+        };
+        var orchestrator = new TurnOrchestrator(llm, (query, state, limit) -> List.of(),
+                new RuntimeStateMachine(), new ExpressionResolver(), Duration.ZERO, mapper,
+                new NoopMemoryGateway(), new NoopWebSearchGateway(), feedback);
+        TurnRequest request = new TurnRequest("user-a", "desktop_pet", "alternative-failure", null,
+                "hello", List.of(), new ClientCapabilities(), null, null, false, true);
+
+        var result = orchestrator.runInline(request).block();
+
+        assertThat(request.trainingMode()).isTrue();
+        assertThat(alternativeCalls).hasValue(1);
+        assertThat(result).isNotNull();
+        assertThat(result.response().reply()).isEqualTo("first reply remains authoritative");
+        assertThat(feedback.hasComparison(result.turnId())).isTrue();
+        assertThat(orchestrator.eventsFor("alternative-failure").stream()
+                .filter(event -> "training.candidates.ready".equals(event.type())).count()).isZero();
+        assertThat(orchestrator.eventsFor("alternative-failure").getLast().type())
+                .isEqualTo("turn.completed");
+    }
+
+    @Test
+    void alternativeAndSingleObservationArchiveFailureStillDeliversFirstReply() throws Exception {
+        Path blocker = tempDir.resolve("archive-blocker");
+        Files.writeString(blocker, "not a directory");
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var feedback = new TrainingFeedbackService(
+                mapper, blocker.resolve("feedback.jsonl"), 1, 0, () -> 0);
+        LlmProvider llm = new LlmProvider() {
+            @Override
+            public Mono<LlmResponse> respond(TurnRequest request, RuntimeState state,
+                                              List<String> canon, List<String> memories,
+                                              List<String> recentContext) {
+                return Mono.just(new LlmResponse("reply survives archive failure"));
+            }
+
+            @Override
+            public Mono<LlmResponse> respondAlternative(ProviderRequest request) {
+                return Mono.error(new IllegalStateException("alternative provider unavailable"));
+            }
+        };
+        var orchestrator = new TurnOrchestrator(llm, (query, state, limit) -> List.of(),
+                new RuntimeStateMachine(), new ExpressionResolver(), Duration.ZERO, mapper,
+                new NoopMemoryGateway(), new NoopWebSearchGateway(), feedback);
+        TurnRequest request = new TurnRequest("user-a", "desktop_pet", "archive-failure", null,
+                "hello", List.of(), new ClientCapabilities(), null, null, false, true);
+
+        var result = orchestrator.runInline(request).block();
+
+        assertThat(request.trainingMode()).isTrue();
+        assertThat(result).isNotNull();
+        assertThat(result.response().reply()).isEqualTo("reply survives archive failure");
+        assertThat(orchestrator.eventsFor("archive-failure").getLast().type())
+                .isEqualTo("turn.completed");
+    }
+
+    @Test
+    void selectingAnOlderIdenticalReplyCannotReplaceANewerTurn() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var feedback = new TrainingFeedbackService(mapper, tempDir.resolve("feedback.jsonl"), 1, 0, () -> 0);
+        AtomicInteger calls = new AtomicInteger();
+        LlmProvider llm = (request, state, canon, memories, recent) -> Mono.just(
+                new LlmResponse(calls.getAndIncrement() % 2 == 0 ? "same original" : "alternative"));
+        var orchestrator = new TurnOrchestrator(llm, (query, state, limit) -> List.of(),
+                new RuntimeStateMachine(), new ExpressionResolver(), Duration.ZERO, mapper,
+                new NoopMemoryGateway(), new NoopWebSearchGateway(), feedback);
+        var request = new TurnRequest("user-a", "desktop_pet", "session-a", null,
+                "hello", List.of(), new ClientCapabilities(), null, null, false, true);
+        var first = orchestrator.runInline(request).block();
+        var second = orchestrator.runInline(request).block();
+        var event = orchestrator.eventsFor("session-a").stream().filter(item ->
+                first.turnId().equals(item.turnId()) && "training.candidates.ready".equals(item.type())).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        var candidates = (List<java.util.Map<String, Object>>) event.data().get("candidates");
+        orchestrator.submitTrainingFeedback(new TrainingFeedbackRequest(first.turnId(),
+                String.valueOf(candidates.get(1).get("candidate_id")), "", true));
+        assertThat(orchestrator.sessionMessages("user-a", "desktop_pet", "session-a").getLast().content()).isEqualTo("same original");
+        assertThat(orchestrator.eventsFor("session-a").stream().filter(item ->
+                second.turnId().equals(item.turnId()) && "turn.completed".equals(item.type())).findFirst().orElseThrow()
+                .data().get("reply")).isEqualTo("same original");
     }
 }

@@ -20,13 +20,20 @@ public final class LoreRetrievalProviderAdapter implements RetrievalProvider {
 
     @Override
     public List<RetrievalItem> retrieve(String query, int limit, RetrievalContext context) {
-        if (limit <= 0 || context.runtimeState() == null) return List.of();
-        List<String> rows = gateway.search(query, context.runtimeState(), limit);
+        return retrieveWithDiagnostics(query, limit, context).items();
+    }
+
+    @Override
+    public RetrievalProviderResult retrieveWithDiagnostics(String query, int limit, RetrievalContext context) {
+        if (limit <= 0 || context.runtimeState() == null) return RetrievalProviderResult.success(List.of());
+        RagProvider.SearchResult result = gateway.searchWithDiagnostics(query, context.runtimeState(), limit);
+        List<String> rows = result.items();
         List<RetrievalItem> keyword = java.util.stream.IntStream.range(0, rows.size())
                 .mapToObj(index -> LegacyRetrievalItems.item(
                         SourceType.LORE, rows.get(index), index + 1, 0.85,
                         LegacyRetrievalItems.version(context), context))
                 .toList();
-        return fusion.fuse(Map.of(RankSignal.KEYWORD, keyword)).stream().limit(limit).toList();
+        return new RetrievalProviderResult(fusion.fuse(Map.of(RankSignal.KEYWORD, keyword)).stream().limit(limit).toList(),
+                result.degradations());
     }
 }

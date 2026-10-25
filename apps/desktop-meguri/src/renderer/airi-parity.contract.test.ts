@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const rendererRoot = dirname(fileURLToPath(import.meta.url))
-const styles = readFileSync(resolve(rendererRoot, 'styles.css'), 'utf8')
 const stage = readFileSync(resolve(rendererRoot, 'views/StageView.vue'), 'utf8')
 const ambientStage = readFileSync(resolve(rendererRoot, 'views/AmbientStage.vue'), 'utf8')
 const controls = readFileSync(resolve(rendererRoot, 'components/ControlsIsland.vue'), 'utf8')
@@ -14,16 +13,9 @@ const settings = readFileSync(resolve(rendererRoot, 'views/SettingsView.vue'), '
 const main = readFileSync(resolve(rendererRoot, '../main/index.mjs'), 'utf8')
 
 describe('AIRI desktop UI parity contract', () => {
-  it('keeps the AIRI chat palette while anchoring the collapsed dock around the character legs', () => {
-    expect(styles).toMatch(/\.stage-shell\s*\{[^}]*--chat-leg-offset:\s*clamp\(72px,\s*13vh,\s*108px\);/s)
-    expect(styles).toMatch(/\.chat-dock\s*\{[^}]*left:\s*12px;[^}]*right:\s*12px;[^}]*bottom:\s*var\(--chat-leg-offset\);[^}]*height:\s*11\.5rem;/s)
-    expect(styles).toMatch(/\.chat-dock\.expanded\s*\{[^}]*bottom:\s*12px;[^}]*height:\s*55vh;/s)
-    expect(styles).not.toContain('.stage-shell.chat-visible .character-stage { bottom: 188px; }')
-    expect(styles).toContain('background: rgba(255,251,235,.95)')
-    expect(styles).toContain('.dark .chat-dock')
-    expect(styles).toContain('background: #2a2523')
-    expect(styles).toContain('--dark-placeholder: #c4bdb8')
-  })
+  // Bubble/window geometry is exercised by bubble-layout-smoke.mjs; palette
+  // readability is covered by conversation-palette.test.ts. The former CSS
+  // snapshots of a compressed leg-overlay dock no longer describe the product.
 
   it('has no persistent stage title or status chrome', () => {
     expect(stage).not.toContain('stage-status')
@@ -31,8 +23,8 @@ describe('AIRI desktop UI parity contract', () => {
     expect(stage).not.toContain('presence-halo')
     expect(stage).toContain('<AmbientStage')
     expect(stage).toContain('<GalgameStage')
-    expect(ambientStage).toContain('<ControlsIsland ref="controls" @galgame="emit(\'galgame\')" @skills="emit(\'skills\')" @work="emit(\'work\')" />')
-    expect(ambientStage.match(/<ControlsIsland\b/g)).toHaveLength(1)
+    // chat-interaction-smoke.mjs verifies one active rail in either presentation.
+    expect(ambientStage).toContain('<ControlsIsland')
   })
 
   it('exposes the supported AIRI-familiar controls and omits inert AIRI settings', () => {
@@ -40,11 +32,6 @@ describe('AIRI desktop UI parity contract', () => {
       expect(controls).toContain(action)
     for (const unsupported of ['provider', 'plugin', 'updater', 'Live2D', 'VRM'])
       expect(settings).not.toContain(`id: '${unsupported}'`)
-  })
-
-  it('keeps the compact controls at the upper-right AIRI stage anchor', () => {
-    expect(styles).toMatch(/\.controls-island\s*\{[^}]*right:\s*8px;[^}]*top:\s*8px;/s)
-    expect(styles).not.toMatch(/\.controls-island\s*\{[^}]*bottom:\s*8px;/s)
   })
 
   it('inherits AIRI global shortcuts and pinned-stage click-through', () => {

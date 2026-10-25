@@ -13,6 +13,7 @@ export class ReminderFlow {
   error = ''
   feedback = ''
   busy = false
+  cancelRequested = false
   requestId = ''
   account = ''
   dispatched = false
@@ -69,9 +70,14 @@ export class ReminderFlow {
       return false
     }
     this.busy = true
+    this.cancelRequested = false
     this.error = ''
     try {
       const status = await this.bridge.status()
+      if (this.cancelRequested) {
+        this.phase = 'idle'
+        return false
+      }
       if (!status.connected || `${status.origin}:${status.userId}` !== this.account) {
         this.error = '连接或账号已改变，请回到原账号核对；没有创建新的待办。'
         return false
@@ -90,6 +96,8 @@ export class ReminderFlow {
       this.saved = result.todo
       this.phase = 'success'
       this.dispatched = false
+      this.cancelRequested = false
+      this.error = ''
       this.feedback = result.todo.dueAt
         ? `已创建提醒 #${result.todo.todoId}：${result.todo.title}；${result.todo.dueAt.replace('T', ' ').slice(0, 16)}，Asia/Shanghai（UTC+08:00）。由运行中的 Meguri 桌面触发；未确认 QQ 送达。`
         : `已创建无提醒待办 #${result.todo.todoId}：${result.todo.title}。`
@@ -97,17 +105,26 @@ export class ReminderFlow {
       return true
     }
     catch { this.error = '连接中断，写入结果未确认。草稿与请求编号已保留，重试会先核对记录。'; return false }
-    finally { this.busy = false }
+    finally {
+      this.busy = false
+      if (this.cancelRequested) {
+        this.cancelRequested = false
+        if (this.dispatched) await this.defer()
+        else if (this.phase !== 'success') this.phase = 'idle'
+      }
+    }
   }
 
-  async restorePending() {
-    if (!this.bridge || this.busy) return
+  async restorePending(): Promise<boolean> {
+    if (!this.bridge || this.busy) return false
     try {
       const result = await this.bridge.pendingCreates()
-      if (result.ok) this.pending = result.requests || []
-      else { this.error = result.error || '创建记录无法读取。'; this.phase = 'unsupported' }
+      if (!result.ok) { this.error = result.error || '创建记录无法读取。'; return false }
+      this.pending = result.requests || []
+      this.error = ''
+      return true
     }
-    catch { this.error = '无法读取未确认的创建记录。'; this.phase = 'unsupported' }
+    catch { this.error = '无法读取未确认的创建记录。'; return false }
   }
 
   async restore(request: PendingTodoCreate) {
@@ -132,9 +149,25 @@ export class ReminderFlow {
     this.phase = 'idle'
   }
 
+  async cancelReview() {
+    if (this.cancelRequested) return
+    if (this.busy) {
+      this.cancelRequested = true
+      this.error = this.dispatched
+        ? '已请求停止后续核对；当前 Core 请求已发出，TimePrism 仍可能创建待办。'
+        : '已请求取消；当前尚未发送写入，账号核对结束后会关闭此卡片。'
+      return
+    }
+    if (this.dispatched) {
+      await this.defer()
+      return
+    }
+    this.close()
+  }
+
   async defer() {
     if (this.busy) return
-    await this.restorePending()
+    if (!await this.restorePending()) return
     this.dispatched = false
     this.phase = 'idle'
   }

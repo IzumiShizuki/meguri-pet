@@ -1,5 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
+import { fileURLToPath } from 'node:url'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,6 +28,8 @@ function createRecognizer(child = childProcess(), timeoutMs?: number) {
   return { recognizer, child, spawnImpl }
 }
 
+const windowsOnly = process.platform === 'win32' ? it : it.skip
+
 afterEach(() => vi.useRealTimers())
 
 describe('Windows voice recognition boundary', () => {
@@ -38,11 +42,34 @@ describe('Windows voice recognition boundary', () => {
     await expect(recognition).resolves.toEqual({ ok: true, text: '提醒我睡觉' })
     expect(state.spawnImpl).toHaveBeenCalledWith(
       'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
-      expect.arrayContaining(['-NoProfile', '-NonInteractive', '-File', 'D:\\program\\meguri-pet\\apps\\desktop-meguri\\src\\main\\voice-recognition.ps1']),
-      expect.objectContaining({ shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }),
+      expect.arrayContaining(['-NoProfile', '-NonInteractive', '-Command']),
+      expect.objectContaining({
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: expect.objectContaining({
+          MEGURI_VOICE_SCRIPT: 'D:\\program\\meguri-pet\\apps\\desktop-meguri\\src\\main\\voice-recognition.ps1',
+        }),
+      }),
     )
     expect(state.recognizer.isRunning()).toBe(false)
   })
+
+  windowsOnly('loads the PowerShell helper and speech grammar without opening the microphone', async () => {
+    const powershellPath = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    const scriptPath = fileURLToPath(new URL('./voice-recognition.ps1', import.meta.url))
+    const recognizer = createWindowsVoiceRecognizer({
+      powershellPath,
+      scriptPath,
+      timeoutMs: 20_000,
+      diagnosticOnly: true,
+    } as never)
+
+    const result = await recognizer.start()
+    if (!result.ok)
+      throw new Error(`PowerShell helper smoke failed: ${result.failureSource ?? 'unknown'}/${result.failureDiagnostic ?? result.code ?? 'unknown'}${result.failureLine ? ` at line ${result.failureLine}` : ''}`)
+    expect(result).toEqual({ ok: true, text: 'voice-helper-ready' })
+  }, 25_000)
 
   it('rejects concurrent recognition and cancels the active local process', async () => {
     const state = createRecognizer()

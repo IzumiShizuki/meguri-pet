@@ -3,6 +3,7 @@ package com.meguri.core.training;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meguri.core.dto.LlmResponse;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.memory.DesktopMemoryIdentity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -18,13 +19,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.DoubleSupplier;
 
 /** Captures explicit preference pairs and behavior corrections as local training candidates. */
 @Service
 public final class TrainingFeedbackService {
-    private static final int MAX_PENDING_TURNS = 500;
+    public static final String SCHEMA_VERSION = "meguri-behavior-feedback-v2";
     public record Candidate(String candidateId, LlmResponse response) { }
     public record Comparison(
             String comparisonId,
@@ -42,7 +42,7 @@ public final class TrainingFeedbackService {
     private final double trainingModeProbability;
     private final double normalModeProbability;
     private final DoubleSupplier random;
-    private final Map<String, Comparison> comparisons = new ConcurrentHashMap<>();
+    private final TrainingFeedbackArchive archive;
 
     @Autowired
     public TrainingFeedbackService(
@@ -61,6 +61,7 @@ public final class TrainingFeedbackService {
         this.trainingModeProbability = probability(trainingModeProbability, "training-mode probability");
         this.normalModeProbability = probability(normalModeProbability, "normal-mode probability");
         this.random = random == null ? Math::random : random;
+        this.archive = new TrainingFeedbackArchive(this.mapper, this.feedbackFile);
     }
 
     public static TrainingFeedbackService disabled(ObjectMapper mapper) {
@@ -120,25 +121,51 @@ public final class TrainingFeedbackService {
     }
 
     public boolean hasComparison(String turnId) {
-        return comparisons.containsKey(turnId);
+        try { return archive.locked(() -> archive.find(turnId) != null); }
+        catch (IllegalStateException ignored) { return false; }
     }
 
     public Submission submit(TrainingFeedbackRequest request) {
+        return submit(request, null, "legacy-" + payloadDigest(request));
+    }
+
+    public Submission submit(TrainingFeedbackRequest request, DesktopMemoryIdentity.Scope scope, String requestId) {
+        return archive.locked(() -> submitLocked(request, scope, requireRequestId(requestId)));
+    }
+
+    private Submission submitLocked(TrainingFeedbackRequest request, DesktopMemoryIdentity.Scope scope, String requestId) {
         if (request == null || request.turnId() == null || request.turnId().isBlank()) {
-            throw new IllegalArgumentException("turn_id is required");
+            throw new IllegalArgumentException("training_feedback_invalid");
         }
         if (!request.consentToTraining()) {
-            throw new IllegalArgumentException("explicit training consent is required");
+            throw new IllegalArgumentException("training_feedback_invalid");
         }
-        Comparison comparison = comparisons.get(request.turnId());
-        if (comparison == null) throw new IllegalArgumentException("training comparison is unavailable");
+        TrainingFeedbackArchive.Entry entry = archive.find(request.turnId());
+        if (entry == null) throw new IllegalArgumentException("training_comparison_unavailable");
+        verifyScope(entry, scope);
+        String payloadDigest = payloadDigest(request);
+        // A submission key cannot be rebound to another Turn within the authenticated scope.
+        for (var other : archive.entries()) {
+            if (sameScope(entry, other) && requestId.equals(other.requestId())
+                    && !request.turnId().equals(other.comparison().turnId()))
+                throw new IllegalArgumentException("feedback_idempotency_conflict");
+        }
+        if (entry.feedbackId() != null) {
+            if (!requestId.equals(entry.requestId()) || !payloadDigest.equals(entry.payloadDigest()))
+                throw new IllegalArgumentException("feedback_idempotency_conflict");
+            entry = finishIntent(entry);
+            if ("revoked".equals(entry.status())) throw new IllegalArgumentException("feedback_idempotency_conflict");
+            return submission(entry);
+        }
+        Comparison comparison = entry.comparison();
         String feedback = request.feedbackText() == null ? "" : request.feedbackText().trim();
-        if (feedback.length() > 2000) throw new IllegalArgumentException("feedback_text is too long");
+        if (feedback.length() > 2000) throw new IllegalArgumentException("training_feedback_invalid");
         Candidate selected = comparison.candidates().stream()
                 .filter(candidate -> candidate.candidateId().equals(request.selectedCandidateId()))
                 .findFirst().orElse(null);
-        if (selected == null && feedback.isBlank()) {
-            throw new IllegalArgumentException("select a candidate or provide feedback");
+        if ((request.selectedCandidateId() != null && !request.selectedCandidateId().isBlank() && selected == null)
+                || (selected == null && feedback.isBlank() && request.correctedResponse() == null)) {
+            throw new IllegalArgumentException("training_feedback_invalid");
         }
 
         String feedbackId = "feedback-" + UUID.randomUUID();
@@ -147,10 +174,16 @@ public final class TrainingFeedbackService {
                 .filter(candidateId -> !candidateId.equals(selected.candidateId()))
                 .toList();
         Map<String, Object> row = new LinkedHashMap<>();
-        row.put("schema_version", "meguri-behavior-feedback-v1");
+        row.put("schema_version", SCHEMA_VERSION);
         row.put("feedback_id", feedbackId);
-        row.put("captured_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
+        String capturedAt = OffsetDateTime.now(ZoneOffset.UTC).toString();
+        row.put("captured_at", capturedAt);
         row.put("status", "training_candidate");
+        row.put("consent_to_training", true);
+        row.put("consent_version", "meguri-training-consent-v1");
+        row.put("consent_captured_at", capturedAt);
+        row.put("tenant_id", entry.tenantId());
+        row.put("request_id", requestId);
         row.put("training_mode", comparison.trainingMode());
         row.put("user_id", comparison.request().userId());
         row.put("client_id", comparison.request().clientId());
@@ -161,42 +194,140 @@ public final class TrainingFeedbackService {
         row.put("selected_candidate_id", selected == null ? null : selected.candidateId());
         row.put("rejected_candidate_ids", rejectedIds);
         row.put("feedback_text", feedback);
+        row.put("corrected_response", request.correctedResponse());
+        row.put("relationship_profile", comparison.request().relationshipProfile());
+        row.put("reply_format", comparison.request().replyFormat());
         row.put("candidates", comparison.candidates().stream().map(candidate -> Map.of(
                 "candidate_id", candidate.candidateId(),
                 "response", candidate.response())).toList());
         row.put("provenance", Map.of(
                 "source", "desktop_active_learning",
+                "source_service", TrainingFeedbackService.class.getName(),
                 "model_provider", comparison.modelProvider(),
                 "build_id", comparison.buildId(),
                 "comparison_id", comparison.comparisonId()));
-        append(row);
-        comparisons.remove(request.turnId(), comparison);
-        return new Submission(feedbackId, comparison, selected);
+        var intent = new TrainingFeedbackArchive.Entry(comparison, entry.tenantId(), feedbackId,
+                requestId, payloadDigest, selected == null ? null : selected.candidateId(),
+                "submission_pending", row, null, null);
+        archive.save(intent);
+        return submission(finishIntent(intent));
+    }
+
+    public Map<String, Object> pending(DesktopMemoryIdentity.Scope scope) {
+        return archive.locked(() -> {
+            List<Map<String, Object>> pending = new java.util.ArrayList<>();
+            List<Map<String, Object>> receipts = new java.util.ArrayList<>();
+            for (var entry : archive.entries()) {
+                if (!belongsTo(entry, scope)) continue;
+                entry = finishIntent(entry);
+                if (entry.feedbackId() == null) {
+                    Comparison comparison = entry.comparison();
+                    Map<String, Object> value = new LinkedHashMap<>();
+                    value.put("turn_id", comparison.turnId());
+                    value.put("comparison_id", comparison.comparisonId());
+                    value.put("training_mode", comparison.trainingMode());
+                    value.put("candidates", comparison.candidates().stream().map(candidate -> Map.of(
+                            "candidate_id", candidate.candidateId(), "response", candidate.response())).toList());
+                    pending.add(value);
+                } else receipts.add(receipt(entry));
+            }
+            return Map.of("pending", pending, "receipts", receipts);
+        });
+    }
+
+    public Map<String, Object> revoke(String feedbackId, DesktopMemoryIdentity.Scope scope, String requestId) {
+        return archive.locked(() -> {
+            requireRequestId(requestId);
+            var entry = archive.entries().stream().filter(value -> feedbackId.equals(value.feedbackId()))
+                    .findFirst().orElseThrow(() -> new IllegalArgumentException("training_feedback_unavailable"));
+            verifyScope(entry, scope);
+            entry = finishIntent(entry);
+            if ("revoked".equals(entry.status())) return receipt(entry);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("schema_version", SCHEMA_VERSION);
+            row.put("feedback_id", feedbackId);
+            row.put("status", "revoked");
+            row.put("consent_to_training", false);
+            row.put("consent_version", "meguri-training-consent-v1");
+            row.put("revoked_at", OffsetDateTime.now(ZoneOffset.UTC).toString());
+            row.put("request_id", requestId);
+            row.put("tenant_id", entry.tenantId());
+            row.put("user_id", entry.comparison().request().userId());
+            row.put("client_id", entry.comparison().request().clientId());
+            row.put("session_id", entry.comparison().request().sessionId());
+            row.put("turn_id", entry.comparison().turnId());
+            var intent = new TrainingFeedbackArchive.Entry(entry.comparison(), entry.tenantId(), entry.feedbackId(),
+                    entry.requestId(), entry.payloadDigest(), entry.selectedCandidateId(), "revocation_pending",
+                    entry.submissionRow(), requestId, row);
+            archive.save(intent);
+            return receipt(finishIntent(intent));
+        });
+    }
+
+    private TrainingFeedbackArchive.Entry finishIntent(TrainingFeedbackArchive.Entry entry) {
+        String completed;
+        if ("submission_pending".equals(entry.status())) {
+            archive.appendOnce(entry.submissionRow()); completed = "training_candidate_saved";
+        } else if ("revocation_pending".equals(entry.status())) {
+            archive.appendOnce(entry.revokeRow()); completed = "revoked";
+        } else return entry;
+        var finished = new TrainingFeedbackArchive.Entry(entry.comparison(), entry.tenantId(), entry.feedbackId(),
+                entry.requestId(), entry.payloadDigest(), entry.selectedCandidateId(), completed,
+                entry.submissionRow(), entry.revokeRequestId(), entry.revokeRow());
+        archive.save(finished);
+        return finished;
+    }
+
+    private static Submission submission(TrainingFeedbackArchive.Entry entry) {
+        Candidate selected = entry.comparison().candidates().stream()
+                .filter(candidate -> candidate.candidateId().equals(entry.selectedCandidateId())).findFirst().orElse(null);
+        return new Submission(entry.feedbackId(), entry.comparison(), selected);
+    }
+
+    private static Map<String, Object> receipt(TrainingFeedbackArchive.Entry entry) {
+        return Map.of("feedback_id", entry.feedbackId(), "turn_id", entry.comparison().turnId(), "status", entry.status());
+    }
+
+    private static boolean belongsTo(TrainingFeedbackArchive.Entry entry, DesktopMemoryIdentity.Scope scope) {
+        return scope != null && scope.tenantId().equals(entry.tenantId())
+                && scope.userId().equals(entry.comparison().request().userId())
+                && scope.clientId().equals(entry.comparison().request().clientId())
+                && scope.sessionId().equals(entry.comparison().request().sessionId());
+    }
+
+    private static void verifyScope(TrainingFeedbackArchive.Entry entry, DesktopMemoryIdentity.Scope scope) {
+        if (scope != null && !belongsTo(entry, scope)) throw new IllegalArgumentException("training_scope_mismatch");
+    }
+
+    private static boolean sameScope(TrainingFeedbackArchive.Entry first, TrainingFeedbackArchive.Entry second) {
+        return first.tenantId().equals(second.tenantId())
+                && first.comparison().request().userId().equals(second.comparison().request().userId())
+                && first.comparison().request().clientId().equals(second.comparison().request().clientId())
+                && first.comparison().request().sessionId().equals(second.comparison().request().sessionId());
+    }
+
+    private String payloadDigest(TrainingFeedbackRequest request) {
+        try { return TrainingFeedbackArchive.digest(mapper.writeValueAsString(request)); }
+        catch (Exception error) { throw new IllegalArgumentException("training_feedback_invalid"); }
+    }
+
+    private static String requireRequestId(String value) {
+        if (value == null || !value.matches("[A-Za-z0-9._:-]{1,200}"))
+            throw new IllegalArgumentException("feedback_request_id_required");
+        return value;
     }
 
     public String feedbackFileDisplay() {
         return feedbackFile.toString();
     }
 
-    private synchronized void append(Map<String, Object> row) {
-        try {
-            Path parent = feedbackFile.getParent();
-            if (parent != null) Files.createDirectories(parent);
-            Files.writeString(feedbackFile, mapper.writeValueAsString(row) + System.lineSeparator(),
-                    StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (Exception error) {
-            throw new IllegalStateException("failed to persist training feedback", error);
-        }
-    }
-
     private void remember(Comparison comparison) {
-        comparisons.put(comparison.turnId(), comparison);
-        int excess = comparisons.size() - MAX_PENDING_TURNS;
-        if (excess <= 0) return;
-        comparisons.keySet().stream()
-                .filter(turnId -> !turnId.equals(comparison.turnId()))
-                .limit(excess)
-                .forEach(comparisons::remove);
+        archive.locked(() -> {
+            if (archive.find(comparison.turnId()) == null)
+                archive.save(new TrainingFeedbackArchive.Entry(comparison, comparison.request().tenantId(),
+                        null, null, null, null, "pending", null, null, null));
+            return null;
+        });
     }
 
     private static double probability(double value, String label) {

@@ -14,12 +14,13 @@ describe('shared natural language reminder parsing', () => {
     ['十分钟后提醒我休息', '休息', '2026-10-04T12:10'],
     ['两小时后提醒我喝水', '喝水', '2026-10-04T14:00'],
     ['明天凌晨十二点提醒我休息', '休息', '2026-10-05T00:00'],
+    ['提醒我睡觉', '睡觉', '2026-10-05T12:00'],
+    ['提醒我喝水', '喝水', '2026-10-04T12:30'],
   ])('parses %s', (text, title, dueAt) => {
     expect(parseReminderIntent(text, now)).toMatchObject({ status: 'ready', behavior: 'reminder', title, dueAt, timezone: 'Asia/Shanghai' })
   })
 
   it.each([
-    '明天3点提醒我开会', '明天提醒我开会', '9点提醒我开会',
     '明天上午9点提醒我', '明天上午12点提醒我开会', '明天下午15点提醒我开会',
     '今天上午9点提醒我开会', '2026-02-30 15:00提醒我开会',
     '明天上午9点或者下午3点提醒我开会', '下周一上午9点提醒我开会',
@@ -29,6 +30,15 @@ describe('shared natural language reminder parsing', () => {
     '明天上午9点提醒我或者替我执行订单检查',
     '明天9:提醒我开会', '明天09:00:30提醒我开会',
   ])('clarifies %s', text => expect(parseReminderIntent(text, now)).toMatchObject({ status: 'clarify' }))
+
+  it('uses the requested day and an inferred clock when only the date is given', () => {
+    expect(parseReminderIntent('明天提醒我开会', now)).toMatchObject({
+      status: 'ready',
+      title: '开会',
+      dueAt: '2026-10-05T12:30',
+      inferred: 'next-half-hour',
+    })
+  })
 
   it.each([
     '明天下午3点帮我检查订单', '明天15:00执行 shell 脚本', '明天15:00发送消息给小王',
@@ -44,9 +54,55 @@ describe('shared natural language reminder parsing', () => {
     expect(parseReminderIntent('明天15:00提醒我运行脚本', now)).toMatchObject({ behavior: 'reminder', title: '运行脚本' })
   })
 
+  it.each([
+    '帮我查看一下今天Codex是否更新了',
+    '今天帮我联网搜索Codex更新',
+    '今天查看 Todo 列表里已完成的任务，并说明原因',
+    '解释一下附件里“明天提醒我喝水”这句话',
+    '“明天提醒我喝水”是什么意思？',
+    '帮我总结今天的运行日志',
+    '打开今天的报告',
+    '我今天发送的邮件怎么查',
+    '提醒功能怎么用',
+    '我的提醒有哪些',
+    '提醒我是什么意思',
+    '为什么没有提醒我',
+    '帮我分析附件中的提醒设置',
+  ])('does not intercept an ordinary query: %s', text => {
+    expect(parseReminderIntent(text, now)).toEqual({ status: 'none' })
+  })
+
+  it.each([
+    '明天15:00提醒我喝水',
+    '明天15:00提醒喝水',
+    '提醒喝水',
+    '明天15:00帮我检查订单',
+    '稍后帮我检查订单',
+  ])('still reviews explicit future reminder or scheduled action: %s', text => {
+    expect(parseReminderIntent(text, now).status).not.toBe('none')
+  })
+
+  it('keeps quoted temporal words from shifting a real reminder command', () => {
+    expect(parseReminderIntent('把“今天”作为标题，明天15:00提醒我开会', now))
+      .toMatchObject({ status: 'ready', title: '开会', dueAt: '2026-10-05T15:00' })
+  })
+
   it('resolves clarification to new immutable review values', () => {
     expect(parseReminderIntent('明天3点提醒我开会', now, { title: '开会', dueAt: '2026-10-05T15:00' }))
       .toMatchObject({ status: 'ready', title: '开会', dueAt: '2026-10-05T15:00' })
+  })
+
+  it('infers a useful date and time when both are omitted', () => {
+    expect(parseReminderIntent('提醒我睡觉', now)).toMatchObject({
+      status: 'ready',
+      dueAt: '2026-10-05T12:00',
+      inferred: 'sleep',
+    })
+    expect(parseReminderIntent('提醒我喝水', now)).toMatchObject({
+      status: 'ready',
+      dueAt: '2026-10-04T12:30',
+      inferred: 'next-half-hour',
+    })
   })
 
   it('crosses midnight and year boundaries in Shanghai independently of host DST', () => {

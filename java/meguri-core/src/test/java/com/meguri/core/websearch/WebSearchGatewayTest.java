@@ -10,11 +10,34 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WebSearchGatewayTest {
     @Test
-    void policyRequiresExplicitSearchIntent() {
+    void policySearchesExplicitAndCurrentInformationRequests() {
         assertFalse(WebSearchPolicy.shouldSearch("陪我聊聊天"));
         assertTrue(WebSearchPolicy.shouldSearch("帮我联网搜索今天的新闻"));
+        assertTrue(WebSearchPolicy.shouldSearch("联网查询Codex版本"));
+        assertTrue(WebSearchPolicy.shouldSearch("联网查Codex版本"));
         assertTrue(WebSearchPolicy.shouldSearch("look up the latest DeepSeek API"));
+        assertTrue(WebSearchPolicy.shouldSearch("今天 Tobi 有发什么新的 Codex 更新吗"));
+        assertTrue(WebSearchPolicy.shouldSearch("目前 DeepSeek API 支持哪些模型"));
+        assertTrue(WebSearchPolicy.shouldSearch("最近有什么 AI 新闻"));
         assertEquals("DeepSeek API", WebSearchPolicy.queryFor("请联网搜索 DeepSeek API 并总结"));
+    }
+
+    @Test
+    void policyKeepsStableConversationAndCreativeRequestsOffline() {
+        assertFalse(WebSearchPolicy.shouldSearch("今天吃什么"));
+        assertFalse(WebSearchPolicy.shouldSearch("Codex 是什么"));
+        assertFalse(WebSearchPolicy.shouldSearch("写一首关于春天的诗"));
+        assertFalse(WebSearchPolicy.shouldSearch("帮我总结下面这段文字"));
+        assertFalse(WebSearchPolicy.shouldSearch("不要联网搜索，只总结这段文字"));
+        assertFalse(WebSearchPolicy.shouldSearch("不要联网，告诉我今天Codex是否更新"));
+    }
+
+    @Test
+    void queryNormalizationRemovesOnlyLookupWrappersAndClosedUpdateQuestions() {
+        assertEquals("Codex 更新", WebSearchPolicy.queryFor("帮我看看Codex有没有更新吗？"));
+        assertEquals("Codex 更新", WebSearchPolicy.queryFor("Codex有更新吗？"));
+        assertEquals("如何更新文档", WebSearchPolicy.queryFor("如何更新文档？"));
+        assertEquals("版本是否支持图片 今天", WebSearchPolicy.queryFor("今天版本是否支持图片？"));
     }
 
     @Test

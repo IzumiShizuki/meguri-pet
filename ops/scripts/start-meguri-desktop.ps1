@@ -51,7 +51,7 @@ function Test-MeguriGateway([int]$Port) {
 if (-not (Test-ListeningPort 18080)) {
     Start-Process -WindowStyle Hidden -WorkingDirectory $meguriRoot `
         -FilePath 'powershell.exe' `
-        -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $meguriRoot 'ops\scripts\start-meguri-core.ps1') `
+        -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $meguriRoot 'ops\scripts\start-meguri-core.ps1'), '-NonInteractive' `
         -RedirectStandardOutput (Join-Path $logRoot 'desktop-core.log') `
         -RedirectStandardError (Join-Path $logRoot 'desktop-core.err.log') | Out-Null
 }

@@ -10,12 +10,22 @@ export const usePresentationStore = defineStore('presentation', {
   state: () => ({
     character: { ...defaultCharacterState } as CharacterPresentation,
     speaking: false,
+    motionRevision: 0,
     statusText: 'Meguri 已就绪',
     statusTone: 'ready' as 'ready' | 'busy' | 'error',
   }),
   actions: {
     applyCue(data: Record<string, unknown>) {
       this.character = presentationFromCue(this.character, data)
+    },
+    applyStaticCue(data: Record<string, unknown>) {
+      // A restored cue describes the stable pose only. Never let its old
+      // motion tag re-trigger a one-shot Live2D action after reload.
+      this.character = presentationFromCue({ ...this.character, motionTag: '' }, { ...data, motion_tag: undefined })
+    },
+    applyMotionCue(motionTag: string) {
+      this.character = { ...this.character, motionTag }
+      this.motionRevision += 1
     },
     cycleOutfit(direction: 1 | -1) {
       const current = Number(this.character.outfitCode)

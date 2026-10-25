@@ -151,6 +151,7 @@ public class KnowledgeRetrievalConfiguration {
             WebSearchGateway web,
             @Value("${meguri.knowledge.retrieval-timeout-ms:2000}") long retrievalTimeoutMs,
             @Value("${meguri.knowledge.graph-timeout-ms:500}") long graphTimeoutMs,
+            @Value("${meguri.web-search.lane-timeout-ms:10000}") long webLaneTimeoutMs,
             @Value("${meguri.knowledge.parent-context-token-limit:512}") int parentContextTokenLimit,
             @Value("${meguri.web-search.allowlist:}") String webAllowlist,
             @Value("${meguri.web-search.max-age-days:3650}") long webMaxAgeDays) {
@@ -180,7 +181,8 @@ public class KnowledgeRetrievalConfiguration {
                 java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(),
                 Duration.ofMillis(Math.max(100, retrievalTimeoutMs)),
                 Duration.ofMillis(Math.max(50, graphTimeoutMs)), true,
-                RetrievalAuthorizationPolicy.scopeBased());
+                RetrievalAuthorizationPolicy.scopeBased(),
+                Duration.ofMillis(Math.max(100, webLaneTimeoutMs)));
         return new UnifiedRetrievalFacade(bridge, runtime);
     }
 }

@@ -7,6 +7,9 @@ const emit = defineEmits<{ created: [source: string] }>()
 async function confirm() {
   if (await props.flow.confirm()) emit('created', props.flow.source)
 }
+async function cancelReview() {
+  await props.flow.cancelReview()
+}
 </script>
 
 <template>
@@ -28,7 +31,7 @@ async function confirm() {
     </template>
     <p v-if="flow.feedback" class="shizuki-todo-feedback" role="status">{{ flow.feedback }}</p>
     <p v-if="flow.error" class="shizuki-todo-error" role="alert">{{ flow.error }}</p>
-    <button type="button" :disabled="flow.busy || flow.dispatched" @click="flow.close">{{ flow.phase === 'success' ? '关闭' : '取消核对' }}</button>
+    <button type="button" :disabled="flow.cancelRequested" @click="cancelReview">{{ flow.cancelRequested ? '正在停止核对…' : flow.phase === 'success' ? '关闭' : '取消核对' }}</button>
     <button v-if="flow.dispatched" type="button" :disabled="flow.busy" @click="flow.defer()">稍后核对（不取消服务器记录）</button>
     <div v-if="flow.pending.length && !flow.dispatched">
       <p>未确认的创建请求（可从重启前恢复）：</p>

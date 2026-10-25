@@ -20,6 +20,7 @@ const coreUrl = process.env.MEGURI_CORE_URL ?? 'https://bot.shizuki.online/megur
 // after its first multimodal turn so its Core-side conversation remains intact.
 const localCoreUrl = process.env.MEGURI_LOCAL_CORE_URL ?? 'http://127.0.0.1:18080'
 const coreTokenFile = process.env.MEGURI_CORE_AUTH_TOKEN_FILE ?? 'D:\\environment\\secrets\\meguri\\desktop-core-token.txt'
+const desktopTenantId = process.env.MEGURI_DESKTOP_TENANT_ID ?? 'meguri-local'
 let coreToken = ''
 try { coreToken = readFileSync(coreTokenFile, 'utf8').trim() } catch { /* local-only Core keeps working without a token */ }
 
@@ -52,7 +53,7 @@ function applyDesktopCors(request, response) {
   response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   response.setHeader(
     'Access-Control-Allow-Headers',
-    'Accept, Content-Type, Idempotency-Key, Last-Event-ID, Meguri-Protocol-Version, X-Meguri-Desktop-Client, X-Meguri-Desktop-Session, X-Meguri-Multimodal',
+    'Accept, Content-Type, Idempotency-Key, X-Request-ID, Last-Event-ID, Meguri-Protocol-Version, X-Meguri-Desktop-Client, X-Meguri-Desktop-Session, X-Meguri-Multimodal',
   )
   return true
 }
@@ -105,7 +106,20 @@ async function proxyCoreRequest(request, response, requestUrl) {
     response.writeHead(403); response.end('Valid desktop session required'); return
   }
   const corePath = requestUrl.pathname.slice(coreProxyPrefix.length)
+  const memoryRequest = corePath.startsWith('/v1/memory/desktop/')
+  if (memoryRequest && (desktopClient !== 'meguri'
+    || !((request.method === 'GET' && /^\/v1\/memory\/desktop\/(status|records|candidates|memories\/[a-fA-F0-9-]{36})$/.test(corePath))
+      || (request.method === 'POST' && /^\/v1\/memory\/desktop\/(export|summary|candidates\/[a-fA-F0-9-]{36}\/review|memories\/[a-fA-F0-9-]{36}\/(delete|restore|corrections))$/.test(corePath))))) {
+    response.writeHead(403); response.end('Unsupported desktop memory operation'); return
+  }
   const resourceRequest = corePath === '/v1/resources' || corePath.startsWith('/v1/resources/')
+  const trainingRequest = corePath.startsWith('/v1/training/')
+  if (trainingRequest && !((desktopClient === 'meguri'
+    && ((request.method === 'GET' && corePath === '/v1/training/desktop/pending')
+      || (request.method === 'POST' && /^\/v1\/training\/desktop\/feedback(?:\/feedback-[a-fA-F0-9-]{36}\/revoke)?$/.test(corePath))))
+    || (request.method === 'POST' && corePath === '/v1/training/feedback'))) {
+    response.writeHead(403); response.end('Unsupported desktop training operation'); return
+  }
   const documentEditRequest = corePath === '/v1/documents' || corePath.startsWith('/v1/documents/')
   const skillManagementRequest = corePath === '/internal/v1/skills'
     || corePath.startsWith('/internal/v1/skills/')
@@ -141,7 +155,7 @@ async function proxyCoreRequest(request, response, requestUrl) {
   }
   const useLocalCore = resourceRequest || documentEditRequest || skillManagementRequest
     || sessionUsesLocalMultimodalCore(desktopSession)
-  if (!coreToken && !useLocalCore) {
+  if (!coreToken && (!useLocalCore || memoryRequest || trainingRequest)) {
     response.writeHead(503); response.end('Meguri Core token is not configured'); return
   }
 
@@ -151,13 +165,15 @@ async function proxyCoreRequest(request, response, requestUrl) {
     'Accept': String(request.headers.accept ?? 'application/json'),
     'Content-Type': String(request.headers['content-type'] ?? 'application/json'),
     'Idempotency-Key': String(request.headers['idempotency-key'] ?? ''),
-    'X-Meguri-Tenant-ID': 'meguri-staging',
+    'X-Request-ID': String(request.headers['x-request-id'] ?? ''),
+    'X-Meguri-Tenant-ID': coreUrl.startsWith('https:') && !useLocalCore ? 'meguri-staging' : desktopTenantId,
     'X-Meguri-User-ID': 'local-airi-user',
     'X-Meguri-Client-ID': desktopClient === 'meguri' ? 'desktop_pet' : 'airi',
     'X-Meguri-Session-ID': desktopSession,
   }
-  // The remote-core bearer token is never sent to the loopback core.
-  if (!useLocalCore) upstreamHeaders.Authorization = `Bearer ${coreToken}`
+  // Ordinary local resource requests omit the hosted credential. Named memory
+  // management also requires the desktop host credential on a loopback Core.
+  if (!useLocalCore || memoryRequest || trainingRequest) upstreamHeaders.Authorization = `Bearer ${coreToken}`
   const upstream = await fetch(upstreamUrl, {
     method: request.method,
     headers: upstreamHeaders,

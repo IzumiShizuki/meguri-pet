@@ -47,6 +47,20 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LangChain4jLlmProviderTest {
+    @Test
+    void datedNewsReachesLegacyAndTypedRequestsAsUserData() {
+        AtomicReference<ChatRequest> captured = new AtomicReference<>();
+        var provider = new LangChain4jLlmProvider(successfulModel(captured), new ObjectMapper(), "system");
+        provider.configureAiNewsContext(() -> List.of("NEWS_REFERENCE_2026-10-07 来源 https://daily.juya.uk/"));
+        provider.respond(new TurnRequest("u", "airi", "s", "今天什么值得聊"), state,
+                List.of(), List.of(), List.of()).block();
+        assertTrue(captured.get().messages().get(1).toString().contains("NEWS_REFERENCE_2026-10-07"));
+        assertTrue(!captured.get().messages().getFirst().toString().contains("NEWS_REFERENCE"));
+        provider.respond(typedRequest("今天AI早报", "context", "skill", "external", "trace", Instant.now())).block();
+        assertTrue(captured.get().messages().get(1).toString().contains("ai_news_reference"));
+        assertTrue(captured.get().messages().get(1).toString().contains("NEWS_REFERENCE_2026-10-07"));
+    }
+
     private final TurnRequest request = new TurnRequest("u", "airi", "s", "hello");
     private final RuntimeState state = new RuntimeState("airi", Mode.WORK, Relationship.SIBLING, "01",
             "2026-07-18T10:00:00+08:00", false, false, false, List.of(ExpressionTag.NEUTRAL));
@@ -276,6 +290,51 @@ class LangChain4jLlmProviderTest {
     }
 
     @Test
+    void typedPromptCarriesPerTurnWebStateSeparatelyFromCallableTools() {
+        AtomicReference<ChatRequest> captured = new AtomicReference<>();
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
+                successfulModel(captured), new ObjectMapper(), "system");
+        ProviderRequest base = typedRequest(
+                "帮我查看一下今天Codex是否更新了", "context", "trusted", "external",
+                "web-state", Instant.parse("2026-07-29T00:00:00Z"));
+
+        java.util.Map<ProviderRequest.WebRetrievalSummary.Status, String> expectedInstructions =
+                java.util.Map.of(
+                        ProviderRequest.WebRetrievalSummary.Status.RESULTS_AVAILABLE,
+                        "lookup completion alone does not verify a current fact",
+                        ProviderRequest.WebRetrievalSummary.Status.EMPTY,
+                        "returned no usable results",
+                        ProviderRequest.WebRetrievalSummary.Status.UNAVAILABLE,
+                        "was unavailable",
+                        ProviderRequest.WebRetrievalSummary.Status.DISABLED,
+                        "was disabled",
+                        ProviderRequest.WebRetrievalSummary.Status.SKIPPED,
+                        "was skipped",
+                        ProviderRequest.WebRetrievalSummary.Status.NOT_ATTEMPTED,
+                        "No system web lookup completed");
+
+        expectedInstructions.forEach((status, instruction) -> {
+            ProviderRequest.WebRetrievalSummary summary = new ProviderRequest.WebRetrievalSummary(
+                    status, status == ProviderRequest.WebRetrievalSummary.Status.RESULTS_AVAILABLE ? 2 : 0);
+            ProviderRequest request = withWebSummaryAndNoCapabilities(base, summary);
+            assertEquals(summary, request.withPromptBlocks(request.promptBlocks())
+                    .webRetrievalSummary());
+            StepVerifier.create(provider.respond(request)).expectNextCount(1).verifyComplete();
+
+            String wirePrompt = captured.get().messages().toString();
+            assertTrue(wirePrompt.contains("system_web_retrieval"));
+            assertTrue(wirePrompt.contains("\"capabilities\":[]"));
+            assertTrue(wirePrompt.contains("\"status\":\""
+                    + status.name().toLowerCase(java.util.Locale.ROOT) + "\""));
+            assertTrue(wirePrompt.contains(instruction));
+            if (status == ProviderRequest.WebRetrievalSummary.Status.RESULTS_AVAILABLE) {
+                assertTrue(wirePrompt.contains("\"result_count\":2"));
+                assertTrue(wirePrompt.contains("\"evidence_available\":true"));
+            }
+        });
+    }
+
+    @Test
     void modelTraceUsesConfiguredProviderModelRatherThanTokenizerModel() {
         LangChain4jLlmProvider provider = new LangChain4jLlmProvider(
                 successfulModel(new AtomicReference<>()), null, new ObjectMapper(), "system",
@@ -301,6 +360,10 @@ class LangChain4jLlmProviderTest {
 
         assertEquals(first.canonicalPromptDigest(), sameContent.canonicalPromptDigest());
         assertTrue(!first.canonicalPromptDigest().equals(changed.canonicalPromptDigest()));
+        ProviderRequest searched = first.withWebRetrievalSummary(
+                new ProviderRequest.WebRetrievalSummary(
+                        ProviderRequest.WebRetrievalSummary.Status.RESULTS_AVAILABLE, 1));
+        assertTrue(!first.canonicalPromptDigest().equals(searched.canonicalPromptDigest()));
     }
 
     @Test
@@ -689,6 +752,14 @@ class LangChain4jLlmProviderTest {
                 "context-" + traceId, "capabilities-" + traceId,
                 List.of(new ProviderRequest.CapabilityRef("tool", "v1")),
                 deadline, traceId);
+    }
+
+    private static ProviderRequest withWebSummaryAndNoCapabilities(
+            ProviderRequest base, ProviderRequest.WebRetrievalSummary summary) {
+        return new ProviderRequest(
+                base.turn(), base.runtimeState(), base.persona(), base.context(), base.promptBlocks(),
+                base.knowledgeSnapshotId(), base.retrievalTraceId(), base.contextTraceId(),
+                base.capabilitySnapshotId(), List.of(), base.deadline(), base.traceId(), summary);
     }
 
     private static int occurrences(String value, String needle) {

@@ -20,25 +20,25 @@ public final class MemoryRetrievalProviderAdapter implements RetrievalProvider {
 
     @Override
     public List<RetrievalItem> retrieve(String query, int limit, RetrievalContext context) {
-        if (limit <= 0 || context.turnRequest() == null
-                || !context.turnRequest().formalMemoryAllowed()) return List.of();
-        MemoryRecall recall = gateway.recall(context.turnRequest())
-                .block(context.remaining());
-        if (recall == null || !recall.available()) return List.of();
-        List<RetrievalItem> structured = java.util.stream.IntStream
-                .range(0, Math.min(limit, recall.memories().size()))
-                .mapToObj(index -> LegacyRetrievalItems.item(
-                        SourceType.MEMORY, recall.memories().get(index), index + 1, 0.95,
-                        LegacyRetrievalItems.version(context), context))
-                .toList();
-        return fusion.fuse(Map.of(RankSignal.STRUCTURED, structured));
+        return retrieveWithDiagnostics(query, limit, context).items();
     }
 
     @Override
-    public RetrievalProviderResult retrieveWithDiagnostics(
-            String query, int limit, RetrievalContext context) {
+    public RetrievalProviderResult retrieveWithDiagnostics(String query, int limit, RetrievalContext context) {
+        if (limit <= 0 || context.turnRequest() == null
+                || !context.turnRequest().formalMemoryAllowed()) return RetrievalProviderResult.success(List.of());
         try {
-            return RetrievalProviderResult.success(retrieve(query, limit, context));
+            MemoryRecall recall = gateway.recall(context.turnRequest()).block(context.remaining());
+            if (recall == null || !recall.available()) {
+                return new RetrievalProviderResult(List.of(), List.of("memory_unavailable"));
+            }
+            List<RetrievalItem> structured = java.util.stream.IntStream
+                    .range(0, Math.min(limit, recall.memories().size()))
+                    .mapToObj(index -> LegacyRetrievalItems.item(
+                            SourceType.MEMORY, recall.memories().get(index), index + 1, 0.95,
+                            LegacyRetrievalItems.version(context), context))
+                    .toList();
+            return RetrievalProviderResult.success(fusion.fuse(Map.of(RankSignal.STRUCTURED, structured)));
         } catch (RuntimeException error) {
             return new RetrievalProviderResult(List.of(), List.of("memory_unavailable"));
         }

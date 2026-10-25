@@ -11,7 +11,7 @@ import java.util.Map;
 /** One tokenizer-backed budget across the system prompt and all context lanes. */
 public final class GlobalPromptBudget {
     private static final List<String> OPTIONAL_LANES = List.of(
-            "web_results", "recent_context", "long_term_memories", "canon_examples");
+            "ai_news_reference", "web_results", "recent_context", "long_term_memories", "canon_examples");
 
     private final ObjectMapper objectMapper;
     private final ProviderTokenizer tokenizer;

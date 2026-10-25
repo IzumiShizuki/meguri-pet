@@ -313,6 +313,73 @@ async def test_supersede_proposal_creates_pending_candidate_without_mutating_ite
 
 
 @pytest.mark.asyncio
+async def test_desktop_bridge_correction_uses_real_service_idempotency_and_version_checks(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from services.meguri_core.desktop_memory_bridge import router
+    from services.meguri_core.memory_service.native_pgvector import NativePgvectorMemoryProvider
+
+    monkeypatch.setenv("MEGURI_INTERNAL_BRIDGE_TOKEN", "correction-test-token")
+    monkeypatch.delenv("MEGURI_INTERNAL_BRIDGE_TOKEN_FILE", raising=False)
+    monkeypatch.setenv("MEGURI_INTERNAL_BRIDGE_ALLOW_TESTCLIENT", "true")
+    class ScopedRepository(FakeRepository):
+        async def get_item(self, memory_id, **scope):
+            item = await super().get_item(memory_id, **scope)
+            if item and (item.user_id != scope.get("user_id") or item.tenant_id != scope.get("tenant_id")):
+                return None
+            return item
+
+    repository = ScopedRepository()
+    repository.item = item_for(candidate_create())
+    service = MemoryService(FakeUowFactory(repository))
+    provider = NativePgvectorMemoryProvider(service=service, tenant_id="meguri-dev")
+    app = FastAPI()
+    app.include_router(router)
+    app.state.orchestrator = SimpleNamespace(memory=provider)
+    client = TestClient(app)
+    original = repository.item.current_version_id
+    body = {"tenant_id": "meguri-dev", "user_id": "user-a", "client_id": "desktop_pet",
+            "session_id": "correction-session", "memory_id": str(repository.item.memory_id),
+            "base_version_id": str(original), "content_text": "User now prefers coffee",
+            "change_reason": "owner correction", "request_id": "correction-retry"}
+    def submit(value):
+        return client.post("/internal/memory/desktop/correct", json=value,
+            headers={"X-Meguri-Internal-Token": "correction-test-token"})
+
+    first = submit(body)
+    second = submit(body)
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert first.json()["candidate"]["status"] == "pending_review"
+    assert first.json()["candidate"]["merge_policy"] == "supersede"
+    assert repository.candidate.provenance["source_session_id"] == "correction-session"
+    assert repository.candidate.provenance["source_kind"] == "direct_user"
+    assert repository.item.current_version_id == original
+    assert repository.supersede_calls == repository.create_item_calls == []
+
+    assert submit({**body, "user_id": "foreign"}).status_code == 404
+    assert submit({**body, "base_version_id": str(uuid4())}).status_code == 409
+    assert submit({**body, "memory_id": str(uuid4())}).status_code == 404
+    repository.item.status = MemoryStatus.DELETED
+    assert submit({**body, "request_id": "deleted"}).status_code == 409
+    repository.item.status = MemoryStatus.ACTIVE
+
+    # A later version also invalidates approval of the pending correction.
+    repository.item.current_version_id = uuid4()
+    with pytest.raises(MemoryStateError):
+        await service.review_candidate(repository.candidate.candidate_id,
+            CandidateReview(decision="approve", reason="confirm"),
+            actor=MemoryActor(actor_type="user", actor_id="desktop:user-a"), request_id="stale-approval")
+    assert repository.supersede_calls == []
+    repository.item.current_version_id = original
+    await service.review_candidate(repository.candidate.candidate_id,
+        CandidateReview(decision="approve", reason="confirm"),
+        actor=MemoryActor(actor_type="user", actor_id="desktop:user-a"), request_id="valid-approval")
+    assert len(repository.supersede_calls) == 1
+    assert repository.supersede_calls[0][1].base_version_id == original
+
+
+@pytest.mark.asyncio
 async def test_approval_failure_does_not_finalize_candidate_or_idempotency():
     repository = FakeRepository(fail_create_item=True)
     factory = FakeUowFactory(repository)

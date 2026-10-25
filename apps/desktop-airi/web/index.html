@@ -156,6 +156,7 @@
       <div id="training-candidates" class="training-candidates" hidden></div>
       <div id="training-feedback" class="training-feedback" hidden>
         <textarea id="training-feedback-text" maxlength="2000" placeholder="这次回应哪里不合适？例如：这里应该先严肃制止，再表达关心。"></textarea>
+        <label><input id="training-feedback-consent" type="checkbox" />我同意将本轮输入、相关上下文、候选回复和本次反馈保存为离线训练候选。可在原生桌面设置中管理训练许可。</label>
         <div class="training-feedback-actions">
           <button id="training-feedback-submit" type="button">保存为训练候选</button>
         </div>
@@ -177,6 +178,7 @@
   </main>
   <script type="module">
     import { followDesktopTurn } from './turn-stream.mjs'
+    import { prepareTrainingFeedback } from './training-feedback.mjs'
     import { createArtifactBubble, replaceArtifactBubbleFace } from './artifact-bubbles.mjs'
     if (new URLSearchParams(location.search).get('mode') === 'overlay') document.body.classList.add('overlay')
     // The renderer talks only to the loopback desktop gateway. Bearer credentials
@@ -203,14 +205,15 @@
     const send = document.getElementById('send')
     const sendDraft = document.getElementById('send-draft')
     const nativeFetch = window.fetch.bind(window)
-    window.fetch = (inputValue, init = {}) => {
+    function desktopCoreFetch(inputValue, init = {}, requestSessionId = sessionId) {
       const url = typeof inputValue === 'string' ? inputValue : inputValue?.url
       if (!url || !url.startsWith(coreUrl)) return nativeFetch(inputValue, init)
       const headers = new Headers(init.headers || {})
       headers.set('X-Meguri-Desktop-Client', 'airi')
-      headers.set('X-Meguri-Desktop-Session', sessionId)
+      headers.set('X-Meguri-Desktop-Session', requestSessionId)
       return nativeFetch(inputValue, { ...init, headers })
     }
+    window.fetch = (inputValue, init = {}) => desktopCoreFetch(inputValue, init)
     const weatherText = document.getElementById('weather-text')
     const weatherName = document.getElementById('weather-name')
     const weatherLatitude = document.getElementById('weather-latitude')
@@ -228,6 +231,7 @@
     const trainingCandidates = document.getElementById('training-candidates')
     const trainingFeedback = document.getElementById('training-feedback')
     const trainingFeedbackText = document.getElementById('training-feedback-text')
+    const trainingFeedbackConsent = document.getElementById('training-feedback-consent')
     const trainingFeedbackSubmit = document.getElementById('training-feedback-submit')
     const trainingFeedbackStatus = document.getElementById('training-feedback-status')
     const resourcePanel = document.getElementById('resource-panel')
@@ -290,8 +294,8 @@
       trainingNote.textContent = trainingModeEnabled()
         ? '双回答概率 3%，文字反馈已开启'
         : '双回答概率 0.1%，反馈框隐藏'
-      trainingFeedback.hidden = !trainingModeEnabled()
-      trainingFeedbackSubmit.disabled = trainingModeEnabled() && !activeTrainingTurn
+      trainingFeedback.hidden = !trainingModeEnabled() && !activeTrainingTurn?.comparison
+      trainingFeedbackSubmit.disabled = !activeTrainingTurn || !trainingFeedbackConsent.checked
       if (trainingModeEnabled() && !activeTrainingTurn) trainingFeedbackStatus.textContent = '发送一条消息后即可提交纠错说明。'
     }
     function resetTrainingPanel() {
@@ -300,6 +304,7 @@
       trainingCandidates.replaceChildren()
       trainingCandidates.hidden = true
       trainingFeedbackText.value = ''
+      trainingFeedbackConsent.checked = false
       trainingFeedbackStatus.textContent = ''
       trainingFeedback.hidden = true
     }
@@ -321,40 +326,40 @@
           for (const peer of trainingCandidates.querySelectorAll('.candidate-option')) {
             peer.classList.toggle('selected', peer.dataset.candidateId === selectedTrainingCandidateId)
           }
-          bubble.textContent = candidate.response?.reply || ''
-          updateLastMeguriLogText(bubble.textContent)
-          applyExpression(candidate.response || {})
-          if (!trainingModeEnabled()) await submitTrainingFeedback()
+          trainingFeedback.hidden = false
         })
         trainingCandidates.append(option)
       }
     }
     async function submitTrainingFeedback() {
       if (!activeTrainingTurn) return
-      const feedbackText = trainingFeedbackText.value.trim()
-      if (!selectedTrainingCandidateId && !feedbackText) {
-        trainingFeedbackStatus.textContent = '请选择一个回答，或填写具体纠错说明。'
-        return
-      }
+      const submittingTurn = activeTrainingTurn
       trainingFeedbackSubmit.disabled = true
       trainingFeedbackStatus.textContent = '正在保存…'
       try {
-        const response = await fetch(coreUrl + '/v1/training/feedback', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-            turn_id: activeTrainingTurn.turnId,
-            selected_candidate_id: selectedTrainingCandidateId,
-            feedback_text: feedbackText,
-            consent_to_training: true,
-          }),
-        })
+        const submission = prepareTrainingFeedback(submittingTurn, selectedTrainingCandidateId,
+          trainingFeedbackText.value, trainingFeedbackConsent.checked)
+        const response = await desktopCoreFetch(coreUrl + '/v1/training/feedback', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': submission.requestId },
+          body: JSON.stringify(submission.body),
+        }, submission.sessionId)
         if (!response.ok) throw new Error('training feedback ' + response.status)
         const saved = await response.json()
+        if (activeTrainingTurn !== submittingTurn || sessionId !== submittingTurn.sessionId) return
+        if (saved.status !== 'training_candidate_saved' || !saved.feedback_id) throw new Error('没有收到有效的保存回执，请重试或检查状态。')
         trainingFeedbackStatus.textContent = '已保存为训练候选：' + saved.feedback_id
+        const selected = submittingTurn.comparison?.candidates?.find(candidate => candidate.candidate_id === selectedTrainingCandidateId)
+        if (selected) {
+          bubble.textContent = selected.response?.reply || ''
+          updateLastMeguriLogText(bubble.textContent)
+          applyExpression(selected.response || {})
+        }
         trainingFeedbackText.value = ''
+        trainingFeedbackConsent.checked = false
       } catch (reason) {
         trainingFeedbackStatus.textContent = '保存失败：' + (reason.message || String(reason))
       } finally {
-        trainingFeedbackSubmit.disabled = false
+        trainingFeedbackSubmit.disabled = !trainingFeedbackConsent.checked
       }
     }
 
@@ -362,6 +367,7 @@
       sessionLabel.textContent = 'session: ' + sessionId.slice(-8) + ' (desktop)'
     }
     function startNewSession() {
+      resetTrainingPanel()
       sessionId = newSessionId()
       pendingSegment = null
       localStorage.setItem(sessionStorageKey, sessionId)
@@ -971,11 +977,11 @@
         const comparison = await followTurn(created.turn_id)
         appendChatLog({ role: 'meguri', text: bubble.textContent })
         void pollArtifacts()
-        activeTrainingTurn = { turnId: created.turn_id, userMessage: message, comparison }
+        activeTrainingTurn = { turnId: created.turn_id, sessionId, userMessage: message, comparison }
         if (comparison) renderTrainingCandidates(comparison)
-        if (trainingModeEnabled()) {
+        if (trainingModeEnabled() || comparison) {
           trainingFeedback.hidden = false
-          trainingFeedbackSubmit.disabled = false
+          trainingFeedbackSubmit.disabled = !trainingFeedbackConsent.checked
           trainingFeedbackStatus.textContent = ''
         }
         if (pendingSegment) {
@@ -1173,6 +1179,7 @@
       renderTrainingMode()
     })
     trainingFeedbackSubmit.addEventListener('click', submitTrainingFeedback)
+    trainingFeedbackConsent.addEventListener('change', () => { trainingFeedbackSubmit.disabled = !activeTrainingTurn || !trainingFeedbackConsent.checked })
     const chatPanel = document.querySelector('.chat')
     // 整个窗口都是拖放区：拖到立绘或聊天面板上都能附加文件（原先只有聊天面板可放）。
     for (const eventName of ['dragenter', 'dragover']) {

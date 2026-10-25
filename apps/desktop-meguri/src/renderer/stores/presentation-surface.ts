@@ -8,12 +8,10 @@ export type LocalPresentationSnapshot = Pick<CharacterPresentationSnapshot, 'rev
   backgroundDataUrl?: string
 }
 
-const maxConsumedEffects = 512
-
 /**
  * Keeps display-only recovery data outside the authoritative conversation
  * stream. The two Stage surfaces read the same presentation store; this
- * ledger only decides whether local one-shot work has already happened.
+ * store only owns surface and snapshot/interruption state.
  */
 export const usePresentationSurfaceStore = defineStore('presentation-surface', {
   state: () => ({
@@ -22,7 +20,6 @@ export const usePresentationSurfaceStore = defineStore('presentation-surface', {
     snapshotRevision: 0,
     resourceSnapshot: { revision: 'builtin:default' } as LocalPresentationSnapshot,
     interruptionGeneration: 0,
-    consumedEffectIds: [] as string[],
   }),
   getters: {
     isGalgame: state => state.surface === 'galgame',
@@ -44,14 +41,6 @@ export const usePresentationSurfaceStore = defineStore('presentation-surface', {
     setResourceSnapshot(snapshot: LocalPresentationSnapshot) {
       this.resourceSnapshot = snapshot
       return this.rememberSnapshot(snapshot.revision)
-    },
-    consumeOneShot(effectId: string) {
-      if (!effectId || this.consumedEffectIds.includes(effectId))
-        return false
-      this.consumedEffectIds.push(effectId)
-      if (this.consumedEffectIds.length > maxConsumedEffects)
-        this.consumedEffectIds.splice(0, this.consumedEffectIds.length - maxConsumedEffects)
-      return true
     },
     interruptPresentation() {
       this.interruptionGeneration += 1

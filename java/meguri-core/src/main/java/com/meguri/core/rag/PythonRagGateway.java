@@ -32,8 +32,13 @@ public final class PythonRagGateway implements RagProvider {
 
     @Override
     public List<String> search(String query, RuntimeState state, int limit) {
-        if (query == null || query.isBlank() || state == null || limit <= 0) return List.of();
-        if (token.isBlank()) return fallback.search(query, state, limit);
+        return searchWithDiagnostics(query, state, limit).items();
+    }
+
+    @Override
+    public SearchResult searchWithDiagnostics(String query, RuntimeState state, int limit) {
+        if (query == null || query.isBlank() || state == null || limit <= 0) return new SearchResult(List.of(), List.of());
+        if (token.isBlank()) return fallbackResult(query, state, limit);
         try {
             JsonNode result = client.post()
                     .uri("/internal/rag/search")
@@ -47,16 +52,24 @@ public final class PythonRagGateway implements RagProvider {
                     .bodyToMono(JsonNode.class)
                     .timeout(timeout)
                     .block();
-            if (result == null) return fallback.search(query, state, limit);
+            if (result == null) return fallbackResult(query, state, limit);
             List<String> values = new ArrayList<>();
-            result.path("items").forEach(item -> {
+            JsonNode items = result.path("items");
+            if (!items.isArray()) throw new IllegalStateException("invalid RAG search response");
+            items.forEach(item -> {
+                if (!item.isTextual()) throw new IllegalStateException("invalid RAG result item");
                 String value = item.asText("").trim();
                 if (!value.isBlank()) values.add(value);
             });
-            return List.copyOf(values);
+            return new SearchResult(values.stream().limit(Math.min(limit, 10)).toList(), List.of());
         } catch (RuntimeException error) {
-            return fallback.search(query, state, limit);
+            return fallbackResult(query, state, limit);
         }
+    }
+
+    private SearchResult fallbackResult(String query, RuntimeState state, int limit) {
+        return new SearchResult(fallback.search(query, state, limit),
+                List.of("rag_bridge_unavailable", "rag_lexical_fallback"));
     }
 
     private static String readToken(String tokenFile, String inlineToken) {

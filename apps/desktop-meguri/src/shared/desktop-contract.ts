@@ -1,5 +1,11 @@
 export type ReadinessStatus = 'pending' | 'checking' | 'ready' | 'failed'
 
+import type { DesktopColorPalette, DesktopMemoryPreferences, DesktopPrivacyPreferences, DesktopWallpaperResult, DesktopDiagnosticResult } from './experience-contract'
+import type { DesktopUpdateState } from './update-contract'
+import type { Live2DBridge } from './live2d-contract'
+import type { SpeechResourcesBridge } from './speech-resource-contract'
+import type { CompanionPreferences, CompanionPreferencesPatch } from './companion-contract'
+
 export type ReadinessCapability = 'gateway' | 'core' | 'tts' | 'assets' | 'renderer'
 
 export interface ReadinessItem {
@@ -86,13 +92,20 @@ export type AppearanceMode = 'system' | 'light' | 'dark'
 export interface DesktopPreferences {
   version: 1
   appearance: AppearanceMode
+  systemAccentColor?: string
   chat: {
     visible: boolean
     expanded: boolean
+    wallpaperDataUrl: string
+    wallpaperBlur: number
+    bubbleOpacity: number
+    colorPalette: DesktopColorPalette
   }
   character: {
     outfitCode: string
     reducedMotion: boolean
+    renderer: 'png' | 'live2d'
+    live2dModelId: string
   }
   window: {
     alwaysOnTop: boolean
@@ -101,7 +114,14 @@ export interface DesktopPreferences {
   speech: {
     ttsEnabled: boolean
     volume: number
+    speed: number
+    ambientEnabled: boolean
+    galgameEnabled: boolean
   }
+  memory: DesktopMemoryPreferences
+  companion: CompanionPreferences
+  training: { enabled: boolean }
+  privacy: DesktopPrivacyPreferences
   shortcuts: {
     toggleVisibility: string
   }
@@ -117,6 +137,10 @@ export interface DesktopPreferencesPatch {
   character?: Partial<DesktopPreferences['character']>
   window?: Partial<DesktopPreferences['window']>
   speech?: Partial<DesktopPreferences['speech']>
+  memory?: Partial<DesktopPreferences['memory']>
+  companion?: CompanionPreferencesPatch
+  training?: Partial<DesktopPreferences['training']>
+  privacy?: Partial<DesktopPreferences['privacy']>
   shortcuts?: Partial<DesktopPreferences['shortcuts']>
   startup?: Partial<DesktopPreferences['startup']>
 }
@@ -383,6 +407,7 @@ export interface DesktopVoiceState {
   state: 'listening' | 'recognizing' | 'completed' | 'cancelled' | 'error'
   text?: string
   error?: string
+  stage?: 'engine' | 'audio_input' | 'recognition' | 'helper_process'
 }
 
 export interface MeguriDesktopBridge {
@@ -398,6 +423,20 @@ export interface MeguriDesktopBridge {
     update(patch: DesktopPreferencesPatch): Promise<DesktopPreferences>
     migrateLegacy(patch: DesktopPreferencesPatch): Promise<DesktopPreferences>
     onChanged(listener: (preferences: DesktopPreferences) => void): () => void
+  }
+  wallpaper?: {
+    select(): Promise<DesktopWallpaperResult>
+  }
+  diagnostics?: {
+    export(): Promise<DesktopDiagnosticResult>
+  }
+  live2d?: Live2DBridge
+  speechResources?: SpeechResourcesBridge
+  updates?: {
+    get(): Promise<DesktopUpdateState>
+    check(): Promise<DesktopUpdateState>
+    openRelease(): Promise<DesktopResult>
+    onChanged(listener: (state: DesktopUpdateState) => void): () => void
   }
   startupSettings: {
     getStatus(): Promise<DesktopStartupStatus>
@@ -438,7 +477,14 @@ export interface MeguriDesktopBridge {
     onReminder(listener: (reminder: ShizukiReminderEvent) => void): () => void
   }
   voice?: {
-    start(): Promise<DesktopResult & { text?: string, code?: string }>
+    start(): Promise<DesktopResult & {
+      text?: string
+      code?: string
+      stage?: DesktopVoiceState['stage']
+      failureSource?: 'launcher' | 'helper'
+      failureDiagnostic?: 'script_missing' | 'script_parse_failure' | 'script_parameter_failure' | 'script_access_denied' | 'script_runtime_failure' | 'helper_argument_failure' | 'helper_method_failure' | 'helper_io_failure' | 'speech_component_failure' | 'helper_bootstrap_failure'
+      failureLine?: number
+    }>
     cancel(): Promise<DesktopResult>
     onChanged(listener: (state: DesktopVoiceState) => void): () => void
   }
@@ -448,6 +494,7 @@ export interface MeguriDesktopBridge {
     toggleVisibility(): Promise<boolean>
     setClickThrough(ignore: boolean): Promise<void>
     pointerPosition(): Promise<{ x: number, y: number } | undefined>
+    setPresentationSurface?(surface: 'ambient' | 'ambient-panel' | 'galgame'): Promise<DesktopResult>
     openSettings(): Promise<void>
     openStudio(): Promise<void>
     centerStage(): Promise<void>

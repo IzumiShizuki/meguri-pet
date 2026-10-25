@@ -213,6 +213,8 @@ public final class RuntimeWebController {
                 Map.entry("rag_provider", description.ragProvider()),
                 Map.entry("memory_provider", description.memoryProvider()),
                 Map.entry("web_search_provider", description.webSearchProvider()),
+                Map.entry("input_check", turnRuntime instanceof TurnOrchestrator orchestrator
+                        ? orchestrator.inputCheckStatus() : Map.of("state", "disabled", "model", "")),
                 Map.entry("rag_chunks", description.ragChunks()));
     }
 

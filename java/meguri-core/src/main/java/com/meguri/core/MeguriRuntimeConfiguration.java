@@ -63,6 +63,11 @@ import javax.sql.DataSource;
 @Configuration
 public class MeguriRuntimeConfiguration {
     @Bean
+    public com.meguri.core.input.InputModelChecker meguriInputModelChecker(ObjectMapper mapper) {
+        return com.meguri.core.input.InputModelCheckerFactory.create(System.getenv(), mapper);
+    }
+
+    @Bean
     public LlmProvider meguriLlmProvider(ObjectMapper mapper, PromptCacheMetricsService metrics) {
         return LlmProviderFactory.createFromEnvironment(mapper, metrics);
     }
@@ -160,6 +165,7 @@ public class MeguriRuntimeConfiguration {
     }
 
     @Bean
+    @org.springframework.context.annotation.Primary
     public ContextRuntimePersistence meguriContextRuntimePersistence(
             SessionContextPersistence sessionPersistence) {
         return sessionPersistence instanceof ContextRuntimePersistence durable

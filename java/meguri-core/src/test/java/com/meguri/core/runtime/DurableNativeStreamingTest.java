@@ -24,6 +24,53 @@ import static org.awaitility.Awaitility.await;
 
 class DurableNativeStreamingTest {
     @Test
+    void fallbackProviderKeepsOneCompleteTextDeltaAndDoesNotClaimNativeStreaming() {
+        InMemoryTurnJournal journal = new InMemoryTurnJournal(mapper());
+        LlmProvider provider = (request, state, canon, memories, recent) ->
+                Mono.just(new LlmResponse("complete fallback reply"));
+        TurnOrchestrator runtime = runtime(provider, journal);
+
+        TurnRecord record = runtime.start(
+                new TurnRequest("user", "website", "fallback-stream", "hello"));
+        record.getDone().join();
+
+        assertThat(record.getStatus()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(journal.events("fallback-stream"))
+                .filteredOn(event -> event.getType().equals("text.delta"))
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.getData()).containsEntry("delta", "complete fallback reply")
+                            .containsEntry("native", false);
+                });
+        runtime.reset();
+    }
+
+    @Test
+    void emptyNativeStreamFailsWithoutPublishingAnEmptyDelta() {
+        InMemoryTurnJournal journal = new InMemoryTurnJournal(mapper());
+        LlmProvider provider = new DelayedStreamingProvider(false) {
+            @Override
+            public Flux<String> stream(TurnRequest request, RuntimeState state,
+                                       List<String> canon, List<String> memories,
+                                       List<String> recentContext, List<String> webResults) {
+                return Flux.empty();
+            }
+        };
+        TurnOrchestrator runtime = runtime(provider, journal);
+
+        TurnRecord record = runtime.start(
+                new TurnRequest("user", "website", "empty-native-stream", "hello"));
+        record.getDone().join();
+
+        assertThat(record.getStatus()).isEqualTo(TurnStatus.FAILED);
+        assertThat(journal.events("empty-native-stream"))
+                .filteredOn(event -> event.getType().equals("text.delta")).isEmpty();
+        assertThat(journal.events("empty-native-stream").stream()
+                .map(event -> event.getType())).contains("turn.failed");
+        runtime.reset();
+    }
+
+    @Test
     void persistsNativeDeltaBeforeProviderCompletesAndBeforeSemanticSideChannel() {
         InMemoryTurnJournal journal = new InMemoryTurnJournal(mapper());
         TurnOrchestrator runtime = runtime(new DelayedStreamingProvider(false), journal);
@@ -169,7 +216,7 @@ class DurableNativeStreamingTest {
         return new ObjectMapper().findAndRegisterModules();
     }
 
-    private static final class DelayedStreamingProvider implements LlmProvider {
+    private static class DelayedStreamingProvider implements LlmProvider {
         private final boolean fail;
 
         private DelayedStreamingProvider(boolean fail) {

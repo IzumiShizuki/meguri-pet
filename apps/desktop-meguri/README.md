@@ -102,10 +102,25 @@ Implemented in the native frontend:
 - canonical hello, turn, SSE reconnect/snapshot, cancellation and retry;
 - PNG expression, intensity, outfit and motion presentation;
 - optional local GPT-SoVITS playback;
+- managed Live2D imports with pointer/touch interaction and PNG recovery,
+  reusing the installed AIRI/Cubism renderer;
+- host-authorized GPT-SoVITS resource management, speed/volume and separate
+  desktop/Galgame speech controls;
+- consented authoritative memory management and bounded session summaries;
+- safe Markdown/math replies, source copying, chat wallpaper and palettes;
+- first-run data choices, sanitized diagnostics and verified release checks;
 - generated-file history entries, file icons and up to three bubbles;
 - safe default-application opening through an allow-listed host boundary;
 - confirm-gated task forwarding to a locally installed Codex or DeepSeek
   Harness. See [local work agents](../../docs/local-work-agents.md).
+
+Resource formats, AIRI dependency, local service restart requirements and
+isolated verification are documented in [native companion resources](../../docs/native-companion-resources.md).
+Formal memory requires an explicitly configured authoritative database and
+bridge; its configuration and original opt-out are documented in
+[native desktop memory](../../docs/native-desktop-memory.md). Browser history
+is never reported as formal memory. The completion evidence and remaining
+runtime prerequisites are in [the feedback report](../../docs/native-companion-feedback-2026-10-05.md).
 
 ## PixPin screenshots
 
@@ -186,6 +201,11 @@ Its identifiable `meguri-request:<UUID>` Todo detail is used for reconciliation;
 editing/removing it can prevent recovery. Preserve the journal when diagnosing
 a failed write; deleting it removes local duplicate-write protection.
 
+**取消核对** closes the current review flow. Before dispatch it prevents the
+write; after dispatch it waits for the current request to return, then preserves
+any unresolved request in the pending list for later reconciliation. It does
+not delete or cancel a Todo that TimePrism may already have created.
+
 TimePrism stores Todo data; **Meguri's running desktop process** synchronizes
 about every 75 seconds and scans for due reminders every 30 seconds. It shows
 an in-app card plus a Windows notification when available. All Todo wall times
@@ -242,12 +262,25 @@ test reminders or external messages were created.
 
 ## Local voice input
 
-The **🎙** button in the native chat dock listens for one Chinese utterance with
-the installed Windows `System.Speech` recognizer. Press it again to cancel.
-The result is appended to the editable chat draft; it is not sent or converted
-to a Todo automatically. Meguri does not save or upload microphone audio for
-this control. Windows microphone permission and a `zh-CN` speech recognizer
-must be available. If recognition fails, the existing draft stays intact.
+The **🎙** button in the native chat dock starts a long, turn-based voice call
+using the installed Windows `System.Speech` recognizer. Meguri sends each
+completed Chinese utterance through the existing conversation flow and listens
+again after the reply. Press **■** or click the microphone button again to hang
+up. Recognition pauses while Meguri generates or speaks a reply, so this mode
+does not support talking over Meguri; enabled local GPT-SoVITS playback follows
+the existing speech settings. If reply speech is disabled or unavailable, the
+text reply remains visible and listening resumes.
+
+Microphone audio is processed locally and is not saved or uploaded. The
+recognized transcript is sent under the existing AI-chat consent and privacy
+settings. Windows microphone permission and a `zh-CN` speech recognizer must be
+available. A silence cycle automatically rearms recognition; a recognition or
+conversation error is shown and ends the call.
+
+Meguri identifies whether a failure happened while opening the default microphone, starting or running the Chinese speech engine, or running the local helper. For an audio-input error, check the Windows default recording device and **Settings > Privacy & security > Microphone** desktop-app access. For a speech-engine error, check the installed Chinese speech feature; for a helper-process error, restart Meguri. These messages use fixed safe text and do not include raw exceptions or recorded audio.
+
+See [voice-long-call-research-2026-10-07.md](../../docs/voice-long-call-research-2026-10-07.md)
+for open-source references to AIRI, Pipecat, LiveKit Agents, and sherpa-onnx.
 
 See the [PixPin script reference](https://pixpin.cn/docs/configuration/script)
 and [system settings](https://pixpin.cn/docs/configuration/system).
@@ -281,3 +314,76 @@ Still provided by the AIRI fallback while later migration slices are built:
 Next migration order is attachments/documents, briefings/settings,
 window snapping/attachment, then an optional advanced character renderer. The
 existing `start-meguri-airi.bat` remains the fallback throughout migration.
+
+### Desktop reply and tool bubbles
+
+Collapsed chat shows the latest Meguri reply in a small speech bubble above a
+compact composer. Select **展开聊天** or the expand-records button to see the
+complete conversation. Incoming replies and errors keep history collapsed.
+Todo, reminder review, and attachment selection open a larger functional
+bubble without revealing history; closing them restores compact chat unless history remains
+explicitly expanded. Drafts stay in the same mounted composer across these
+changes.
+
+Use **▷ 重放语音** in the latest-reply bubble or beside a completed Meguri
+reply in chat or Galgame history to listen to that reply again. The button
+shows synthesis progress and changes to **■ 停止** during playback. Replay uses
+the original speech text and style when present; older replies use their text.
+It works with automatic speech disabled, preserves the configured volume and
+speed, and never sends a new conversation turn. The existing local speech
+service must be running; synthesis or audio failures appear beside the reply.
+Replay is disabled while a live voice call is active.
+
+The pet uses a fixed 350 by 540 CSS-pixel surface for both PNG and Live2D. The
+compact window defaults to 390 by 560 DIP; expanded panels use 800 by 560 DIP,
+with the character beside the panel. Narrow windows keep the panel within the
+viewport. Existing tall expanded dimensions migrate on the next desktop restart.
+Live2D stays loaded when chat preferences change.
+
+After rebuilding, restart Meguri to load the updated native window controller.
+Run `pnpm --filter @meguri/desktop-meguri test:visual-bubbles` for the isolated
+Electron layout check. Screenshots and results are written to
+`.codex-runtime/bubble-layout-smoke/`; the check uses preview todos and a local
+Haru fixture when available, with external requests blocked.
+
+Expanded chat places todo, new conversation, speech, more pet controls, and
+collapse in one header. The header remains draggable outside its buttons;
+Escape closes the controls drawer and returns focus to its toggle. Temporary
+panels restore the pet's previous compact placement even near display edges.
+Native cursor polling restores hover-hidden portraits when the cursor leaves
+the window or a cursor sample fails.
+
+Run `pnpm --filter @meguri/desktop-meguri test:chat-interaction` for the isolated
+hover recovery, header, keyboard drawer, and right-edge placement checks.
+Screenshots and results are saved in `.codex-runtime/chat-interaction-smoke/`.
+
+### Optional supervised feedback
+
+Open **设置 → 监督与训练** to enable optional feedback on subsequent replies.
+Choose a reply or write a behavior correction, then explicitly consent for that
+submission. A saved receipt can be withdrawn later, including from earlier sessions.
+Training mode is off by default; saving feedback does not train or switch a model.
+Feedback recovery requires the updated Core and authenticated desktop gateway.
+
+See [the P0 learning and recovery record](../../docs/p0-learning-and-runtime-recovery-2026-10-08.md)
+for offline review/export, deployment prerequisites and test evidence. Run
+`pnpm --filter @meguri/desktop-meguri exec electron scripts/training-feedback-smoke.mjs`
+for the isolated renderer check with a fake feedback API.
+
+### Local runtime and attention-aware presentation
+
+The supported Windows desktop launcher starts Java Core on loopback port
+18080, the desktop gateway on 15173, and local TTS on 9880 when each is not
+already listening. Core, the desktop gateway, and the renderer are separate
+processes. Local commitment follow-up and desktop delivery therefore run only
+while the desktop integration is active; TimePrism reminders remain the
+server-backed reminder path.
+
+Unsolicited notices share the companion attention policy and automatic
+audio/action effects use a persistent playback receipt before execution.
+Already claimed automatic effects are suppressed after reconnect or reload;
+use the explicit reply replay control for an intentional new playback.
+Preference controls are reversible and do not train the model or edit formal
+memory. See the [P2 runtime map](../../docs/p2-runtime-map-2026-10-08.md) for
+startup configuration, rollback boundaries, and which checks require a real
+desktop/audio/Live2D session.

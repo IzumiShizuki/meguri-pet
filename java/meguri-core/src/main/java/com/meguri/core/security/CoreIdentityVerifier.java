@@ -139,6 +139,16 @@ public final class CoreIdentityVerifier implements WebFilter {
     /** Verifies that an authenticated adapter owns the requested resource scope. */
     public Identity verifyScope(ServerWebExchange exchange, String userId, String clientId, String sessionId) {
         if (!required) return new Identity(userId, clientId, sessionId);
+        return verifyPrivilegedScope(exchange, userId, clientId, sessionId);
+    }
+
+    /** Sensitive operations always authenticate, independently of legacy chat policy. */
+    public Identity verifyPrivilegedScope(
+            ServerWebExchange exchange, String userId, String clientId, String sessionId) {
+        if (expectedToken.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE, "privileged Core authorization is not configured");
+        }
         verifyHeaders(exchange);
         Identity identity = new Identity(
                 header(exchange, "X-Meguri-User-ID"),

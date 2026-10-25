@@ -12,6 +12,23 @@ const channels = Object.freeze({
   preferencesUpdate: 'meguri:preferences:update',
   preferencesMigrateLegacy: 'meguri:preferences:migrate-legacy',
   preferencesChanged: 'meguri:preferences:changed',
+  wallpaperSelect: 'meguri:wallpaper:select',
+  diagnosticsExport: 'meguri:diagnostics:export',
+  updatesGet: 'meguri:updates:get',
+  updatesCheck: 'meguri:updates:check',
+  updatesOpenRelease: 'meguri:updates:open-release',
+  updatesChanged: 'meguri:updates:changed',
+  live2dCatalog: 'meguri:live2d:catalog',
+  live2dImportDirectory: 'meguri:live2d:import-directory',
+  live2dImportArchive: 'meguri:live2d:import-archive',
+  live2dActivate: 'meguri:live2d:activate',
+  live2dRemove: 'meguri:live2d:remove',
+  live2dActive: 'meguri:live2d:active',
+  speechResourcesList: 'meguri:speech-resources:list',
+  speechResourcesImport: 'meguri:speech-resources:import',
+  speechResourcesDownload: 'meguri:speech-resources:download',
+  speechResourcesActivate: 'meguri:speech-resources:activate',
+  speechResourcesRemove: 'meguri:speech-resources:remove',
   startupSettingsStatusGet: 'meguri:startup-settings:status:get',
   startupSettingsSave: 'meguri:startup-settings:save',
   multimodalRelayGet: 'meguri:multimodal-relay:get',
@@ -22,6 +39,7 @@ const channels = Object.freeze({
   windowToggle: 'meguri:window:toggle',
   windowSetClickThrough: 'meguri:window:set-click-through',
   windowPointerPosition: 'meguri:window:pointer-position',
+  windowSetPresentationSurface: 'meguri:window:set-presentation-surface',
   windowOpenSettings: 'meguri:window:open-settings',
   windowOpenStudio: 'meguri:window:open-studio',
   windowCenterStage: 'meguri:window:center-stage',
@@ -124,6 +142,40 @@ const desktopBridge = {
       return () => ipcRenderer.removeListener(channels.preferencesChanged, handler)
     },
   },
+  ...(view === 'settings' ? {
+    wallpaper: { select: () => ipcRenderer.invoke(channels.wallpaperSelect) },
+    diagnostics: { export: () => ipcRenderer.invoke(channels.diagnosticsExport) },
+    live2d: {
+      catalog: () => ipcRenderer.invoke(channels.live2dCatalog),
+      importDirectory: () => ipcRenderer.invoke(channels.live2dImportDirectory),
+      importArchive: () => ipcRenderer.invoke(channels.live2dImportArchive),
+      activate: id => ipcRenderer.invoke(channels.live2dActivate, id),
+      remove: id => ipcRenderer.invoke(channels.live2dRemove, id),
+      active: () => ipcRenderer.invoke(channels.live2dActive),
+    },
+    speechResources: {
+      list: () => ipcRenderer.invoke(channels.speechResourcesList),
+      importPackage: () => ipcRenderer.invoke(channels.speechResourcesImport),
+      download: manifestUrl => ipcRenderer.invoke(channels.speechResourcesDownload, manifestUrl),
+      activate: id => ipcRenderer.invoke(channels.speechResourcesActivate, id),
+      remove: id => ipcRenderer.invoke(channels.speechResourcesRemove, id),
+    },
+  } : {}),
+  ...(view === 'stage' ? { live2d: { active: () => ipcRenderer.invoke(channels.live2dActive) } } : {}),
+  ...(view === 'stage' || view === 'settings' ? {
+    updates: {
+      get: () => ipcRenderer.invoke(channels.updatesGet),
+      ...(view === 'settings' ? {
+        check: () => ipcRenderer.invoke(channels.updatesCheck),
+        openRelease: () => ipcRenderer.invoke(channels.updatesOpenRelease),
+      } : {}),
+      onChanged(listener) {
+        const handler = (_event, state) => listener(state)
+        ipcRenderer.on(channels.updatesChanged, handler)
+        return () => ipcRenderer.removeListener(channels.updatesChanged, handler)
+      },
+    },
+  } : {}),
   startupSettings: {
     getStatus: () => ipcRenderer.invoke(channels.startupSettingsStatusGet),
     save: patch => ipcRenderer.invoke(channels.startupSettingsSave, patch),
@@ -194,6 +246,7 @@ const desktopBridge = {
     toggleVisibility: () => ipcRenderer.invoke(channels.windowToggle),
     setClickThrough: ignore => ipcRenderer.invoke(channels.windowSetClickThrough, ignore === true),
     pointerPosition: () => ipcRenderer.invoke(channels.windowPointerPosition),
+    ...(view === 'stage' ? { setPresentationSurface: surface => ipcRenderer.invoke(channels.windowSetPresentationSurface, surface) } : {}),
     openSettings: () => ipcRenderer.invoke(channels.windowOpenSettings),
     openStudio: () => ipcRenderer.invoke(channels.windowOpenStudio),
     centerStage: () => ipcRenderer.invoke(channels.windowCenterStage),

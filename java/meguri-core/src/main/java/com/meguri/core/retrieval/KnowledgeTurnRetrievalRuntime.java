@@ -63,7 +63,7 @@ public final class KnowledgeTurnRetrievalRuntime implements AutoCloseable {
                 new BundleAssembler(), runtime.traceRepository(),
                 java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(),
                 Duration.ofSeconds(2), Duration.ofMillis(500), true,
-                RetrievalAuthorizationPolicy.allowAll());
+                RetrievalAuthorizationPolicy.allowAll(), Duration.ofSeconds(10));
         return new UnifiedRetrievalFacade(bridge, unified);
     }
 

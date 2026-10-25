@@ -127,6 +127,23 @@ app.whenReady().then(async () => {
       characterPacksImportType: typeof window.meguriDesktop?.characterPacks?.importDirectory,
       characterPacksPreviewType: typeof window.meguriDesktop?.characterPacks?.preview,
       characterPresentationType: typeof window.meguriDesktop?.characterPresentation?.getActive,
+      live2dActiveType: typeof window.meguriDesktop?.live2d?.active,
+      live2dCatalogType: typeof window.meguriDesktop?.live2d?.catalog,
+      live2dImportType: typeof window.meguriDesktop?.live2d?.importDirectory,
+      live2dArchiveType: typeof window.meguriDesktop?.live2d?.importArchive,
+      live2dActivateType: typeof window.meguriDesktop?.live2d?.activate,
+      live2dRemoveType: typeof window.meguriDesktop?.live2d?.remove,
+      speechResourcesListType: typeof window.meguriDesktop?.speechResources?.list,
+      speechResourcesImportType: typeof window.meguriDesktop?.speechResources?.importPackage,
+      speechResourcesDownloadType: typeof window.meguriDesktop?.speechResources?.download,
+      speechResourcesActivateType: typeof window.meguriDesktop?.speechResources?.activate,
+      speechResourcesRemoveType: typeof window.meguriDesktop?.speechResources?.remove,
+      wallpaperSelectType: typeof window.meguriDesktop?.wallpaper?.select,
+      diagnosticsExportType: typeof window.meguriDesktop?.diagnostics?.export,
+      updatesGetType: typeof window.meguriDesktop?.updates?.get,
+      updatesCheckType: typeof window.meguriDesktop?.updates?.check,
+      updatesOpenType: typeof window.meguriDesktop?.updates?.openRelease,
+      updatesChangedType: typeof window.meguriDesktop?.updates?.onChanged,
       studioPreferencesType: typeof window.meguriDesktop?.preferences,
       studioAttachmentsType: typeof window.meguriDesktop?.attachments,
       studioScreenshotsType: typeof window.meguriDesktop?.screenshots,
@@ -204,6 +221,21 @@ app.whenReady().then(async () => {
       && startup.voiceStartType === 'undefined'
       && studio.shizukiStatusType === 'undefined'
       && studio.voiceStartType === 'undefined'
+    const experienceSettingsAvailable = [
+      settings.live2dActiveType, settings.live2dCatalogType, settings.live2dImportType,
+      settings.live2dArchiveType, settings.live2dActivateType, settings.live2dRemoveType,
+      settings.speechResourcesListType, settings.speechResourcesImportType,
+      settings.speechResourcesDownloadType, settings.speechResourcesActivateType, settings.speechResourcesRemoveType,
+      settings.wallpaperSelectType, settings.diagnosticsExportType,
+      settings.updatesGetType, settings.updatesCheckType, settings.updatesOpenType, settings.updatesChangedType,
+    ].every(value => value === 'function')
+    const experienceStageScoped = [stage.live2dActiveType, stage.updatesGetType, stage.updatesChangedType].every(value => value === 'function')
+      && [stage.live2dCatalogType, stage.live2dImportType, stage.live2dActivateType, stage.live2dRemoveType,
+        stage.speechResourcesListType, stage.wallpaperSelectType, stage.diagnosticsExportType,
+        stage.updatesCheckType, stage.updatesOpenType].every(value => value === 'undefined')
+    const experienceSensitiveHidden = [startup, studio].every(view => [view.live2dActiveType,
+      view.speechResourcesListType, view.wallpaperSelectType, view.diagnosticsExportType,
+      view.updatesGetType].every(value => value === 'undefined'))
     if (startup.bridgeType !== 'object'
       || startup.view !== 'startup'
       || startup.characterPacksType !== 'undefined'
@@ -226,6 +258,9 @@ app.whenReady().then(async () => {
       || !studioContractAvailable
       || !shizukiStageAvailable
       || !shizukiSettingsAvailable
+      || !experienceSettingsAvailable
+      || !experienceStageScoped
+      || !experienceSensitiveHidden
       || !sensitiveBridgeHidden) {
       report({ ok: false, startup, stage, settings, studio, preloadError })
       process.exitCode = 1

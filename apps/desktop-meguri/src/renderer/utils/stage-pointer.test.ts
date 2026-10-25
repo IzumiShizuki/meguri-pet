@@ -30,6 +30,16 @@ describe('pinned stage pointer behavior', () => {
   })
 
   it.each([
+    { x: -1, y: 200 }, { x: 420, y: 200 },
+    { x: 180, y: -1 }, { x: 180, y: 540 },
+  ])('restores the portrait for native cursor positions outside the window: %o', point => {
+    expect(resolveStagePointerBehavior({
+      enabled: true, ...point, viewportWidth: 420, viewportHeight: 540,
+      portraitBounds, interactive: false,
+    })).toEqual({ clickThrough: true, fadePortrait: false })
+  })
+
+  it.each([
     { label: 'interactive UI', x: 180, y: 200, interactive: true },
     { label: 'resize border', x: 5, y: 200, interactive: false },
   ])('keeps $label clickable', ({ x, y, interactive }) => {

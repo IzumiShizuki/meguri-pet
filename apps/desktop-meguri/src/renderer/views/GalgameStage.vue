@@ -6,6 +6,9 @@ import { type ConversationMessage, useConversationStore } from '../stores/conver
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
 import { usePresentationStore } from '../stores/presentation'
 import { usePresentationSurfaceStore } from '../stores/presentation-surface'
+import MessageContent from '../components/MessageContent.vue'
+import Live2DCharacter from '../components/Live2DCharacter.vue'
+import { conversationPalette } from '../utils/conversation-palette'
 
 const emit = defineEmits<{ exit: [] }>()
 
@@ -24,6 +27,8 @@ const portraitFailed = ref(false)
 
 const canSend = computed(() => Boolean(draft.value.trim()) && !sending.value)
 const portraitUrl = computed(() => resourceSnapshot.value.spriteDataUrl || character.value.spriteUrl)
+const galgamePaletteStyle = computed(() => Object.fromEntries(Object.entries(conversationPalette(value.value.chat.colorPalette, true, value.value.systemAccentColor))
+  .map(([name, color]) => [`--conversation-${name.replace(/[A-Z]/gu, letter => `-${letter.toLowerCase()}`)}`, color])))
 const backdropStyle = computed(() => resourceSnapshot.value.backgroundDataUrl
   ? { backgroundImage: `url("${resourceSnapshot.value.backgroundDataUrl}")` }
   : undefined)
@@ -70,7 +75,7 @@ onMounted(() => void nextTick(() => composer.value?.focus()))
 </script>
 
 <template>
-  <section class="galgame-stage" data-stage-interactive aria-label="Meguri Galgame 舞台">
+  <section class="galgame-stage" :style="galgamePaletteStyle" data-stage-interactive aria-label="Meguri Galgame 舞台">
     <div class="galgame-backdrop" aria-hidden="true">
       <span v-if="backdropStyle" class="galgame-backdrop-image" :style="backdropStyle" />
       <span class="galgame-backdrop-window" />
@@ -92,8 +97,9 @@ onMounted(() => void nextTick(() => composer.value?.focus()))
 
     <div class="galgame-layout">
       <section class="galgame-character" :class="{ speaking }" aria-label="当前角色表现">
+        <Live2DCharacter v-if="value.character.renderer === 'live2d'" :character="character" :speaking="speaking" surface="galgame" />
         <img
-          v-if="!portraitFailed"
+          v-else-if="!portraitFailed"
           :key="portraitUrl"
           :src="portraitUrl"
           alt="Meguri"
@@ -114,7 +120,7 @@ onMounted(() => void nextTick(() => composer.value?.focus()))
           </div>
           <article v-for="message in messages" v-else :key="message.id" class="galgame-message" :class="[message.role, message.status]">
             <span class="galgame-message-role">{{ roleLabel(message) }}</span>
-            <p>{{ message.text || (message.status === 'streaming' ? '…' : '') }}</p>
+            <MessageContent :text="message.text" :rich="message.role === 'meguri'" :streaming="message.status === 'streaming'" :message="message" />
           </article>
         </div>
 
@@ -123,6 +129,7 @@ onMounted(() => void nextTick(() => composer.value?.focus()))
           <button type="button" :disabled="sending" @click="conversation.retry()">重试</button>
         </div>
 
+        <p v-if="conversation.memoryNotice" class="conversation-memory-notice" role="status">{{ conversation.memoryNotice }}</p>
         <form class="galgame-composer" @submit.prevent="send">
           <textarea
             ref="composer"

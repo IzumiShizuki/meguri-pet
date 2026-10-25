@@ -132,7 +132,9 @@ class NativePgvectorMemoryProvider:
             return {"status": "ok", "provider": self.provider_name, "database": "injected"}
         async with self.engine.connect() as connection:
             revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
-            await connection.execute(text("SELECT 1"))
+            vector_version = await connection.scalar(text("SELECT extversion FROM pg_extension WHERE extname = 'vector'"))
+        if not vector_version:
+            raise RuntimeError("pgvector extension is required for authoritative memory")
         expected_revision = (
             self.settings.expected_database_revision if self.settings else None
         )
@@ -143,6 +145,7 @@ class NativePgvectorMemoryProvider:
             "provider": self.provider_name,
             "database_revision": str(revision),
             "expected_database_revision": expected_revision or "not-configured",
+            "pgvector_version": str(vector_version),
         }
 
     async def create_candidate(

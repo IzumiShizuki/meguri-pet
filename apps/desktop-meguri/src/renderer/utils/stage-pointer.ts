@@ -33,6 +33,9 @@ export function resolveStagePointerBehavior(input: StagePointerInput): StagePoin
   if (!input.enabled)
     return { clickThrough: false, fadePortrait: false }
 
+  if (input.x < 0 || input.y < 0 || input.x >= input.viewportWidth || input.y >= input.viewportHeight)
+    return { clickThrough: true, fadePortrait: false }
+
   const edge = input.resizeThreshold ?? 9
   const nearResizeEdge = input.x <= edge
     || input.y <= edge

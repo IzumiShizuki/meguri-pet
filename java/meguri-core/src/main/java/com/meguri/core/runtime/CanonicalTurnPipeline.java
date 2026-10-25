@@ -251,7 +251,8 @@ public final class CanonicalTurnPipeline {
                 knowledge.snapshotId(), retrievalBundle.traceId(), contextBuild.traceId(),
                 capabilities.snapshotId(), capabilities.exposed().stream()
                         .map(ref -> new ProviderRequest.CapabilityRef(ref.id(), ref.version()))
-                        .toList(), record.getDeadlineAt(), record.getTraceId());
+                        .toList(), record.getDeadlineAt(), record.getTraceId(),
+                ProviderRequest.WebRetrievalSummary.from(retrievalBundle));
         return new Prepared(
                 retrievalBundle, contextBuild, providerRequest,
                 promptSkills.executions(), promptSkills.contexts(),
@@ -280,6 +281,14 @@ public final class CanonicalTurnPipeline {
         };
         ExecutionModeDecision decision = record.getExecutionModeDecision();
         if (decision == null || decision.mode() != TurnExecutionMode.FAST) {
+            return requested;
+        }
+        if (requested == com.meguri.core.retrieval.RetrievalMode.SLOW
+                && com.meguri.core.websearch.WebSearchPolicy.shouldSearch(
+                        request.getMessage())) {
+            // FAST execution keeps the low-latency model path. A policy-approved
+            // current-information request still needs the SLOW retrieval plan so
+            // the authenticated web lane is planned and dispatched.
             return requested;
         }
         com.meguri.core.retrieval.RetrievalMode fastRequested =
@@ -434,6 +443,11 @@ public final class CanonicalTurnPipeline {
             promptContexts = promptContexts == null ? List.of() : List.copyOf(promptContexts);
             adjacentBlocks = adjacentBlocks == null ? List.of() : List.copyOf(adjacentBlocks);
             mcpContent = mcpContent == null ? List.of() : List.copyOf(mcpContent);
+        }
+
+        public Prepared withCheckedInputText(String checkedText) {
+            return new Prepared(retrieval, context, providerRequest.withCheckedInputText(checkedText),
+                    promptSkills, promptContexts, adjacentBlocks, mcpContent);
         }
     }
 

@@ -28,6 +28,7 @@ public final class RetrievalRuntime implements AutoCloseable {
     private final RetrievalAuthorizationPolicy authorization;
     private final ExecutorService executor;
     private final Duration maxLaneDuration;
+    private final Duration maxWebLaneDuration;
     private final Duration maxGraphDuration;
     private final boolean ownsExecutor;
 
@@ -75,6 +76,25 @@ public final class RetrievalRuntime implements AutoCloseable {
             Duration maxGraphDuration,
             boolean ownsExecutor,
             RetrievalAuthorizationPolicy authorization) {
+        this(planner, gate, providers, hybridKnowledge, graph, assembler, traces,
+                executor, maxLaneDuration, maxGraphDuration, ownsExecutor,
+                authorization, maxLaneDuration);
+    }
+
+    public RetrievalRuntime(
+            RetrievalPlanner planner,
+            RetrievalGate gate,
+            Map<SourceType, RetrievalProvider> providers,
+            RetrievalProvider hybridKnowledge,
+            KnowledgeGraphRetrievalService graph,
+            BundleAssembler assembler,
+            RetrievalTraceRepository traces,
+            ExecutorService executor,
+            Duration maxLaneDuration,
+            Duration maxGraphDuration,
+            boolean ownsExecutor,
+            RetrievalAuthorizationPolicy authorization,
+            Duration maxWebLaneDuration) {
         this.planner = Objects.requireNonNull(planner);
         this.gate = Objects.requireNonNull(gate);
         EnumMap<SourceType, RetrievalProvider> copy = new EnumMap<>(SourceType.class);
@@ -88,6 +108,7 @@ public final class RetrievalRuntime implements AutoCloseable {
         this.authorization = Objects.requireNonNull(authorization);
         this.executor = Objects.requireNonNull(executor);
         this.maxLaneDuration = positive(maxLaneDuration, Duration.ofSeconds(2));
+        this.maxWebLaneDuration = positive(maxWebLaneDuration, this.maxLaneDuration);
         this.maxGraphDuration = positive(maxGraphDuration, Duration.ofMillis(500));
         this.ownsExecutor = ownsExecutor;
     }
@@ -204,7 +225,9 @@ public final class RetrievalRuntime implements AutoCloseable {
     private CompletableFuture<RetrievalLaneResult> laneFuture(
             SourceType source, RetrievalContext context,
             java.util.concurrent.Callable<RetrievalLaneResult> task) {
-        long timeoutMs = Math.max(1, budget(context, maxLaneDuration).toMillis());
+        Duration maximumDuration = source == SourceType.WEB
+                ? maxWebLaneDuration : maxLaneDuration;
+        long timeoutMs = Math.max(1, budget(context, maximumDuration).toMillis());
         CompletableFuture<RetrievalLaneResult> result = new CompletableFuture<>();
         Future<?> submitted = executor.submit(() -> {
             try {
@@ -227,12 +250,23 @@ public final class RetrievalRuntime implements AutoCloseable {
     private static RetrievalLaneResult laneResult(
             SourceType source, String provider, List<RetrievalItem> items,
             List<String> degradations) {
+        List<String> safeDegradations = degradations == null ? List.of() : degradations;
+        RetrievalLaneResult.Status status;
+        if (safeDegradations.contains("web_policy_skipped")
+                || safeDegradations.contains("web_policy_context_missing")) {
+            status = RetrievalLaneResult.Status.SKIPPED;
+        } else if (safeDegradations.stream().anyMatch(value ->
+                value.equals("web_search_disabled")
+                        || value.equals("web_search_unavailable")
+                        || value.equals("web_search_timeout"))) {
+            status = RetrievalLaneResult.Status.UNAVAILABLE;
+        } else {
+            status = safeDegradations.isEmpty()
+                    ? RetrievalLaneResult.Status.OK
+                    : RetrievalLaneResult.Status.DEGRADED;
+        }
         return new RetrievalLaneResult(
-                source,
-                degradations == null || degradations.isEmpty()
-                        ? RetrievalLaneResult.Status.OK
-                        : RetrievalLaneResult.Status.DEGRADED,
-                provider, items, degradations);
+                source, status, provider, items, safeDegradations);
     }
 
     private static List<String> mergeDegradations(

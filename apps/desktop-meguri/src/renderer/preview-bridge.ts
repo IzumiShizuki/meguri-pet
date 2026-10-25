@@ -101,11 +101,15 @@ const previewSnapshot: ReadinessSnapshot = {
 
 const previewPreferences: DesktopPreferences = {
   version: 1,
-  appearance: 'system',
-  chat: { visible: true, expanded: false },
-  character: { outfitCode: '04', reducedMotion: false },
+  appearance: 'light',
+  chat: { visible: true, expanded: false, wallpaperDataUrl: '', wallpaperBlur: 0, bubbleOpacity: 1, colorPalette: 'mint' },
+  character: { outfitCode: '04', reducedMotion: false, renderer: 'png', live2dModelId: '' },
   window: { alwaysOnTop: true, fadeOnHover: true },
-  speech: { ttsEnabled: true, volume: 0.9 },
+  speech: { ttsEnabled: true, volume: 0.9, speed: 1, ambientEnabled: true, galgameEnabled: true },
+  memory: { enabled: false, autoSummarize: true, summaryEveryTurns: 10 },
+  companion: { initiative: 'normal', focus: 'available', expressionsEnabled: true, motionEnabled: true, commitments: [] },
+  training: { enabled: false },
+  privacy: { acceptedPolicyVersion: '', remoteChatAllowed: false, saveHistory: true, checkUpdatesOnStartup: true },
   shortcuts: { toggleVisibility: 'CommandOrControl+Shift+M' },
   startup: { openAtLogin: true, runAsAdministrator: true },
 }
@@ -114,6 +118,8 @@ function mergePreviewPreferences(
   current: DesktopPreferences,
   patch: DesktopPreferencesPatch,
 ): DesktopPreferences {
+  const privacy = { ...current.privacy, ...patch.privacy }
+  const companion = { ...current.companion, ...patch.companion }
   return {
     ...current,
     ...patch,
@@ -122,6 +128,10 @@ function mergePreviewPreferences(
     character: { ...current.character, ...patch.character },
     window: { ...current.window, ...patch.window },
     speech: { ...current.speech, ...patch.speech },
+    memory: { ...current.memory, ...patch.memory },
+    companion: { ...companion, commitments: privacy.saveHistory ? companion.commitments : [] },
+    training: { ...current.training, ...patch.training },
+    privacy,
     shortcuts: { ...current.shortcuts, ...patch.shortcuts },
     startup: { ...current.startup, ...patch.startup },
   }
@@ -188,6 +198,29 @@ export function installPreviewBridge() {
       },
       onChanged: () => () => {},
     },
+    wallpaper: { select: async () => ({ ok: true, dataUrl: previewPng }) },
+    diagnostics: { export: async () => ({ ok: false, error: '浏览器预览不导出本机诊断。' }) },
+    live2d: {
+      catalog: async () => ({ version: 1, models: [] }),
+      active: async () => null,
+      importDirectory: async () => ({ ok: false, error: '请在桌面设置中导入 Live2D 模型。' }),
+      importArchive: async () => ({ ok: false, error: '请在桌面设置中导入 Live2D 模型。' }),
+      activate: async () => ({ ok: false, error: '预览没有 Live2D 模型。' }),
+      remove: async () => ({ ok: false, error: '预览没有 Live2D 模型。' }),
+    },
+    speechResources: {
+      list: async () => ({ engine: 'GPT-SoVITS', ready: false, activeId: 'default', profiles: [], error: '浏览器预览不连接本地语音模型管理。' }),
+      importPackage: async () => ({ ok: false, error: '请在桌面设置中导入语音资源。' }),
+      download: async () => ({ ok: false, error: '预览不下载语音资源。' }),
+      activate: async () => ({ ok: false, error: '预览不启用语音资源。' }),
+      remove: async () => ({ ok: false, error: '预览不删除语音资源。' }),
+    },
+    updates: {
+      get: async () => ({ status: 'idle', currentVersion: '0.1.0', message: '尚未检查更新。' }),
+      check: async () => ({ status: 'no_release', currentVersion: '0.1.0', message: '浏览器预览不会查询 GitHub。' }),
+      openRelease: async () => ({ ok: false, error: '浏览器预览不会打开外部发布页。' }),
+      onChanged: () => () => {},
+    },
     startupSettings: {
       getStatus: async () => structuredClone(startupStatus),
       save: async (patch: DesktopStartupPreferencesPatch) => {
@@ -246,6 +279,7 @@ export function installPreviewBridge() {
         document.documentElement.dataset.clickThrough = String(ignore)
       },
       pointerPosition: async () => undefined,
+      setPresentationSurface: async () => ({ ok: true }),
       openSettings: async () => {},
       openStudio: async () => {},
       centerStage: async () => {},

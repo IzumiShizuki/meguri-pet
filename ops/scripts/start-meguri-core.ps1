@@ -1,4 +1,5 @@
 ﻿#requires -Version 5
+param([switch]$NonInteractive)
 $ErrorActionPreference = 'Stop'
 try { chcp 65001 > $null; [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch {}
 
@@ -11,8 +12,21 @@ $LlmKeyFile = 'D:\environment\secrets\meguri-deepseek-api-key.txt'
 # =======================================================================
 
 . (Join-Path $PSScriptRoot 'multimodal-relay-config.ps1')
+. (Join-Path $PSScriptRoot 'memory-runtime-config.ps1')
+. (Join-Path $PSScriptRoot 'runtime-postgres-config.ps1')
 
 function Main {
+    # This desktop-only credential remains in the host/gateway boundary.
+    $desktopIdentityFile = if ($env:MEGURI_DESKTOP_AUTH_TOKEN_FILE) { $env:MEGURI_DESKTOP_AUTH_TOKEN_FILE } else { 'D:\environment\secrets\meguri\desktop-core-token.txt' }
+    if (Test-Path -LiteralPath $desktopIdentityFile -PathType Leaf) {
+        $env:MEGURI_DESKTOP_AUTH_TOKEN_FILE = $desktopIdentityFile
+    }
+    Set-MeguriMemoryRuntimeEnvironment
+    if ($env:MEGURI_MEMORY_BRIDGE_ENABLED -eq 'true') {
+        & (Join-Path $PSScriptRoot 'start-meguri-memory-bridge.ps1')
+    }
+    $runtimeStatus = Set-MeguriTurnRuntimeEnvironment
+    Write-Host "[Turn 存储] $($runtimeStatus.Detail)" -ForegroundColor $(if ($runtimeStatus.State -eq 'postgres') { 'Green' } else { 'Yellow' })
     # 关键：强制这个 core 跑在 Windows 上，并明确指向正确的 es.exe
     $env:MEGURI_EVERYTHING_ENABLED = 'true'
     $env:MEGURI_EVERYTHING_ES_PATH = $EsPath
@@ -21,6 +35,14 @@ function Main {
     $env:MEGURI_EXECUTION_MODE_ENABLED = 'true'
     $env:MEGURI_LIMITED_REACT_ENABLED = 'true'
     $env:MEGURI_SHIZUKI_ENABLED = 'true'
+    # Enable bounded current-information lookup for the local desktop pet.
+    # The Core still applies WebSearchPolicy and provider safety limits.
+    $env:MEGURI_WEB_SEARCH_ENABLED = 'true'
+    $env:MEGURI_WEB_SEARCH_BASE_URL = 'https://cn.bing.com/search'
+    $env:MEGURI_WEB_SEARCH_TIMEOUT_MS = '8000'
+    $env:MEGURI_WEB_SEARCH_MAX_RESULTS = '5'
+    $env:MEGURI_AI_NEWS_ENABLED = 'true'
+    $env:MEGURI_AI_NEWS_DESKTOP_DIRECTORY = 'D:\program\meguri-pet\reports\daily'
     $configuredScopes = @($env:MEGURI_CAPABILITY_SCOPES -split ',' |
         ForEach-Object { $_.Trim() } | Where-Object { $_ })
     # This explicit local launcher is the administrative desktop boundary.
@@ -36,6 +58,15 @@ function Main {
         $env:MEGURI_LLM_API_KEY_FILE = $LlmKeyFile
         $env:MEGURI_LLM_RESPONSE_FORMAT = 'json_object'
         $env:MEGURI_LLM_THINKING = 'disabled'
+        # The desktop input-check route is separate from Agent planning. Reuse
+        # the installed Flash endpoint unless the user selects another model;
+        # explicit MEGURI_INPUT_CHECK_ENABLED=false still disables this step.
+        if (-not $env:MEGURI_INPUT_CHECK_MODEL) {
+            $env:MEGURI_INPUT_CHECK_MODEL = 'deepseek-v4-flash'
+        }
+        if (-not $env:MEGURI_INPUT_CHECK_TIMEOUT_MS) {
+            $env:MEGURI_INPUT_CHECK_TIMEOUT_MS = '2000'
+        }
         # DeepSeek V4 is text-only. A separate OpenAI-compatible vision route
         # may be inherited explicitly before images or PDFs are submitted.
         $env:MEGURI_MULTIMODAL_MAX_ATTACHMENT_BYTES = '5242880'
@@ -48,8 +79,7 @@ function Main {
     elseif ($relayStatus.State -notin @('missing', 'disabled')) {
         Write-Host "[视觉] $($relayStatus.Detail)" -ForegroundColor Yellow
     }
-    $env:JAVA_HOME = $JavaHome
-    $env:Path      = "$JavaHome\bin;$MavenBin;$env:Path"
+    . 'D:\environment\activate-dev-env.ps1' 21
 
     # Keep the JDK's automatically bound Unix-domain socket path short on Windows.
     $socketTmpDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\tmp\jdk-unix-sockets'))
@@ -89,6 +119,7 @@ function Main {
         $op = Get-Process -Id $listen.OwningProcess -ErrorAction SilentlyContinue
         Write-Host "[提示] 端口 18080 已被占用：PID=$($listen.OwningProcess) 进程=$($op.ProcessName)" -ForegroundColor Yellow
         if ($op -and $op.ProcessName -eq 'java') {
+            if ($NonInteractive) { throw 'Port 18080 is already occupied. Stop the verified Meguri Core before unattended startup.' }
             $ans = Read-Host "这看起来是旧的 core。结束它并重启？(Y/N)"
             if ($ans -match '^[Yy]') { Stop-Process -Id $op.Id -Force; Start-Sleep -Seconds 2 }
             else { Write-Host "已取消，未做改动。" -ForegroundColor Yellow; return }
@@ -107,9 +138,15 @@ function Main {
     Write-Host "正在用 mvn spring-boot:run 启动（首次会编译，请稍等十几秒）..." -ForegroundColor Green
     Write-Host "启动后请保持本窗口开着；要停止按 Ctrl+C 或直接关闭窗口。" -ForegroundColor Green
     Write-Host ""
-    & "$MavenBin\mvn.cmd" -B spring-boot:run
+    & "$MavenBin\mvn.cmd" -B '-Dmaven.test.skip=true' spring-boot:run
+    if ($LASTEXITCODE -ne 0) { throw "Meguri Core exited with code $LASTEXITCODE." }
 }
 
 try { Main }
-catch { Write-Host "[异常] $($_.Exception.Message)" -ForegroundColor Red }
-finally { Write-Host ""; Read-Host "按回车关闭本窗口" | Out-Null }
+catch {
+    Write-Host "[异常] $($_.Exception.Message)" -ForegroundColor Red
+    if ($NonInteractive) { exit 1 }
+}
+finally {
+    if (-not $NonInteractive) { Write-Host ""; Read-Host "按回车关闭本窗口" | Out-Null }
+}

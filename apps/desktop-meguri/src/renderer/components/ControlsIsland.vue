@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeUnmount, ref, useId, watch } from 'vue'
 
 import { useConversationStore } from '../stores/conversation'
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
 import { usePresentationStore } from '../stores/presentation'
 import { useWorkStore } from '../stores/work'
+
+defineProps<{ inline?: boolean }>()
 
 const presentation = usePresentationStore()
 const conversation = useConversationStore()
@@ -16,6 +18,8 @@ const { outstanding } = storeToRefs(work)
 const { value } = storeToRefs(preferences)
 const expanded = ref(false)
 const root = ref<HTMLElement>()
+const toggle = ref<HTMLButtonElement>()
+const drawerId = `pet-controls-${useId()}`
 let collapseTimer: ReturnType<typeof setTimeout> | undefined
 const emit = defineEmits<{
   galgame: []
@@ -23,7 +27,10 @@ const emit = defineEmits<{
   work: []
 }>()
 
-defineExpose({ open: () => { expanded.value = true } })
+defineExpose({ open: () => {
+  expanded.value = true
+  toggle.value?.focus()
+} })
 
 watch(expanded, (open) => {
   if (open)
@@ -32,11 +39,19 @@ watch(expanded, (open) => {
 
 function scheduleCollapse() {
   clearTimeout(collapseTimer)
-  collapseTimer = setTimeout(() => { expanded.value = false }, 1500)
+  collapseTimer = setTimeout(() => {
+    if (!root.value?.contains(document.activeElement))
+      expanded.value = false
+  }, 1500)
 }
 
 function cancelCollapse() {
   clearTimeout(collapseTimer)
+}
+
+function closeControls() {
+  expanded.value = false
+  toggle.value?.focus()
 }
 
 function toggleChat() {
@@ -77,25 +92,29 @@ onBeforeUnmount(() => clearTimeout(collapseTimer))
   <aside
     ref="root"
     class="controls-island no-drag"
-    :class="{ expanded }"
+    :class="{ expanded, inline }"
     aria-label="桌宠控制"
     @mouseenter="cancelCollapse"
     @mouseleave="scheduleCollapse"
+    @focusin="cancelCollapse"
+    @focusout="scheduleCollapse"
+    @keydown.esc.stop="closeControls"
   >
     <div class="controls-rail">
-      <button class="control-button drag-region" type="button" title="拖动窗口" aria-label="拖动窗口">
+      <button v-if="!inline" class="control-button drag-region" type="button" title="拖动窗口" aria-label="拖动窗口">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v20M2 12h20M12 2l-3 3m3-3 3 3M12 22l-3-3m3 3 3-3M2 12l3-3m-3 3 3 3m17-3-3-3m3 3-3 3" /></svg>
       </button>
-      <button class="control-button" type="button" :class="{ active: value.speech.ttsEnabled }" :aria-pressed="value.speech.ttsEnabled" :title="value.speech.ttsEnabled ? '关闭回复语音' : '开启回复语音'" @click="toggleSpeech">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9v6a3 3 0 0 0 6 0V9a3 3 0 0 0-6 0Zm-3 5a6 6 0 0 0 12 0M12 20v2" /></svg>
+      <button class="control-button" type="button" :class="{ active: value.speech.ttsEnabled }" :aria-pressed="value.speech.ttsEnabled" :aria-label="value.speech.ttsEnabled ? '关闭回复语音' : '开启回复语音'" :title="value.speech.ttsEnabled ? '关闭回复语音' : '开启回复语音'" @click="toggleSpeech">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m11 5-6 4H2v6h3l6 4V5Zm4 3a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14" /><path v-if="!value.speech.ttsEnabled" d="m3 3 18 18" /></svg>
       </button>
-      <button class="control-button" type="button" :aria-expanded="expanded" :title="expanded ? '收起控制' : '展开控制'" @click="expanded = !expanded">
-        <svg class="chevron" :class="{ rotated: expanded }" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+      <button ref="toggle" class="control-button" type="button" :aria-expanded="expanded" :aria-controls="drawerId" :aria-label="expanded ? '收起桌宠控制' : '更多桌宠控制'" :title="expanded ? '收起控制' : '更多控制'" @click="expanded = !expanded">
+        <svg v-if="inline" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>
+        <svg v-else class="chevron" :class="{ rotated: expanded }" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
       </button>
     </div>
 
     <Transition name="controls-drawer">
-      <div v-if="expanded" class="controls-drawer">
+      <div v-if="expanded" :id="drawerId" class="controls-drawer">
         <div class="controls-status" :class="statusTone" role="status">
           <span />
           <p>{{ statusText }}</p>

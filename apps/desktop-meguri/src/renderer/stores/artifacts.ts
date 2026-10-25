@@ -1,8 +1,10 @@
 import { defineStore } from 'pinia'
 
-import { desktopFetch, gatewayOrigin } from '../services/desktop-fetch'
+import { coreUrl, desktopFetch, gatewayOrigin } from '../services/desktop-fetch'
 import { appendArtifactBubbles, collectNewArtifacts, type FeedArtifact } from '../utils/artifact-feed'
 import { useConversationStore } from './conversation'
+import { useCompanionDirectorStore } from './companion-director'
+import { deliverCompanionNotice } from '../services/companion-notice-delivery'
 
 export interface ArtifactItem {
   key: string
@@ -27,6 +29,7 @@ export const useArtifactStore = defineStore('artifacts', {
     bubbles: [] as ArtifactItem[],
     seen: new Set<string>(),
     timer: undefined as number | undefined,
+    newsCheckedAt: 0,
   }),
   actions: {
     start(sessionId: string) {
@@ -54,6 +57,7 @@ export const useArtifactStore = defineStore('artifacts', {
       this.timer = undefined
     },
     async poll(sessionId: string) {
+      void this.pollAiNews(sessionId)
       try {
         const url = new URL('/artifacts/recent', gatewayOrigin)
         url.searchParams.set('after', String(this.cursor))
@@ -75,6 +79,33 @@ export const useArtifactStore = defineStore('artifacts', {
       catch {
         // The gateway can restart independently; the next interval retries.
       }
+    },
+    async pollAiNews(sessionId: string) {
+      if (Date.now() - this.newsCheckedAt < 60_000)
+        return
+      this.newsCheckedAt = Date.now()
+      try {
+        const response = await desktopFetch(sessionId, `${coreUrl}/v1/daily/reports/latest?kind=ai_news`, { cache: 'no-store' })
+        if (!response.ok)
+          return
+        const report = await response.json() as { report_id?: string, date?: string, delivery_text?: string }
+        const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Shanghai' }).format(new Date())
+        if (report.report_id !== `ai_news:${today}` || report.date !== today
+          || typeof report.delivery_text !== 'string' || report.delivery_text.length > 8_000)
+          return
+        const createdAt = Date.now()
+        const notice = {
+          id: report.report_id,
+          kind: 'news' as const,
+          text: report.delivery_text,
+          createdAt,
+          expiresAt: createdAt + 24 * 60 * 60 * 1000,
+        }
+        const decision = useCompanionDirectorStore().enqueueNotice(notice, createdAt)
+        if (decision.action === 'deliver')
+          void deliverCompanionNotice(notice, decision)
+      }
+      catch { /* A later poll retries when Core has restarted or the news becomes ready. */ }
     },
     async loadIcon(item: ArtifactItem) {
       const result = await window.meguriDesktop?.artifacts.icon(item.localPath)

@@ -67,7 +67,9 @@ public final class JdbcCapabilityRuntimeStore implements
                 FROM capability_definition
                 WHERE capability_id = ? AND version = ?
                 """, String.class, descriptor.id(), descriptor.version());
-        if (!jsonEquals(stored, write(descriptor))) {
+        // Descriptor collections are Sets. JSON arrays may have a different
+        // iteration order in the next JVM without changing the domain value.
+        if (!descriptor.equals(read(stored, CapabilityDescriptor.class, null))) {
             throw new IllegalArgumentException(
                     "capability version already has different metadata: "
                             + descriptor.id() + "@" + descriptor.version());
@@ -514,15 +516,6 @@ public final class JdbcCapabilityRuntimeStore implements
                 result.getLong("duration_ms"),
                 result.getBoolean("external_result"),
                 result.getBoolean("retryable"));
-    }
-
-    private boolean jsonEquals(String left, String right) {
-        try {
-            return mapper.readTree(left).equals(mapper.readTree(right));
-        } catch (JsonProcessingException error) {
-            throw new IllegalStateException(
-                    "invalid persisted capability JSON", error);
-        }
     }
 
     private String write(Object value) {

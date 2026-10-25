@@ -51,13 +51,21 @@ public final class PythonMemoryGateway implements MemoryGateway {
         return post("/internal/memory/search", payload)
                 .map(node -> {
                     List<String> memories = new ArrayList<>();
-                    node.path("items").forEach(item -> {
+                    JsonNode items = node.path("items");
+                    if (!items.isArray()) {
+                        throw new IllegalStateException("invalid memory search response");
+                    }
+                    items.forEach(item -> {
                         JsonNode record = item.path("record");
+                        if (!record.isObject() || !record.path("canonical_text").isTextual()) {
+                            throw new IllegalStateException("invalid memory recall item");
+                        }
                         String text = record.path("canonical_text").asText("");
                         if (!text.isBlank()) memories.add(text);
                     });
                     return MemoryRecall.available(memories);
                 })
+                .switchIfEmpty(Mono.just(MemoryRecall.unavailable()))
                 .onErrorReturn(MemoryRecall.unavailable());
     }
 
@@ -147,6 +155,46 @@ public final class PythonMemoryGateway implements MemoryGateway {
 
     private boolean enabled() {
         return !token.isBlank();
+    }
+
+    /** Management never silently degrades into fake or local browser memory. */
+    public Mono<JsonNode> desktopCall(String operation, Map<String, Object> payload) {
+        if (!java.util.Set.of("status", "records", "candidates", "review", "delete", "restore", "summary", "detail", "correct")
+                .contains(operation)) {
+            return Mono.error(new IllegalArgumentException("unsupported desktop memory operation"));
+        }
+        if (!enabled()) return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "bridge_not_configured"));
+        return post("/internal/memory/desktop/" + operation, payload)
+                .onErrorMap(org.springframework.web.reactive.function.client.WebClientResponseException.class,
+                        error -> new org.springframework.web.server.ResponseStatusException(
+                                org.springframework.http.HttpStatus.valueOf(error.getStatusCode().value()),
+                                desktopReason(error)))
+                .onErrorMap(error -> !(error instanceof org.springframework.web.server.ResponseStatusException),
+                        error -> new org.springframework.web.server.ResponseStatusException(
+                                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "memory_bridge_unavailable"));
+    }
+
+    public Mono<String> desktopExport(Map<String, Object> payload) {
+        if (!enabled()) return Mono.error(new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "bridge_not_configured"));
+        return client.post().uri("/internal/memory/desktop/export")
+                .contentType(MediaType.APPLICATION_JSON).header("X-Meguri-Internal-Token", token)
+                .bodyValue(payload).retrieve().bodyToMono(String.class).timeout(timeout)
+                .onErrorMap(org.springframework.web.reactive.function.client.WebClientResponseException.class,
+                        error -> new org.springframework.web.server.ResponseStatusException(
+                                org.springframework.http.HttpStatus.valueOf(error.getStatusCode().value()), desktopReason(error)))
+                .onErrorMap(error -> !(error instanceof org.springframework.web.server.ResponseStatusException),
+                        error -> new org.springframework.web.server.ResponseStatusException(
+                                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE, "memory_bridge_unavailable"));
+    }
+
+    private String desktopReason(org.springframework.web.reactive.function.client.WebClientResponseException error) {
+        try {
+            String code = mapper.readTree(error.getResponseBodyAsString()).path("detail").path("code").asText("");
+            if (code.matches("[a-z_]{1,80}")) return code;
+        } catch (Exception ignored) { }
+        return "memory_operation_rejected";
     }
 
     private static String readToken(String tokenFile, String inlineToken) {

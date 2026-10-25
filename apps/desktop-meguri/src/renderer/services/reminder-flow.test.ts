@@ -27,17 +27,25 @@ describe('reminder review and confirmation flow', () => {
     }
   })
 
-  it('asks a question, accepts a correction and still needs confirmation', async () => {
+  it('uses an inferred time and can write without another confirmation click', async () => {
     const { flow, createTodo } = fixture()
-    await flow.prepare('明天3点提醒我开会')
-    expect(flow.phase).toBe('clarify')
-    expect(await flow.confirm()).toBe(false)
-    flow.dueAt = '2026-10-05T15:00'
-    await flow.clarify()
-    expect(flow.phase).toBe('review')
+    createTodo.mockResolvedValueOnce({ ok: true, todo: { ...todo, title: '睡觉', dueAt: '2026-10-05T12:00:00' } })
+    await flow.prepare('提醒我睡觉')
+    expect(flow).toMatchObject({ phase: 'review', title: '睡觉', dueAt: '2026-10-05T12:00' })
+    expect(await flow.confirm()).toBe(true)
+    expect(createTodo).toHaveBeenCalledWith(expect.objectContaining({ title: '睡觉', dueAt: '2026-10-05T12:00' }))
+  })
+
+  it('reviews an inferred bare clock and writes only after explicit confirmation', async () => {
+    const { flow, createTodo } = fixture()
+    createTodo.mockResolvedValueOnce({ ok: true, todo: { ...todo, dueAt: '2026-10-04T15:00:00' } })
+
+    expect(await flow.prepare('提醒我3点开会')).toBe(true)
+    expect(flow).toMatchObject({ phase: 'review', title: '开会', dueAt: '2026-10-04T15:00' })
     expect(createTodo).not.toHaveBeenCalled()
-    flow.close()
-    expect(flow.phase).toBe('idle')
+
+    expect(await flow.confirm()).toBe(true)
+    expect(createTodo).toHaveBeenCalledWith(expect.objectContaining({ title: '开会', dueAt: '2026-10-04T15:00' }))
   })
 
   it('never sends unsupported actions and lets ordinary chat continue', async () => {

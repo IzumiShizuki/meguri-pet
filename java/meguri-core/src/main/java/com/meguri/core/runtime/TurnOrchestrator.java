@@ -50,8 +50,6 @@ import com.meguri.core.harness.persona.PersonaRuntime;
 import com.meguri.core.harness.retrieval.RetrievalMode;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.llm.LlmProviderFactory;
-import com.meguri.core.llm.NativeTextDeltaAggregator;
-import com.meguri.core.llm.UserVisibleReplyStream;
 import com.meguri.core.llm.AgentPlanningRequest;
 import com.meguri.core.llm.AgentPlannerException;
 import com.meguri.core.llm.ProviderRequest;
@@ -158,6 +156,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private final MemoryGateway memory;
     private final WebSearchGateway webSearch;
     private final TrainingFeedbackService trainingFeedback;
+    private final TurnResponseCoordinator responseCoordinator;
     private final WeatherConversationService weatherConversation;
     private final TurnJournal journal;
     private final PersonaRuntime personaRuntime;
@@ -165,6 +164,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private volatile AgentRuntime agentRuntime;
     private volatile AgentRuntimeFactory.Config agentRuntimeConfig;
     private volatile CanonicalTurnPipeline canonicalPipeline;
+    private volatile com.meguri.core.input.InputModelChecker inputModelChecker =
+            com.meguri.core.input.InputModelChecker.disabled();
     private volatile PresentationResolver presentationResolver;
     private volatile PostReplyMemoryJobEnqueuer postReplyMemoryJobs;
     private final Clock clock = Clock.systemUTC();
@@ -318,6 +319,20 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         this.webSearch = webSearch == null ? new NoopWebSearchGateway() : webSearch;
         this.trainingFeedback = trainingFeedback == null
                 ? TrainingFeedbackService.disabled(this.objectMapper) : trainingFeedback;
+        this.responseCoordinator = new TurnResponseCoordinator(
+                this.llm, this.trainingFeedback, this.buildId, this::emit,
+                new TurnResponseCoordinator.LatencyRecorder() {
+                    @Override
+                    public void mark(TurnRecord record, TurnLatencyPoint point) {
+                        markLatency(record, point);
+                    }
+
+                    @Override
+                    public void markMissing(TurnRecord record, TurnLatencyPoint point,
+                                            TurnLatencyMissingReason reason) {
+                        markLatencyMissing(record, point, reason);
+                    }
+                });
         this.weatherConversation = weatherConversation == null
                 ? WeatherConversationService.disabled() : weatherConversation;
         this.journal = journal == null ? new InMemoryTurnJournal(this.objectMapper) : journal;
@@ -420,6 +435,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     public void configureUnifiedRetrieval(UnifiedRetrievalFacade runtime) {
         this.canonicalPipeline = canonicalPipeline.withRetrieval(
                 Objects.requireNonNull(runtime, "runtime"));
+    }
+
+    @Autowired(required = false)
+    public void configureInputModelChecker(com.meguri.core.input.InputModelChecker checker) {
+        this.inputModelChecker = Objects.requireNonNull(checker, "checker");
+    }
+
+    public com.meguri.core.input.InputModelChecker.StatusProjection inputCheckStatus() {
+        return inputModelChecker.status();
     }
 
     @Autowired(required = false)
@@ -1249,7 +1273,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         }
 
         transition(record, TurnStage.RETRIEVING);
-        return Mono.fromCallable(() -> canonicalPipeline.prepare(
+        return inputModelChecker.check(record.getTurnId(), request.getMessage(), record.getDeadlineAt())
+                .flatMap(inputCheck -> Mono.fromCallable(() -> canonicalPipeline.prepare(
                         record, state, record.getEffectivePersonaState(),
                         record.getRuntimeCapabilities(), attachmentContext(request)))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -1263,9 +1288,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                                     record.getEffectivePersonaState(),
                                                     record.getRuntimeCapabilities(),
                                                     initial, agentBlocks);
+                            prepared = prepared.withCheckedInputText(inputCheck.checkedText());
                             canonicalPipeline.freeze(record, prepared);
                             return prepared;
-                        }).subscribeOn(Schedulers.boundedElastic())))
+                        }).subscribeOn(Schedulers.boundedElastic()))))
                 .flatMap(prepared -> {
                     Map<String, Object> retrievalTrace = new LinkedHashMap<>();
                     retrievalTrace.put("trace_id", prepared.retrieval().traceId());
@@ -1342,17 +1368,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                                     .onErrorResume(error -> weatherConversation.contextFor(""))
                             : weatherConversation.contextFor("");
                     transition(record, TurnStage.GENERATING);
-                    return weather.flatMap(weatherContext ->
-                            generatePrimary(record, prepared.providerRequest())
-                                    .map(generated -> new GeneratedResponse(
-                                            weatherContext.augment(generated.response()),
-                                            generated.nativeStream()))
-                                    .flatMap(generated -> sampleAlternative(
-                                            record, prepared.providerRequest(), generated.response(),
-                                            weatherContext,
-                                            prepared.providerRequest().legacyRecentContext())
-                                            .map(response -> new GeneratedResponse(
-                                                    response, generated.nativeStream()))));
+                    return weather.flatMap(weatherContext -> responseCoordinator.generate(
+                            record, prepared.providerRequest(), weatherContext));
                 })
                 .switchIfEmpty(Mono.error(new IllegalStateException("LLM provider returned no response")))
                 .flatMap(generated -> {
@@ -1727,50 +1744,6 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         return "AGENT_PLANNER_UNAVAILABLE";
     }
 
-    private Mono<GeneratedResponse> generatePrimary(
-            TurnRecord record, ProviderRequest request) {
-        if (!llm.supportsNativeStreaming()) {
-            markLatency(record, TurnLatencyPoint.PROVIDER_REQUEST_SENT);
-            return llm.respond(request)
-                    .doOnNext(ignored -> {
-                        markLatency(record, TurnLatencyPoint.PROVIDER_FIRST_BYTE);
-                        markLatencyMissing(record, TurnLatencyPoint.PROVIDER_FIRST_TOKEN,
-                                TurnLatencyMissingReason.PROVIDER_UNSUPPORTED);
-                    })
-                    .map(response -> new GeneratedResponse(response, false));
-        }
-        AtomicLong index = new AtomicLong();
-        StringBuilder reply = new StringBuilder();
-        markLatency(record, TurnLatencyPoint.PROVIDER_REQUEST_SENT);
-        Flux<String> providerStream = llm.stream(request)
-                .doOnNext(delta -> {
-                    if (delta != null && !delta.isEmpty()) {
-                        markLatency(record, TurnLatencyPoint.PROVIDER_FIRST_BYTE);
-                        markLatency(record, TurnLatencyPoint.PROVIDER_FIRST_TOKEN);
-                    }
-                });
-        Flux<String> visibleStream = UserVisibleReplyStream.sanitize(providerStream);
-        return NativeTextDeltaAggregator.aggregate(visibleStream)
-                .doOnNext(delta -> {
-                    if (record.isCancelRequested()) {
-                        throw new java.util.concurrent.CancellationException("turn cancelled during provider stream");
-                    }
-                    emit(record, "text.delta", Map.of(
-                            "delta", delta,
-                            "index", index.incrementAndGet(),
-                            "native", true));
-                    reply.append(delta);
-                })
-                .then(Mono.defer(() -> {
-                    if (reply.isEmpty()) {
-                        return Mono.error(new IllegalStateException("LLM provider returned an empty stream"));
-                    }
-                    return llm.finalizeStream(reply.toString(), request)
-                            .onErrorReturn(new LlmResponse(reply.toString()))
-                            .map(response -> new GeneratedResponse(response, true));
-                }));
-    }
-
     private Duration laneTimeout(TurnRecord record, Duration maximum) {
         Duration remaining = record.remaining();
         return remaining.compareTo(maximum) < 0 ? remaining : maximum;
@@ -1795,42 +1768,6 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             before.restore(record);
             throw persistenceError;
         }
-    }
-
-    private Mono<LlmResponse> sampleAlternative(
-            TurnRecord record,
-            ProviderRequest providerRequest,
-            LlmResponse first,
-            TurnWeatherContext weather,
-            List<String> durableRecent) {
-        TurnRequest request = providerRequest.turn();
-        if (!trainingFeedback.shouldCompare(request.trainingMode())) {
-            if (request.trainingMode()) {
-                trainingFeedback.registerSingle(record.getTurnId(), request, durableRecent, first,
-                        llm.providerName(), buildId);
-            }
-            return Mono.just(first);
-        }
-        return llm.respondAlternative(providerRequest)
-                .map(weather::augment)
-                .doOnNext(second -> {
-                    Optional<Map<String, Object>> event = trainingFeedback.registerComparison(
-                                record.getTurnId(), request, durableRecent, first, second,
-                                llm.providerName(), buildId);
-                    event.ifPresent(value -> emit(record, "training.candidates.ready", value));
-                    if (event.isEmpty() && request.trainingMode()) {
-                        trainingFeedback.registerSingle(record.getTurnId(), request, durableRecent, first,
-                                llm.providerName(), buildId);
-                    }
-                })
-                .thenReturn(first)
-                .onErrorResume(error -> {
-                    if (request.trainingMode()) {
-                        trainingFeedback.registerSingle(record.getTurnId(), request, durableRecent, first,
-                                llm.providerName(), buildId);
-                    }
-                    return Mono.just(first);
-                });
     }
 
     private static String userMessageId(TurnRecord record) {
@@ -2095,7 +2032,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     public Map<String, Object> submitTrainingFeedback(TrainingFeedbackRequest request) {
-        TrainingFeedbackService.Submission submission = trainingFeedback.submit(request);
+        return trainingFeedbackReceipt(trainingFeedback.submit(request));
+    }
+
+    public Map<String, Object> submitTrainingFeedback(TrainingFeedbackRequest request,
+            com.meguri.core.memory.DesktopMemoryIdentity.Scope scope, String requestId) {
+        return trainingFeedbackReceipt(trainingFeedback.submit(request, scope, requestId));
+    }
+
+    private Map<String, Object> trainingFeedbackReceipt(TrainingFeedbackService.Submission submission) {
         TrainingFeedbackService.Candidate selected = submission.selected();
         if (selected != null) {
             String original = submission.comparison().candidates().getFirst().response().reply();
@@ -2103,12 +2048,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                     submission.comparison().request().userId(),
                     submission.comparison().request().clientId(),
                     submission.comparison().request().sessionId(),
+                    "turn:" + submission.comparison().turnId() + ":assistant",
                     original,
                     selected.response().reply());
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "training_candidate_saved");
         result.put("feedback_id", submission.feedbackId());
+        result.put("turn_id", submission.comparison().turnId());
+        result.put("response", selected == null ? null : selected.response());
         result.put("selected_candidate_id", selected == null ? null : selected.candidateId());
         result.put("feedback_file", trainingFeedback.feedbackFileDisplay());
         return result;
@@ -2702,5 +2650,4 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         }
     }
 
-    private record GeneratedResponse(LlmResponse response, boolean nativeStream) { }
 }

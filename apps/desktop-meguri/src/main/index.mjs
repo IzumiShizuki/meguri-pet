@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Notification, safeStorage, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -9,7 +9,13 @@ import channels from '../shared/channels.cjs'
 import { resolveGeneratedArtifact } from './artifact-policy.mjs'
 import { createClipboardImageAttachment, inspectDroppedAttachment } from './attachment-policy.mjs'
 import { createCharacterPackStore } from './character-pack-store.mjs'
-import { mergeDesktopPreferences, normalizeDesktopPreferences } from './desktop-preferences.mjs'
+import { mergeDesktopPreferences, normalizeDesktopPreferences, privacyPolicyVersion } from './desktop-preferences.mjs'
+import { createDesktopUpdateChecker } from './desktop-updates.mjs'
+import { createDesktopDiagnosticsReport } from './desktop-diagnostics.mjs'
+import { loadDesktopWallpaper } from './desktop-wallpaper.mjs'
+import { createLive2DStore } from './live2d-store.mjs'
+import { createLive2DProtocolHandler } from './live2d-protocol.mjs'
+import { createSpeechResources } from './speech-resources.mjs'
 import { createDesktopTray, recoverDesktopWindow, revealDesktop } from './desktop-tray.mjs'
 import { ensureEverythingIpc } from './everything-runtime.mjs'
 import { cycleOutfitCode, meguriGlobalShortcutBindings, registerMeguriGlobalShortcuts } from './global-shortcuts.mjs'
@@ -24,12 +30,12 @@ import { createReadinessCoordinator } from './readiness.mjs'
 import { createSettingsWindowOptions, resolveSettingsBounds } from './settings-window-options.mjs'
 import { createStudioWindowOptions, resolveStudioBounds } from './studio-window-options.mjs'
 import { createStageWindowOptions } from './stage-window-options.mjs'
+import { createStageLayoutController, resolveInitialStageLayout } from './stage-layout.mjs'
 import { createShizukiTimePrismClient, ShizukiTimePrismError } from './shizuki-timeprism.mjs'
 import { createShizukiReminderRuntime } from './shizuki-reminders.mjs'
 import { createShizukiQqDelivery } from './shizuki-qq-delivery.mjs'
 import { createWindowsVoiceRecognizer } from './voice-recognition.mjs'
 import { showWindowAndFocus, toggleWindowVisibility } from './window-visibility.mjs'
-import { resolveStageBounds } from './window-bounds.mjs'
 import { createPixPinCaptureCoordinator } from './pixpin-capture.mjs'
 import {
   createWindowsClipboardWatcher,
@@ -51,9 +57,36 @@ const execFileAsync = promisify(execFile)
 const startupSettingsScript = join(projectRoot, 'ops/scripts/configure-meguri-desktop-startup.ps1')
 const windowsPowerShell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')
 const windowsTaskScheduler = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/schtasks.exe')
+const desktopVersion = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8')).version
+const updateChecker = createDesktopUpdateChecker({ currentVersion: desktopVersion, openExternal: url => shell.openExternal(url) })
+let startupUpdateChecked = false
+const diagnosticFailures = []
+
+protocol.registerSchemesAsPrivileged([{ scheme: 'meguri-live2d', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
+
+function recordDiagnosticFailure(source, code) {
+  diagnosticFailures.push({ source, code, at: new Date().toISOString() })
+  if (diagnosticFailures.length > 100) diagnosticFailures.shift()
+}
+
+function broadcastUpdateState(state) {
+  for (const window of [stageWindow, settingsWindow])
+    if (window && !window.isDestroyed()) window.webContents.send(channels.updatesChanged, state)
+}
+
+async function maybeCheckStartupUpdate() {
+  const preferences = readPreferences()
+  if (startupUpdateChecked || process.env.MEGURI_DISABLE_UPDATE_CHECK === '1'
+    || preferences.privacy.acceptedPolicyVersion !== privacyPolicyVersion
+    || !preferences.privacy.remoteChatAllowed || !preferences.privacy.checkUpdatesOnStartup) return
+  startupUpdateChecked = true
+  broadcastUpdateState(await updateChecker.check())
+}
 
 let startupWindow
 let stageWindow
+let stageLayoutController
+let stagePresentationSurface = 'ambient'
 let settingsWindow
 let studioWindow
 let desktopTray
@@ -66,6 +99,8 @@ let startupConfigurationStatus = { ok: true, message: '尚未同步 Windows 启�
 
 const readiness = createReadinessCoordinator({ desktopSession })
 let characterPackStore
+let live2dStore
+const speechResources = createSpeechResources({ projectRoot })
 let localAgentRuntime
 let localAgentConfigPath
 let workObservationTimer
@@ -405,7 +440,13 @@ async function requestClipboardImageImport() {
 }
 
 function readPreferences() {
-  return normalizeDesktopPreferences(readDesktopState().desktopPreferences)
+  const preferences = normalizeDesktopPreferences(readDesktopState().desktopPreferences)
+  try {
+    const accent = systemPreferences.getAccentColor()
+    if (/^[a-f0-9]{8}$/i.test(accent)) preferences.systemAccentColor = `#${accent.slice(0, 6)}`
+  }
+  catch { /* Fixed palette remains available when the OS has no accent API. */ }
+  return preferences
 }
 
 function withoutStartupPreferences(patch) {
@@ -541,11 +582,14 @@ function registerInheritedMeguriShortcuts() {
 function updatePreferences(patch) {
   const preferences = mergeDesktopPreferences(readPreferences(), patch)
   writeDesktopState({ desktopPreferences: preferences })
+  stageLayoutController?.fit(preferences, stagePresentationSurface)
   if (stageWindow && !stageWindow.isDestroyed())
     stageWindow.setAlwaysOnTop(preferences.window.alwaysOnTop, preferences.window.alwaysOnTop ? 'floating' : 'normal')
   registerVisibilityShortcut(preferences.shortcuts.toggleVisibility)
-  broadcastPreferences(preferences)
-  return preferences
+  const enriched = readPreferences()
+  broadcastPreferences(enriched)
+  void maybeCheckStartupUpdate()
+  return enriched
 }
 
 function migrateLegacyPreferences(patch) {
@@ -554,6 +598,7 @@ function migrateLegacyPreferences(patch) {
     return readPreferences()
   const preferences = mergeDesktopPreferences(readPreferences(), patch)
   writeDesktopState({ desktopPreferences: preferences, desktopPreferencesLegacyMigrated: true })
+  stageLayoutController?.fit(preferences, stagePresentationSurface)
   broadcastPreferences(preferences)
   return preferences
 }
@@ -601,22 +646,30 @@ function createStageWindow() {
     return Promise.resolve(stageWindow)
   stageReadyForReminders = false
   const displays = screen.getAllDisplays()
-  const saved = readDesktopState().stageBounds
   const preferences = readPreferences()
-  const bounds = resolveStageBounds(saved, displays.map(display => display.workArea), screen.getPrimaryDisplay().workArea)
+  const matchingWorkArea = bounds => screen.getDisplayMatching(bounds).workArea
+  const initial = resolveInitialStageLayout(readDesktopState(), preferences,
+    displays.map(display => display.workArea), screen.getPrimaryDisplay().workArea, matchingWorkArea)
+  const bounds = initial.bounds
   stageWindow = new BrowserWindow(createStageWindowOptions({ bounds, preloadPath, alwaysOnTop: preferences.window.alwaysOnTop }))
+  stagePresentationSurface = 'ambient'
+  stageLayoutController = createStageLayoutController({ window: stageWindow, initial, matchingWorkArea, writeState: writeDesktopState })
+  stageLayoutController.persist()
+  lockWindowNavigation(stageWindow, 'stage')
   stageWindow.setAlwaysOnTop(preferences.window.alwaysOnTop, preferences.window.alwaysOnTop ? 'floating' : 'normal')
   stageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   const saveBounds = () => {
     clearTimeout(boundsSaveTimer)
     boundsSaveTimer = setTimeout(() => {
-      if (stageWindow && !stageWindow.isDestroyed())
-        writeDesktopState({ stageBounds: stageWindow.getBounds() })
+      stageLayoutController?.persist()
     }, 160)
   }
   stageWindow.on('move', saveBounds)
   stageWindow.on('resize', saveBounds)
+  stageWindow.on('close', () => stageLayoutController?.persist())
   stageWindow.on('closed', () => {
+    clearTimeout(boundsSaveTimer)
+    stageLayoutController = undefined
     stageReadyForReminders = false
     stageWindow = undefined
     desktopTray?.refresh()
@@ -645,6 +698,7 @@ function createSettingsWindow() {
   const display = stageBounds ? screen.getDisplayMatching(stageBounds) : screen.getPrimaryDisplay()
   const bounds = resolveSettingsBounds(display.workArea)
   settingsWindow = new BrowserWindow(createSettingsWindowOptions({ bounds, preloadPath }))
+  lockWindowNavigation(settingsWindow, 'settings')
   settingsWindow.on('close', (event) => {
     if (appExiting)
       return
@@ -780,7 +834,8 @@ function lockWindowNavigation(window, view) {
 }
 
 function trustedSettingsRenderer(event) {
-  return trustedRenderer(event) && event.sender === settingsWindow?.webContents
+  const url = event.senderFrame?.url ?? event.sender.getURL()
+  return trustedRenderer(event) && event.sender === settingsWindow?.webContents && isExpectedRendererLocation(url, 'settings')
 }
 
 function trustedStageRenderer(event) {
@@ -812,6 +867,93 @@ function characterPackSuccess(action) {
 }
 
 function installIpc() {
+  const modelStore = () => live2dStore ??= createLive2DStore({ root: join(app.getPath('userData'), 'live2d-models') })
+  const modelResult = async action => {
+    try { return { ok: true, catalog: await action(modelStore()) } }
+    catch (error) {
+      recordDiagnosticFailure('resource', 'RESOURCE_FAILED')
+      return { ok: false, error: error instanceof Error ? error.message : 'Live2D 资源操作失败。' }
+    }
+  }
+  protocol.handle('meguri-live2d', createLive2DProtocolHandler({
+    store: { asset: (id, path) => modelStore().asset(id, path) },
+    allowedOrigins: rendererDevelopmentUrl ? [new URL(rendererDevelopmentUrl).origin] : [],
+  }))
+  ipcMain.handle(channels.live2dCatalog, event => trustedSettingsRenderer(event) ? modelStore().catalog() : { version: 1, models: [] })
+  ipcMain.handle(channels.live2dActive, event => trustedStageRenderer(event) || trustedSettingsRenderer(event) ? modelStore().active() : null)
+  for (const [channel, archive] of [[channels.live2dImportDirectory, false], [channels.live2dImportArchive, true]]) {
+    ipcMain.handle(channel, async event => {
+      if (!trustedSettingsRenderer(event)) return { ok: false, error: '请从设置中导入 Live2D 模型。' }
+      const selected = await dialog.showOpenDialog(settingsWindow, {
+        title: archive ? '选择 Live2D ZIP' : '选择 Live2D 模型目录',
+        properties: [archive ? 'openFile' : 'openDirectory'],
+        ...(archive ? { filters: [{ name: 'Live2D 模型 ZIP', extensions: ['zip'] }] } : {}),
+      })
+      if (selected.canceled || !selected.filePaths[0]) return { ok: false, error: '已取消导入。' }
+      return modelResult(store => archive ? store.importArchive(selected.filePaths[0]) : store.importDirectory(selected.filePaths[0]))
+    })
+  }
+  ipcMain.handle(channels.live2dActivate, async (event, id) => {
+    if (!trustedSettingsRenderer(event)) return { ok: false, error: '请从设置中启用 Live2D 模型。' }
+    const result = await modelResult(store => store.activate(id))
+    if (result.ok) updatePreferences({ character: { renderer: 'live2d', live2dModelId: id } })
+    return result
+  })
+  ipcMain.handle(channels.live2dRemove, async (event, id) => {
+    if (!trustedSettingsRenderer(event)) return { ok: false, error: '请从设置中删除 Live2D 模型。' }
+    const result = await modelResult(store => store.remove(id))
+    if (result.ok && readPreferences().character.live2dModelId === id)
+      updatePreferences({ character: { renderer: 'png', live2dModelId: '' } })
+    return result
+  })
+  ipcMain.handle(channels.speechResourcesList, event => trustedSettingsRenderer(event) ? speechResources.list() : { engine: 'GPT-SoVITS', ready: false, profiles: [] })
+  ipcMain.handle(channels.speechResourcesImport, async event => {
+    if (!trustedSettingsRenderer(event)) return { ok: false, error: '请从设置中导入语音资源。' }
+    const selected = await dialog.showOpenDialog(settingsWindow, { title: '选择 GPT-SoVITS 语音包目录', properties: ['openDirectory'] })
+    if (selected.canceled || !selected.filePaths[0]) return { ok: false, error: '已取消导入。' }
+    return speechResources.importPackage(selected.filePaths[0])
+  })
+  const speechMutation = async action => {
+    try { return await action() }
+    catch { recordDiagnosticFailure('voice', 'VOICE_FAILED'); return { ok: false, error: '语音资源操作失败，请检查本地 TTS 服务。' } }
+  }
+  ipcMain.handle(channels.speechResourcesDownload, (event, url) => trustedSettingsRenderer(event)
+    ? speechMutation(() => speechResources.download(url)) : { ok: false, error: '语音资源请求不受信任。' })
+  ipcMain.handle(channels.speechResourcesActivate, (event, id) => trustedSettingsRenderer(event)
+    ? speechMutation(() => speechResources.activate(id)) : { ok: false, error: '语音资源请求不受信任。' })
+  ipcMain.handle(channels.speechResourcesRemove, (event, id) => trustedSettingsRenderer(event)
+    ? speechMutation(() => speechResources.remove(id)) : { ok: false, error: '语音资源请求不受信任。' })
+  ipcMain.handle(channels.wallpaperSelect, async event => {
+    if (!trustedSettingsRenderer(event)) return { ok: false, error: '壁纸只能从设置窗口选择。' }
+    const selected = await dialog.showOpenDialog(settingsWindow, { title: '选择聊天壁纸', properties: ['openFile'], filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] })
+    if (selected.canceled || !selected.filePaths[0]) return { ok: false, error: '已取消壁纸选择。' }
+    const result = loadDesktopWallpaper(selected.filePaths[0], bytes => {
+      const image = nativeImage.createFromBuffer(bytes)
+      return image.isEmpty() ? undefined : image.getSize()
+    })
+    if (!result.ok) recordDiagnosticFailure('resource', 'RESOURCE_FAILED')
+    return result
+  })
+  ipcMain.handle(channels.diagnosticsExport, async event => {
+    if (!trustedSettingsRenderer(event)) return { ok: false, error: '请在设置中导出诊断信息。' }
+    try {
+      const chosen = await dialog.showSaveDialog(settingsWindow, { title: '导出 Meguri 诊断信息', defaultPath: `meguri-diagnostics-${new Date().toISOString().slice(0, 10)}.json`, filters: [{ name: '诊断信息', extensions: ['json'] }] })
+      if (chosen.canceled || !chosen.filePath) return { ok: false, error: '已取消导出。' }
+      const report = createDesktopDiagnosticsReport({ appVersion: desktopVersion, runtimeVersions: process.versions, platform: process.platform, readiness: readiness.current(), preferences: readPreferences(), failures: diagnosticFailures })
+      writeFileSync(chosen.filePath, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+      return { ok: true, path: chosen.filePath }
+    }
+    catch { recordDiagnosticFailure('runtime', 'UNKNOWN'); return { ok: false, error: '诊断信息导出失败，请更换保存位置。' } }
+  })
+  ipcMain.handle(channels.updatesGet, event => trustedStageRenderer(event) || trustedSettingsRenderer(event) ? updateChecker.get() : undefined)
+  ipcMain.handle(channels.updatesCheck, async event => {
+    if (!trustedSettingsRenderer(event)) return undefined
+    const state = await updateChecker.check()
+    broadcastUpdateState(state)
+    if (state.status === 'unavailable' || state.status === 'rate_limited') recordDiagnosticFailure('updates', 'UPDATE_FAILED')
+    return state
+  })
+  ipcMain.handle(channels.updatesOpenRelease, event => trustedSettingsRenderer(event) ? updateChecker.openRelease() : { ok: false, error: '请在更新设置中打开发布页。' })
   ipcMain.handle(channels.readinessGet, event => trustedRenderer(event) ? readiness.current() : undefined)
   ipcMain.handle(channels.readinessRetry, async event => {
     if (!trustedRenderer(event))
@@ -944,7 +1086,7 @@ function installIpc() {
         ? { state: 'completed', text: result.text }
         : result.code === 'cancelled'
           ? { state: 'cancelled' }
-          : { state: 'error', error: result.error })
+          : { state: 'error', error: result.error, stage: result.stage })
     }
     return result
   })
@@ -1139,6 +1281,13 @@ function installIpc() {
     const bounds = stageWindow.getBounds()
     return { x: cursor.x - bounds.x, y: cursor.y - bounds.y }
   })
+  ipcMain.handle(channels.windowSetPresentationSurface, (event, surface) => {
+    if (!trustedStageRenderer(event) || !['ambient', 'ambient-panel', 'galgame'].includes(surface))
+      return { ok: false, error: '不支持的舞台切换。' }
+    stagePresentationSurface = surface
+    stageLayoutController?.fit(readPreferences(), surface)
+    return { ok: true }
+  })
   ipcMain.handle(channels.windowOpenSettings, async event => {
     if (trustedRenderer(event))
       await openSettingsWindow()
@@ -1315,6 +1464,8 @@ async function start() {
     shizukiReminders().start()
   registerVisibilityShortcut(readPreferences().shortcuts.toggleVisibility)
   registerInheritedMeguriShortcuts()
+  systemPreferences.on('accent-color-changed', () => broadcastPreferences(readPreferences()))
+  void maybeCheckStartupUpdate()
   const everything = await ensureEverythingIpc()
   if (!everything.ready)
     console.warn(everything.detail)
