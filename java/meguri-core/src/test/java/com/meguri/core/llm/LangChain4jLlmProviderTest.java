@@ -689,6 +689,43 @@ class LangChain4jLlmProviderTest {
                 "AGENT");
     }
 
+    @Test
+    void canonicalCurrentInputIsNotCountedAsAnEarlierRepeat() {
+        AtomicReference<ChatRequest> captured = new AtomicReference<>();
+        ChatModel model = new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                captured.set(request);
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"reply":"answer","expression_tag":"neutral","expression_intensity":"low",
+                         "voice_style":"neutral","memory_candidates":[]}
+                        """)).build();
+            }
+        };
+        LangChain4jLlmProvider provider = new LangChain4jLlmProvider(model, new ObjectMapper(), "system");
+        ProviderRequest base = typedRequest("search Python venv", "summary", "skill", "external", "trace", Instant.now().plusSeconds(60));
+        for (List<String> history : List.of(
+                List.of("user: project notes", "assistant: organize the notes", "user: search Python venv"),
+                List.of("user: search Python venv"),
+                List.of("user: search Python venv", "assistant: previous answer", "user: search Python venv"))) {
+            ContextBundle context = new ContextBundle("s", "current", "topic",
+                    history.stream().map(line -> new ContextBundle.Block(ContextBundle.BlockType.RECENT_RAW,
+                            List.of(), ContextBundle.Trust.USER, 8, line)).toList(),
+                    base.context().budget(), List.of(), "test");
+            ProviderRequest request = new ProviderRequest(base.turn(), base.runtimeState(), base.persona(), context,
+                    new PromptPolicyComposer().compose(base.persona(), context), base.knowledgeSnapshotId(),
+                    base.retrievalTraceId(), base.contextTraceId(), base.capabilitySnapshotId(),
+                    base.capabilities(), base.deadline(), base.traceId());
+            StepVerifier.create(provider.respond(request)).expectNextCount(1).verifyComplete();
+            String prompt = captured.get().messages().get(1).toString();
+            if (history.contains("assistant: previous answer")) {
+                assertTrue(prompt.contains("consecutive_identical_user_message_count=2"));
+                assertTrue(!prompt.contains("consecutive_identical_user_message_count=3"));
+            }
+            else assertTrue(!prompt.contains("conversation_dynamics"), "A fresh question is not repeated input");
+        }
+    }
+
     private static ProviderRequest typedRequest(
             String userMessage,
             String contextContent,

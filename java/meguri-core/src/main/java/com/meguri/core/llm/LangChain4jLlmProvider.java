@@ -1144,7 +1144,7 @@ public final class LangChain4jLlmProvider implements LlmProvider {
         context.put("system_web_retrieval", webRetrievalContext(request.webRetrievalSummary()));
         context.put("deadline", request.deadline().toString());
         ConversationDynamics dynamics = conversationDynamics(
-                request.turn().getMessage(), request.legacyRecentContext());
+                request.turn().getMessage(), request.legacyRecentContext(), true);
         if (dynamics.repeatCount() > 1) {
             context.put("conversation_dynamics", Map.of(
                     "signal", "consecutive_identical_user_message_count=" + dynamics.repeatCount(),
@@ -1260,8 +1260,15 @@ public final class LangChain4jLlmProvider implements LlmProvider {
     private record ConversationDynamics(int repeatCount, String previousAssistantReply) { }
 
     private ConversationDynamics conversationDynamics(String userMessage, List<String> recentContext) {
+        return conversationDynamics(userMessage, recentContext, false);
+    }
+
+    private ConversationDynamics conversationDynamics(String userMessage, List<String> recentContext,
+                                                     boolean currentInputIncluded) {
         String normalized = userMessage == null ? "" : userMessage.trim();
-        int repeatCount = 1;
+        // Canonical context already contains the current user node. Legacy
+        // callers pass only prior history and need the implicit current input.
+        int repeatCount = currentInputIncluded ? 0 : 1;
         String previousAssistant = "";
         List<String> context = recentContext == null ? List.of() : recentContext;
         for (int index = context.size() - 1; index >= 0; index--) {

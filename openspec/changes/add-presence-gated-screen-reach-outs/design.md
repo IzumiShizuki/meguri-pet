@@ -29,4 +29,6 @@ The native Vue desktop owns idle reach-outs; the older AIRI steward worktree is 
 
 ## Migration Plan
 
+Live acceptance exposed an existing provider-framing defect: canonical recent context already includes the current user message, while the legacy repetition counter assumes history excludes it. Counting it again labels a new topic as repeated input and can make a web answer continue the previous topic. Keep legacy counting compatible and count the canonical current input exactly once; cover both fresh-topic and actual-repeat histories before redeployment.
+
 No schema migration or new dependencies. Preserve deployed artifacts/configuration without logging secrets. Commit the tested desktop integration baseline on master, implement/test this change there, and fast-forward/merge the requested branch to master. Build Java and renderer; restart the selected local memory bridge, Core, gateway and desktop through established helpers, enable the user-authorized screen switch, and verify read-only status plus isolated test sessions. Keep rollback assets and report active PIDs/hashes. Do not mutate real memory facts for acceptance.

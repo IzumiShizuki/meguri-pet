@@ -22,10 +22,14 @@ No new dependencies, key-content hooks, image persistence, image upload or synth
 ## Completed checks
 
 - Desktop: 66 test files / 483 tests passed; vue-tsc and Vite production build passed. Existing chunk-size notices remain.
-- Core: 27 targeted tests passed across reach-out service/controller/provider, memory corrections and application; package built with the existing Java 21 runtime.
+- Core: 50 targeted tests passed across reach-out service/controller/provider, canonical provider framing, memory corrections and application; package built with the existing Java 21 runtime.
 - Gateway: 13 tests passed.
-- Python native-memory/bridge regression passed (all collected cases); only existing Starlette/httpx deprecation warning.
+- Python native-memory/bridge regression: 135 cases passed; only existing Starlette/httpx deprecation warning.
 - Native Electron presence and Windows OCR generated-text fixture passed; expiry captures = 0, real user screen captures during fixture = 0.
 - Preload smoke returned ok with observation exposed only to the stage.
 - OpenSpec strict validation passed.
 - Fourteen unrelated tracked work files match pre-change fingerprints; source credential scan and final staged checks are required before committing.
+
+## Live acceptance follow-up
+
+The initial deployment passed health, memory capabilities, expired activity, stale/oversized screen rejection and a real-model draft with synthetic screen text. An additional ordinary-chat → web-search sequence exposed a pre-existing repetition-counter defect. Read-only inspection of the isolated session confirmed the latest request and canonical context were correct; a new deterministic provider test failed because canonical history counted the current input twice. Canonical counting now starts at zero while legacy prior-history counting stays at one. The fresh-topic/single-message/genuine-repeat regression and all 50 targeted Core tests pass. Live multi-turn web acceptance must be repeated on the corrected deployment.

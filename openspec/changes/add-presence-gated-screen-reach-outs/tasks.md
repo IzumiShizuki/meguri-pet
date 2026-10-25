@@ -20,3 +20,4 @@
 - [ ] 4.2 Commit master implementation and merge master into codex/companion-memory-corrections; verify ancestry and unrelated-file fingerprints.
 - [ ] 4.3 Back up runtime artifacts/configuration and deploy matching local bridge/Core/gateway/desktop; enable the explicitly authorized screen option.
 - [ ] 4.4 Verify deployed health, native activity, isolated OCR/model flow and inactivity suppression; document versions, evidence and rollback.
+- [ ] 4.5 Correct the canonical provider's current-input double count found during live web acceptance, add a regression, merge master again and deploy the corrected build.
