@@ -62,6 +62,7 @@ export function playSpeech(input: {
   requestId?: string
   manual?: boolean
   onSpeaking?: (speaking: boolean) => void
+  canStart?: () => boolean | Promise<boolean>
 }): Promise<void> {
   cancelSpeech()
   speechPlaybackState.error = ''
@@ -89,15 +90,25 @@ export function playSpeech(input: {
   }
   finishPlayback = finishCurrentPlayback
 
+  async function stillAllowed() {
+    if (current !== generation) return false
+    if (input.canStart && !await input.canStart()) {
+      if (current === generation) cancelSpeech()
+      return false
+    }
+    return current === generation
+  }
+
   speechPlaybackTask = (async () => {
     try {
+      if (!await stillAllowed()) return
       const response = await fetch('http://127.0.0.1:9880/tts/synthesize', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
         body: JSON.stringify({ text: input.text.slice(0, 1000), voice_style: input.voiceStyle, expression_intensity: input.intensity, request_id: input.requestId ?? `desktop-${crypto.randomUUID()}`, speed_factor: input.preferences.speed }),
       })
       if (!response.ok) throw new Error('本地语音生成失败；文字回复可继续查看。')
       const blob = await response.blob()
-      if (current !== generation) return
+      if (!await stillAllowed()) return
       objectUrl = URL.createObjectURL(blob)
       const nextAudio = new Audio(objectUrl)
       audio = nextAudio
@@ -131,7 +142,7 @@ export function playSpeech(input: {
         if (context === requestContext) context = undefined
         if (requestContext) void requestContext.close().catch(() => {})
       }
-      if (current !== generation) return
+      if (!await stillAllowed()) return
       const finish = () => { if (current === generation) cancelSpeech() }
       nextAudio.addEventListener('ended', finish, { once: true })
       nextAudio.addEventListener('error', () => {

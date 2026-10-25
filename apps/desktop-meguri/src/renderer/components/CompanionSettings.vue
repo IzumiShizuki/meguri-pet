@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import type { CompanionActivityStatus } from '../../shared/companion-contract'
+import { remoteChatConsented } from '../../shared/experience-contract'
 
 import { useCompanionDirectorStore } from '../stores/companion-director'
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
@@ -10,6 +12,20 @@ const text = ref('')
 const dueAt = ref('')
 const feedback = ref('')
 const saving = ref(false)
+const activityStatus = ref<CompanionActivityStatus>()
+let disposeActivity: (() => void) | undefined
+const presenceText = computed(() => {
+  const presence = activityStatus.value?.presence
+  if (!presence) return '活动检测尚未就绪：主动搭话与屏幕观察暂停。'
+  if (presence.active) return '最近 10 分钟有鼠标或键盘操作，允许按冷却规则尝试主动搭话。'
+  const reasons: Record<string, string> = { locked: '电脑已锁定', suspended: '电脑已休眠', idle: '超过 10 分钟没有鼠标或键盘操作', awaiting_input: '等待解锁或恢复后的新操作', unknown: '无法读取系统活动状态' }
+  return `${reasons[presence.reason] ?? '活动检测不可用'}：主动搭话与屏幕观察暂停。`
+})
+const observationText = computed(() => {
+  if (!preferences.value.companion.screenObservationEnabled) return '屏幕观察已关闭。'
+  const states: Record<string, string> = { idle: '等待符合条件的搭话时机', observing: '正在本机识别前台窗口文字', observed: '已完成一次本机文字识别', excluded: '当前窗口或文字已跳过', unavailable: '本机文字识别暂不可用', paused: '观察已暂停' }
+  return states[activityStatus.value?.observation.state ?? 'idle'] ?? '等待符合条件的搭话时机'
+})
 const commitments = computed(() => director.commitments)
 
 function localDateTimeValue(date: Date) {
@@ -54,7 +70,10 @@ async function addCommitment() {
 
 onMounted(() => {
   dueAt.value = localDateTimeValue(new Date(Date.now() + 60 * 60 * 1000))
+  void window.meguriDesktop?.companionActivity?.status().then(status => { activityStatus.value = status }).catch(() => {})
+  disposeActivity = window.meguriDesktop?.companionActivity?.onChanged(status => { activityStatus.value = status })
 })
+onUnmounted(() => disposeActivity?.())
 </script>
 
 <template>
@@ -69,6 +88,14 @@ onMounted(() => {
   </div>
 
   <p class="settings-catalog-note">最近聊过天后，低、普通、高分别至少空闲 120、45、15 分钟才会尝试搭话；未回复时不会连续催聊，每天最多 3 次。22:00–08:00、专注或语音通话期间保持安静。需允许 AI 对话并保持桌面运行。</p>
+
+  <p class="settings-catalog-note">仅在最近 10 分钟有系统鼠标或键盘操作时触发。你在其他软件里操作不会重置聊天冷却；电脑未休眠但人已离开，也会停止主动搭话、主动新闻播报和屏幕观察。你明确设置的提醒照常保留。</p>
+  <p class="settings-catalog-note" role="status">{{ presenceText }}</p>
+  <label class="setting-row">
+    <span><strong>允许主动观察屏幕文字</strong><small>仅在搭话条件满足时，本机识别当前前台窗口的可见文字，最多 1000 字发给已配置的 AI。截图不保存、不上传；可随时关闭。</small></span>
+    <input type="checkbox" :disabled="!remoteChatConsented(preferences.value.privacy)" :checked="preferences.value.companion.screenObservationEnabled" @change="preferences.updateCompanion({ screenObservationEnabled: ($event.target as HTMLInputElement).checked })">
+  </label>
+  <p class="settings-catalog-note" role="status">{{ observationText }}</p>
 
   <label class="setting-row">
     <span><strong>专注模式</strong><small>打开后暂缓新闻、提醒和跟进；对话回复照常显示。</small></span>
@@ -117,6 +144,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.settings-catalog-note { color: var(--dark-text-secondary, #5f6269); font-size: 13px; line-height: 1.65; }
 .companion-commitments { display: grid; gap: 12px; margin-top: 18px; }
 .companion-commitment-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .companion-commitment-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; border: 1px solid var(--border-subtle, rgba(120, 130, 145, .2)); border-radius: 12px; }

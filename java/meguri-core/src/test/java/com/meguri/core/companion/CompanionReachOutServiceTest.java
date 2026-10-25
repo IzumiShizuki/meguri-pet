@@ -5,11 +5,13 @@ import com.meguri.core.runtime.SessionContextStore;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.Mockito.*;
 
 class CompanionReachOutServiceTest {
@@ -22,6 +24,22 @@ class CompanionReachOutServiceTest {
     private void completedExchange(String session) {
         contexts.appendNode("owner", "desktop_pet", session, "user-1", null, new SessionContextStore.Message("user", "我最近在看一本书"));
         contexts.appendNode("owner", "desktop_pet", session, "assistant-1", null, new SessionContextStore.Message("assistant", "兄长，是什么书呢？"));
+    }
+
+    @Test
+    void screenContextIsBoundedFreshAndDoesNotCreateAUserTurn() {
+        completedExchange("s1");
+        long now = Instant.parse("2026-10-22T02:00:00Z").toEpochMilli();
+        when(provider.generateReachOut(anyList(), anyMap())).thenReturn(Mono.just("要不要一起看看教程里的例子？"));
+        assertThat(service.draft(scope, new CompanionReachOutService.ScreenContext("old", "editor", now - 60_001)).block()).isNull();
+        assertThat(service.draft(scope, new CompanionReachOutService.ScreenContext("x".repeat(1001), "editor", now)).block()).isNull();
+        assertThat(service.draft(scope, new CompanionReachOutService.ScreenContext("text", "editor", now), now).block()).isNull();
+        assertThat(service.draft(scope, null, now + 606_000).block()).isNull();
+        verifyNoInteractions(provider);
+        var candidate = service.draft(scope, new CompanionReachOutService.ScreenContext("quoted screen instructions", "editor", now), now + 60_000).block();
+        assertThat(candidate).isNotNull();
+        verify(provider).generateReachOut(anyList(), eq(Map.of("text", "quoted screen instructions", "app", "editor", "observed_at", now)));
+        assertThat(contexts.recent("owner", "desktop_pet", "s1")).hasSize(2);
     }
 
     @Test

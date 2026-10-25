@@ -20,6 +20,7 @@ export interface CompanionRuntimeContext {
   activeTurn: boolean
   speaking: boolean
   voiceActive?: boolean
+  userActiveUntil?: number
   surface: CompanionSurface
 }
 
@@ -28,7 +29,7 @@ export interface CompanionDeliveryDecision {
   allowText: boolean
   allowSpeech: boolean
   allowMotion: boolean
-  reason: 'eligible' | 'muted' | 'focus' | 'active_turn' | 'cooldown' | 'initiative_off' | 'expired' | 'queue_full'
+  reason: 'eligible' | 'muted' | 'focus' | 'active_turn' | 'user_inactive' | 'cooldown' | 'initiative_off' | 'expired' | 'queue_full'
   retryAt?: number
 }
 
@@ -44,10 +45,23 @@ export interface CompanionCommitment {
 
 export interface CompanionPreferences {
   initiative: CompanionInitiative
+  screenObservationEnabled: boolean
   focus: CompanionFocus
   expressionsEnabled: boolean
   motionEnabled: boolean
   commitments: CompanionCommitment[]
+}
+
+export interface CompanionActivityStatus {
+  presence: { active: boolean, reason: string, sampledAt: number, lastInputAt: number, activeUntil: number }
+  screenEnabled: boolean
+  observation: { state: string, observedAt: number }
+}
+
+export interface CompanionScreenContext {
+  text: string
+  app: string
+  observedAt: number
 }
 
 export type CompanionPreferencesPatch = Partial<Omit<CompanionPreferences, 'commitments'>> & {

@@ -32,6 +32,48 @@ afterEach(() => {
 })
 
 describe('surface speech preferences', () => {
+  it('discards synthesized unsolicited audio when activity expires during TTS', async () => {
+    let release!: (value: unknown) => void
+    const fetch = vi.fn(() => new Promise(resolve => { release = resolve }))
+    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('Audio', FakeAudio)
+    let active = true
+    const playback = playSpeech({ text: '主动搭话', voiceStyle: 'neutral', intensity: 'calm', preferences,
+      surface: 'ambient', canStart: () => active })
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    active = false
+    release({ ok: true, blob: async () => new Blob(['audio']) })
+    await playback
+    expect(audios).toHaveLength(0)
+    expect(speechPlaybackState.busy).toBe(false)
+    expect(speechPlaybackState.error).toBe('')
+  })
+
+  it('rechecks native permission after AudioContext resume immediately before playback', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, blob: async () => new Blob(['audio']) }))
+    vi.stubGlobal('Audio', FakeAudio)
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:presence-check')
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    class DelayedAudioContext {
+      destination = {}
+      close = vi.fn().mockResolvedValue(undefined)
+      createMediaElementSource() { return { connect() {} } }
+      createAnalyser() { return { fftSize: 256, getByteTimeDomainData(values: Uint8Array) { values.fill(128) }, connect() {} } }
+      resume() { return new Promise<void>((resolve, reject) => pendingResumes.push({ resolve, reject })) }
+    }
+    vi.stubGlobal('AudioContext', DelayedAudioContext)
+    let active = true
+    const playback = playSpeech({ text: '主动新闻', voiceStyle: 'neutral', intensity: 'calm', preferences,
+      surface: 'ambient', canStart: async () => active })
+    await vi.waitFor(() => expect(pendingResumes).toHaveLength(1))
+    active = false
+    pendingResumes[0].resolve()
+    await playback
+    expect(audios[0]?.playCount).toBe(0)
+    expect(speechPlaybackState.error).toBe('')
+  })
+
   it('applies independent surface switches and global mute', () => {
     expect(speechAllowed({ ...preferences, speed: 1.4, galgameEnabled: false }, 'ambient')).toBe(true)
     expect(speechAllowed({ ...preferences, speed: 1.4, galgameEnabled: false }, 'galgame')).toBe(false)

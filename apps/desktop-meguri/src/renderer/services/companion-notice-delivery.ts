@@ -3,6 +3,8 @@ import type { CompanionDeliveryDecision, CompanionNoticeInput } from '../../shar
 import { useCompanionDirectorStore } from '../stores/companion-director'
 import { useConversationStore } from '../stores/conversation'
 import { claimPlaybackEffect, playbackReceiptsForSession, releaseUnstartedPlaybackEffect, updatePlaybackReceipt } from './playback-ledger'
+import { remoteChatConsented } from '../../shared/experience-contract'
+import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
 
 type ReminderPresenter = (notice: CompanionNoticeInput) => boolean
 let reminderPresenter: ReminderPresenter | undefined
@@ -57,7 +59,17 @@ export async function deliverCompanionNotice(notice: CompanionNoticeInput, decis
         accepted = conversation.addCompanionNoticeMessage(notice.id, notice.text, notice.kind === 'news')
     }
     if (currentDecision.allowSpeech && notice.reminder?.mainAccount !== false) {
-      accepted = await conversation.playNoticeSpeech(notice.text, 'neutral', 'medium', notice.id) || accepted
+      const canStart = notice.kind === 'news' || notice.kind === 'reach_out' ? async () => {
+        try {
+          const status = await window.meguriDesktop?.companionActivity?.status()
+          const preferences = useDesktopPreferencesStore().value
+          return Boolean(status?.presence.active && status.presence.activeUntil > Date.now()
+            && sessionId === conversation.sessionId && remoteChatConsented(preferences.privacy)
+            && preferences.companion.initiative !== 'off' && preferences.companion.focus === 'available')
+        }
+        catch { return false }
+      } : undefined
+      accepted = await conversation.playNoticeSpeech(notice.text, 'neutral', 'medium', notice.id, canStart) || accepted
     }
     if (!accepted) {
       await updatePlaybackReceipt(identity, 'skipped')

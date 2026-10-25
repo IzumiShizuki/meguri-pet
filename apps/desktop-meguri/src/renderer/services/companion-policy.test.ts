@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { CompanionNoticeInput, CompanionRuntimeContext } from '../../shared/companion-contract'
 import { decideCompanionNotice, getCompanionLimits } from './companion-policy'
 
-const available: CompanionRuntimeContext = { focus: 'available', activeTurn: false, speaking: false, surface: 'ambient' }
+const available: CompanionRuntimeContext = { focus: 'available', activeTurn: false, speaking: false, surface: 'ambient', userActiveUntil: Number.MAX_SAFE_INTEGER }
 const news: CompanionNoticeInput = { id: 'news:1', kind: 'news', text: '有一条消息', createdAt: 1_000, expiresAt: 100_000 }
 
 function decide(overrides: Record<string, unknown> = {}) {
@@ -24,6 +24,20 @@ function decide(overrides: Record<string, unknown> = {}) {
 }
 
 describe('companion attention policy', () => {
+  it('defers unsolicited notices at the exact native expiry and fails closed without a sample', () => {
+    for (const userActiveUntil of [undefined, 0, 2_000, Number.NaN]) {
+      for (const kind of ['news', 'reach_out'] as const)
+        expect(decide({ notice: { ...news, kind }, context: { ...available, userActiveUntil } }))
+          .toMatchObject({ action: 'defer', reason: 'user_inactive', allowText: false, allowSpeech: false })
+    }
+    expect(decide({ context: { ...available, userActiveUntil: 2_001 } }).action).toBe('deliver')
+  })
+
+  it('retains explicitly requested reminders and commitments while the owner is away', () => {
+    for (const kind of ['reminder', 'commitment_followup'] as const)
+      expect(decide({ notice: { ...news, kind }, context: { ...available, userActiveUntil: 0 } }).action).toBe('deliver')
+  })
+
   it('defers while focused or while a turn/playback is active', () => {
     expect(decide({ context: { ...available, focus: 'focused' } })).toMatchObject({ action: 'defer', reason: 'focus', allowText: false, allowMotion: false })
     expect(decide({ context: { ...available, activeTurn: true } })).toMatchObject({ action: 'defer', reason: 'active_turn' })

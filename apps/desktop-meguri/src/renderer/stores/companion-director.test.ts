@@ -11,6 +11,7 @@ const notice = (id: string) => ({ id, kind: 'reminder' as const, text: `提醒 $
 describe('companion director', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    useCompanionDirectorStore().context.userActiveUntil = Number.MAX_SAFE_INTEGER
   })
 
   it('drains focused reminders one at a time and rechecks queue capacity without dropping existing items', async () => {
@@ -197,13 +198,13 @@ describe('companion director', () => {
         preferences.value.companion = { ...preferences.value.companion, ...patch.companion }
       return preferences.value
     }
-    await preferences.updateCompanion({ initiative: 'high', motionEnabled: false })
+    await preferences.updateCompanion({ initiative: 'high', motionEnabled: false, screenObservationEnabled: true })
     preferences.value.companion.commitments.push({
       id: 'local:changed', text: 'new commitment', dueAt: 2_000, createdAt: 1_000, status: 'completed',
     })
 
     await preferences.undoCompanionPreferences()
-    expect(preferences.value.companion).toMatchObject({ initiative: 'normal', focus: 'available', motionEnabled: true })
+    expect(preferences.value.companion).toMatchObject({ initiative: 'normal', focus: 'available', motionEnabled: true, screenObservationEnabled: false })
     expect(preferences.value.companion.commitments).toHaveLength(1)
     expect(preferences.value.companion.commitments[0].status).toBe('completed')
   })

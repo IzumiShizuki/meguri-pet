@@ -28,6 +28,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(start)
   state = { userId: 'local-airi-user', sessionId: 'session-1', initiative: 'high', allowed: true,
+    userActiveUntil: Number.MAX_SAFE_INTEGER,
     available: true, visible: true, editing: false, lastDeliveredAt: 0,
     messages: [{ id: 'user-1', role: 'user', createdAt: start, status: 'complete' },
       { id: 'assistant-1', role: 'meguri', createdAt: start, status: 'complete', turnId: 'turn-1' }] }
@@ -39,6 +40,31 @@ afterEach(() => {
 })
 
 describe('idle companion reach-outs', () => {
+  it('blocks absent or expired OS activity independently of the pet idle interval', async () => {
+    const { scheduler, options } = setup()
+    vi.setSystemTime(start + 16 * minute)
+    state.userActiveUntil = 0
+    await scheduler.tick()
+    state.userActiveUntil = Date.now()
+    await scheduler.tick()
+    expect(options.generate).not.toHaveBeenCalled()
+    state.userActiveUntil = Date.now() + 10 * minute
+    await scheduler.tick()
+    expect(options.generate).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks native presence before generation and after the model returns', async () => {
+    const refreshPresence = vi.fn(async () => {})
+    const { scheduler, options } = setup({ refreshPresence, generate: vi.fn(async () => {
+      state.userActiveUntil = Date.now()
+      return { id: 'reachout:late', text: 'discard this', createdAt: Date.now(), expiresAt: Date.now() + minute }
+    }) })
+    vi.setSystemTime(start + 16 * minute)
+    await scheduler.tick()
+    expect(refreshPresence).toHaveBeenCalledTimes(2)
+    expect(options.deliver).not.toHaveBeenCalled()
+    expect(options.acknowledge).not.toHaveBeenCalled()
+  })
   it.each([['low', 120], ['normal', 45], ['high', 15]] as const)('waits for %s idle time and acknowledges only the displayed message', async (initiative, wait) => {
     state.initiative = initiative
     const { scheduler, options } = setup()

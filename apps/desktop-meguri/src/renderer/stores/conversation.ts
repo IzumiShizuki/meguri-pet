@@ -565,7 +565,8 @@ const conversationDefinition = defineStore('conversation', {
       if (sequence === this.speechRequestSequence)
         presentation.setSpeaking(false)
     },
-    async playNoticeSpeech(text: string, voiceStyle: string, intensity: string, noticeId: string): Promise<boolean> {
+    async playNoticeSpeech(text: string, voiceStyle: string, intensity: string, noticeId: string,
+      canStart?: () => boolean | Promise<boolean>): Promise<boolean> {
       const sessionId = this.sessionId
       const identity = { sessionId, effectId: noticeId, kind: 'speech' as const }
       if (!await claimPlaybackEffect(identity)) return false
@@ -586,6 +587,7 @@ const conversationDefinition = defineStore('conversation', {
         try {
           await synthesizeSpeech({ text, voiceStyle, intensity, preferences: preferences.value.speech,
             surface: surface.surface, requestId: `desktop-${sessionId}-${noticeId}`,
+            canStart,
             onSpeaking: speaking => { if (sequence === this.speechRequestSequence) presentation.setSpeaking(speaking) } })
           await updatePlaybackReceipt(identity, sequence === this.speechRequestSequence ? 'completed' : 'interrupted')
         }

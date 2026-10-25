@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, protocol, safeStorage, screen, shell, systemPreferences, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, nativeImage, Notification, powerMonitor, protocol, safeStorage, screen, shell, systemPreferences, Tray } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -10,6 +10,7 @@ import { resolveGeneratedArtifact } from './artifact-policy.mjs'
 import { createClipboardImageAttachment, inspectDroppedAttachment } from './attachment-policy.mjs'
 import { createCharacterPackStore } from './character-pack-store.mjs'
 import { mergeDesktopPreferences, normalizeDesktopPreferences, privacyPolicyVersion } from './desktop-preferences.mjs'
+import { createCompanionActivity } from './companion-activity.mjs'
 import { createDesktopUpdateChecker } from './desktop-updates.mjs'
 import { createDesktopDiagnosticsReport } from './desktop-diagnostics.mjs'
 import { loadDesktopWallpaper } from './desktop-wallpaper.mjs'
@@ -57,6 +58,38 @@ const execFileAsync = promisify(execFile)
 const startupSettingsScript = join(projectRoot, 'ops/scripts/configure-meguri-desktop-startup.ps1')
 const windowsPowerShell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')
 const windowsTaskScheduler = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32/schtasks.exe')
+let companionActivityTimer
+let companionStartupLogged = false
+const companionActivity = createCompanionActivity({
+  idleTime: () => powerMonitor.getSystemIdleTime(),
+  idleState: threshold => powerMonitor.getSystemIdleState(threshold),
+  enabled: () => {
+    const preferences = readPreferences()
+    return preferences.companion.screenObservationEnabled && preferences.companion.initiative !== 'off'
+      && preferences.companion.focus === 'available' && preferences.privacy.remoteChatAllowed
+      && preferences.privacy.acceptedPolicyVersion === privacyPolicyVersion
+      && stageWindow?.isVisible() && !stageWindow.isMinimized()
+  },
+  observe: async () => {
+    const result = await execFileAsync(windowsPowerShell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', join(currentDirectory, 'foreground-ocr.ps1'), '-ExcludeProcessId', String(process.pid)],
+    { windowsHide: true, timeout: 10_000, maxBuffer: 32 * 1024, encoding: 'utf8' })
+    return JSON.parse(result.stdout.replace(/^\uFEFF/u, '').trim())
+  },
+})
+
+function broadcastCompanionActivity() {
+  const status = companionActivity.status()
+  for (const window of [stageWindow, settingsWindow])
+    if (window && !window.isDestroyed()) window.webContents.send(channels.companionActivityChanged, status)
+}
+
+function startCompanionActivity() {
+  for (const [event, method] of [['lock-screen', 'lock'], ['unlock-screen', 'unlock'], ['suspend', 'suspend'], ['resume', 'resume']])
+    powerMonitor.on(event, () => { companionActivity[method](); broadcastCompanionActivity() })
+  companionActivityTimer = setInterval(broadcastCompanionActivity, 5000)
+  companionActivityTimer.unref?.()
+}
 const desktopVersion = JSON.parse(readFileSync(join(appRoot, 'package.json'), 'utf8')).version
 const updateChecker = createDesktopUpdateChecker({ currentVersion: desktopVersion, openExternal: url => shell.openExternal(url) })
 let startupUpdateChecked = false
@@ -580,6 +613,7 @@ function registerInheritedMeguriShortcuts() {
 }
 
 function updatePreferences(patch) {
+  companionActivity.cancel()
   const preferences = mergeDesktopPreferences(readPreferences(), patch)
   writeDesktopState({ desktopPreferences: preferences })
   stageLayoutController?.fit(preferences, stagePresentationSurface)
@@ -955,6 +989,10 @@ function installIpc() {
   })
   ipcMain.handle(channels.updatesOpenRelease, event => trustedSettingsRenderer(event) ? updateChecker.openRelease() : { ok: false, error: '请在更新设置中打开发布页。' })
   ipcMain.handle(channels.readinessGet, event => trustedRenderer(event) ? readiness.current() : undefined)
+  ipcMain.handle(channels.companionActivityStatus, event => trustedStageRenderer(event) || trustedSettingsRenderer(event)
+    ? companionActivity.status() : undefined)
+  ipcMain.handle(channels.companionScreenObserve, event => trustedStageRenderer(event)
+    ? companionActivity.observe().finally(broadcastCompanionActivity) : undefined)
   ipcMain.handle(channels.readinessRetry, async event => {
     if (!trustedRenderer(event))
       return readiness.current()
@@ -968,6 +1006,15 @@ function installIpc() {
       return
     readiness.markRendererReady()
     stageReadyForReminders = true
+    if (!companionStartupLogged) {
+      companionStartupLogged = true
+      const presence = companionActivity.presence()
+      console.info('[Meguri companion] ready', JSON.stringify({
+        release: process.env.MEGURI_RELEASE_COMMIT ?? 'workspace', presenceGateSeconds: 600,
+        screenObservationConfigured: readPreferences().companion.screenObservationEnabled,
+        nativeState: presence.reason, active: presence.active,
+      }))
+    }
     stageWindow.show()
     desktopTray?.refresh()
     for (const reminder of pendingShizukiReminders.splice(0))
@@ -1431,6 +1478,7 @@ function installIpc() {
 }
 
 async function start() {
+  startCompanionActivity()
   installIpc()
   await createStartupWindow()
   if (!(await synchronizeStartupSettings()))
@@ -1511,6 +1559,8 @@ app.whenReady().then(start).catch(error => {
 
 app.on('before-quit', () => { appExiting = true })
 app.on('will-quit', () => {
+  clearInterval(companionActivityTimer)
+  companionActivity.cancel()
   desktopTray?.dispose()
   desktopTray = undefined
   clearInterval(readinessRetryTimer)

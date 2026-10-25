@@ -21,6 +21,10 @@ public interface LlmProvider {
         return Mono.empty();
     }
 
+    default Mono<String> generateReachOut(List<String> recentContext, java.util.Map<String, Object> screenContext) {
+        return generateReachOut(recentContext);
+    }
+
     /** Optional public-news context source, wired by the enabled background service. */
     default void configureAiNewsContext(java.util.function.Supplier<List<String>> source) {}
 

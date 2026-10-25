@@ -55,7 +55,7 @@ function validCommitmentInput(text: string, dueAt: number, now: number) {
 
 export const useCompanionDirectorStore = defineStore('companion-director', {
   state: () => ({
-    context: { focus: 'available', activeTurn: false, speaking: false, surface: 'ambient' } as CompanionRuntimeContext,
+    context: { focus: 'available', activeTurn: false, speaking: false, surface: 'ambient', userActiveUntil: 0 } as CompanionRuntimeContext,
     deferred: [] as CompanionNoticeInput[],
     ephemeralCommitments: [] as CompanionCommitment[],
     lastDeliveredAt: 0,

@@ -12,6 +12,18 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.*;
 
 class CompanionReachOutControllerTest {
+    @Test
+    void rejectsInvalidScreenContextAndExpiredActivityWithoutCallingTheModel() {
+        var body = new java.util.HashMap<String, Object>(Map.of("user_id", "owner", "client_id", "desktop_pet", "session_id", "s1"));
+        body.put("screen_context", Map.of("text", "x".repeat(1001), "app", "editor", "observedAt", System.currentTimeMillis()));
+        client.post().uri("/v1/companion/reach-outs").bodyValue(body).exchange().expectStatus().isBadRequest();
+        body.put("screen_context", Map.of("text", "valid quote", "app", "editor", "observedAt", System.currentTimeMillis()));
+        body.put("active_until", System.currentTimeMillis() - 1);
+        client.post().uri("/v1/companion/reach-outs").bodyValue(body).exchange().expectStatus().isNoContent();
+        body.put("user_id", "intruder");
+        client.post().uri("/v1/companion/reach-outs").bodyValue(body).exchange().expectStatus().isForbidden();
+        verifyNoInteractions(provider);
+    }
     private final LlmProvider provider = mock(LlmProvider.class);
     private final SessionContextStore contexts = new SessionContextStore();
     private final WebTestClient client = WebTestClient.bindToController(new CompanionReachOutController(

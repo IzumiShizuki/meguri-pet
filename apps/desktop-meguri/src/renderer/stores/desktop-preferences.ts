@@ -12,7 +12,7 @@ export const fallbackDesktopPreferences: DesktopPreferences = {
   window: { alwaysOnTop: true, fadeOnHover: true },
   speech: { ttsEnabled: true, volume: 0.9, speed: 1, ambientEnabled: true, galgameEnabled: true },
   memory: { enabled: false, autoSummarize: true, summaryEveryTurns: 10 },
-  companion: { initiative: 'normal', focus: 'available', expressionsEnabled: true, motionEnabled: true, commitments: [] },
+  companion: { initiative: 'normal', screenObservationEnabled: false, focus: 'available', expressionsEnabled: true, motionEnabled: true, commitments: [] },
   training: { enabled: false },
   privacy: { acceptedPolicyVersion: '', remoteChatAllowed: false, saveHistory: true, checkUpdatesOnStartup: true },
   shortcuts: { toggleVisibility: 'CommandOrControl+Shift+M' },
@@ -22,11 +22,12 @@ export const fallbackDesktopPreferences: DesktopPreferences = {
 const legacyStorageKey = 'meguri.desktop.presentation.v1'
 const legacyMigrationMarker = 'meguri.desktop.presentation.host-migrated.v1'
 
-type ReversibleCompanionPreferences = Pick<CompanionPreferences, 'initiative' | 'focus' | 'expressionsEnabled' | 'motionEnabled'>
+type ReversibleCompanionPreferences = Pick<CompanionPreferences, 'initiative' | 'screenObservationEnabled' | 'focus' | 'expressionsEnabled' | 'motionEnabled'>
 
 function presentationSnapshot(companion: CompanionPreferences): ReversibleCompanionPreferences {
   return {
     initiative: companion.initiative,
+    screenObservationEnabled: companion.screenObservationEnabled,
     focus: companion.focus,
     expressionsEnabled: companion.expressionsEnabled,
     motionEnabled: companion.motionEnabled,
@@ -130,6 +131,7 @@ export const useDesktopPreferencesStore = defineStore('desktop-preferences', {
       return this.update({
         companion: {
           initiative: fallbackDesktopPreferences.companion.initiative,
+          screenObservationEnabled: false,
           focus: fallbackDesktopPreferences.companion.focus,
           expressionsEnabled: fallbackDesktopPreferences.companion.expressionsEnabled,
           motionEnabled: fallbackDesktopPreferences.companion.motionEnabled,

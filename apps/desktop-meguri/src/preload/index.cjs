@@ -4,6 +4,9 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron')
 // Keep this channel table in the single preload bundle instead of importing a
 // sibling file, otherwise the entire desktop bridge fails to initialize.
 const channels = Object.freeze({
+  companionActivityStatus: 'meguri:companion-activity:status',
+  companionActivityChanged: 'meguri:companion-activity:changed',
+  companionScreenObserve: 'meguri:companion-activity:observe',
   readinessGet: 'meguri:readiness:get',
   readinessRetry: 'meguri:readiness:retry',
   readinessChanged: 'meguri:readiness:changed',
@@ -140,6 +143,15 @@ const desktopBridge = {
       const handler = (_event, preferences) => listener(preferences)
       ipcRenderer.on(channels.preferencesChanged, handler)
       return () => ipcRenderer.removeListener(channels.preferencesChanged, handler)
+    },
+  },
+  companionActivity: {
+    status: () => ipcRenderer.invoke(channels.companionActivityStatus),
+    ...(view === 'stage' ? { observe: () => ipcRenderer.invoke(channels.companionScreenObserve) } : {}),
+    onChanged(listener) {
+      const handler = (_event, status) => listener(status)
+      ipcRenderer.on(channels.companionActivityChanged, handler)
+      return () => ipcRenderer.removeListener(channels.companionActivityChanged, handler)
     },
   },
   ...(view === 'settings' ? {

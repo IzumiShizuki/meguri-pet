@@ -8,6 +8,11 @@ import {
 } from './desktop-preferences.mjs'
 
 describe('desktop preferences', () => {
+  it('defaults screen observation off and preserves explicit owner opt-in', () => {
+    expect(normalizeDesktopPreferences({}).companion.screenObservationEnabled).toBe(false)
+    expect(normalizeDesktopPreferences({ companion: { screenObservationEnabled: true } }).companion.screenObservationEnabled).toBe(true)
+    expect(normalizeDesktopPreferences({ companion: { screenObservationEnabled: 'true' } }).companion.screenObservationEnabled).toBe(false)
+  })
   it('keeps training off until explicitly enabled with current chat consent and disables it on withdrawal', () => {
     expect(normalizeDesktopPreferences({ training: { enabled: true } }).training.enabled).toBe(false)
     const enabled = normalizeDesktopPreferences({ training: { enabled: true }, privacy: { acceptedPolicyVersion: '2026-10-05', remoteChatAllowed: true } })

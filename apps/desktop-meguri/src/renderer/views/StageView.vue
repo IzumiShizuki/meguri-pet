@@ -7,6 +7,7 @@ import WorkPanel from '../components/WorkPanel.vue'
 import PrivacyDialog from '../components/PrivacyDialog.vue'
 import { PRIVACY_POLICY_VERSION } from '../../shared/experience-contract'
 import type { DesktopUpdateState } from '../../shared/update-contract'
+import type { CompanionActivityStatus } from '../../shared/companion-contract'
 import { useArtifactStore } from '../stores/artifacts'
 import { useConversationStore } from '../stores/conversation'
 import { useDesktopPreferencesStore } from '../stores/desktop-preferences'
@@ -43,6 +44,12 @@ const viewportObserver = new ResizeObserver(entries => {
 const portraitFaded = ref(false)
 const reminderCards = ref<ShizukiReminderEvent[]>([])
 const updateState = ref<DesktopUpdateState>()
+const activityStatus = ref<CompanionActivityStatus>()
+let disposeActivity: (() => void) | undefined
+async function refreshActivity() {
+  try { activityStatus.value = await window.meguriDesktop?.companionActivity?.status() }
+  catch { activityStatus.value = undefined }
+}
 const updateDismissed = ref(false)
 let disposeUpdates: (() => void) | undefined
 const { character } = storeToRefs(presentation)
@@ -60,7 +67,10 @@ const reachOuts = createCompanionReachOutScheduler({
     lastDeliveredAt: director.lastDeliveredAt,
     dailyReachOutCount: reachOutDeliveryCount(),
     messages: conversation.messages,
+    userActiveUntil: activityStatus.value?.presence.active ? activityStatus.value.presence.activeUntil : 0,
+    screenObservationEnabled: value.value.companion.screenObservationEnabled,
   }),
+  refreshPresence: refreshActivity,
   generate: requestReachOut,
   deliver: (candidate, isCurrent) => {
     const notice = { ...candidate, kind: 'reach_out' as const, surface: surface.surface }
@@ -72,6 +82,11 @@ watch(() => [conversation.sessionId, conversation.sending, value.value.privacy.r
   value.value.privacy.acceptedPolicyVersion, value.value.companion.initiative, value.value.companion.focus,
   director.context.voiceActive, presentation.speaking, speechPlaybackState.speaking, speechPlaybackState.busy],
 () => reachOuts.contextChanged(), { flush: 'sync' })
+watch(() => [activityStatus.value?.presence.active, activityStatus.value?.presence.activeUntil], () => {
+  void director.setRuntimeContext({ userActiveUntil: activityStatus.value?.presence.active ? activityStatus.value.presence.activeUntil : 0 })
+  reachOuts.contextChanged()
+}, { flush: 'sync' })
+watch(() => value.value.companion.screenObservationEnabled, () => reachOuts.activity(), { flush: 'sync' })
 const disposeNoticeDelivery = director.onDelivery(({ notice, decision }) => deliverCompanionNotice(notice, decision))
 const disposeReminderPresenter = registerReminderPresenter((notice) => {
   const reminder = notice.reminder
@@ -341,6 +356,11 @@ watch(
 )
 
 onMounted(async () => {
+  await refreshActivity()
+  disposeActivity = window.meguriDesktop?.companionActivity?.onChanged(status => {
+    activityStatus.value = status
+    reachOuts.contextChanged()
+  })
   await preferences.initialize()
   await director.setRuntimeContext({ focus: value.value.companion.focus, activeTurn: conversation.sending,
     speaking: presentation.speaking || speechPlaybackState.speaking || speechPlaybackState.busy, surface: surface.surface })
@@ -374,6 +394,7 @@ onBeforeUnmount(() => {
   disposeReminderPresenter()
   director.dispose()
   reachOuts.dispose()
+  disposeActivity?.()
   window.removeEventListener('pointerdown', reachOuts.activity, true)
   window.removeEventListener('keydown', reachOuts.activity, true)
   window.removeEventListener('input', reachOuts.activity, true)

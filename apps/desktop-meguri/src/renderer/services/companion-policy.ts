@@ -58,6 +58,9 @@ export function decideCompanionNotice(input: CompanionPolicyInput): CompanionDel
     return defer(input, 'focus')
   if (context.activeTurn || context.speaking || context.voiceActive)
     return defer(input, 'active_turn')
+  if ((notice.kind === 'news' || notice.kind === 'reach_out')
+    && (!Number.isFinite(context.userActiveUntil) || (context.userActiveUntil ?? 0) <= now))
+    return defer(input, 'user_inactive')
 
   const cooldown = getCompanionLimits(initiative).cooldownMs
   const usesCooldown = notice.kind === 'news' || notice.kind === 'commitment_followup' || notice.kind === 'reach_out'

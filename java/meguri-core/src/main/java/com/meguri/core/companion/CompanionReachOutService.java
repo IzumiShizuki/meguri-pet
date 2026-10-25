@@ -19,6 +19,7 @@ import reactor.core.scheduler.Schedulers;
 public final class CompanionReachOutService {
     public record Scope(String userId, String clientId, String sessionId) { }
     public record Candidate(String id, String text, long createdAt, long expiresAt) { }
+    public record ScreenContext(String text, String app, long observedAt) { }
     private record Attempt(String leaf, Instant expiresAt, Mono<Candidate> result) { }
     private final LlmProvider provider;
     private final SessionContextStore contexts;
@@ -37,10 +38,22 @@ public final class CompanionReachOutService {
     }
 
     public Mono<Candidate> draft(Scope scope) {
-        return Mono.defer(() -> draftCurrent(scope)).subscribeOn(Schedulers.boundedElastic());
+        return draft(scope, null);
     }
 
-    private synchronized Mono<Candidate> draftCurrent(Scope scope) {
+    public Mono<Candidate> draft(Scope scope, ScreenContext screen) {
+        return draft(scope, screen, Long.MAX_VALUE);
+    }
+
+    public Mono<Candidate> draft(Scope scope, ScreenContext screen, long activeUntil) {
+        return Mono.defer(() -> draftCurrent(scope, screen, activeUntil)).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private synchronized Mono<Candidate> draftCurrent(Scope scope, ScreenContext screen, long activeUntil) {
+        if (activeUntil != Long.MAX_VALUE && (activeUntil <= clock.millis() || activeUntil > clock.millis() + 605_000)) return Mono.empty();
+        if (screen != null && (screen.text() == null || screen.text().isBlank() || screen.text().length() > 1000
+                || screen.app() == null || screen.app().length() > 80
+                || screen.observedAt() < clock.millis() - 60_000 || screen.observedAt() > clock.millis() + 5000)) return Mono.empty();
         var graph = contexts.graph(scope.userId(), scope.clientId(), scope.sessionId());
         var path = graph.activePath();
         if (path.size() < 2) return Mono.empty();
@@ -61,7 +74,9 @@ public final class CompanionReachOutService {
         var recent = path.stream().skip(Math.max(0, path.size() - 8))
                 .map(node -> node.role() + ": " + node.content().substring(0, Math.min(600, node.content().length())))
                 .toList();
-        Mono<Candidate> result = Mono.defer(() -> provider.generateReachOut(recent))
+        Mono<Candidate> result = Mono.defer(() -> clock.millis() >= activeUntil ? Mono.empty()
+                        : screen == null ? provider.generateReachOut(recent)
+                        : provider.generateReachOut(recent, Map.of("text", screen.text(), "app", screen.app(), "observed_at", screen.observedAt())))
                 .timeout(Duration.ofSeconds(20))
                 .map(String::trim)
                 .filter(text -> !text.isBlank() && !"[SKIP]".equals(text) && text.length() <= 240)

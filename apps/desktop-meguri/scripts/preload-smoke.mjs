@@ -80,6 +80,8 @@ app.whenReady().then(async () => {
       try {
         return await window.webContents.executeJavaScript(`({
       bridgeType: typeof window.meguriDesktop,
+      companionStatusType: typeof window.meguriDesktop?.companionActivity?.status,
+      companionObserveType: typeof window.meguriDesktop?.companionActivity?.observe,
       view: window.meguriDesktop?.view,
       preferencesGetType: typeof window.meguriDesktop?.preferences?.get,
       preferencesUpdateType: typeof window.meguriDesktop?.preferences?.update,
@@ -201,6 +203,9 @@ app.whenReady().then(async () => {
     ].every(value => value === 'function')
       && studio.studioScreenshotsType === 'undefined'
     const stagePresentationAvailable = stage.characterPresentationType === 'function'
+    const companionActivityScoped = stage.companionStatusType === 'function' && stage.companionObserveType === 'function'
+      && settings.companionStatusType === 'function' && settings.companionObserveType === 'undefined'
+      && startup.companionObserveType === 'undefined' && studio.companionObserveType === 'undefined'
     const shizukiStageAvailable = [
       stage.shizukiStatusType, stage.shizukiListType, stage.shizukiCreateType, stage.shizukiCompleteType,
       stage.shizukiReminderType, stage.shizukiPendingType, stage.shizukiUpdateType, stage.voiceStartType, stage.voiceCancelType,
@@ -255,6 +260,7 @@ app.whenReady().then(async () => {
       || !contractAvailable
       || !workContractAvailable
       || !stagePresentationAvailable
+      || !companionActivityScoped
       || !studioContractAvailable
       || !shizukiStageAvailable
       || !shizukiSettingsAvailable

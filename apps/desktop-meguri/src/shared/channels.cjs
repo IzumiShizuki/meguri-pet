@@ -1,4 +1,7 @@
 module.exports = Object.freeze({
+  companionActivityStatus: 'meguri:companion-activity:status',
+  companionActivityChanged: 'meguri:companion-activity:changed',
+  companionScreenObserve: 'meguri:companion-activity:observe',
   readinessGet: 'meguri:readiness:get',
   readinessRetry: 'meguri:readiness:retry',
   readinessChanged: 'meguri:readiness:changed',

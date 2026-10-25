@@ -39,7 +39,7 @@ export const defaultDesktopPreferences = Object.freeze({
   window: Object.freeze({ alwaysOnTop: true, fadeOnHover: true }),
   speech: Object.freeze({ ttsEnabled: true, volume: 0.9, speed: 1, ambientEnabled: true, galgameEnabled: true }),
   memory: Object.freeze({ enabled: false, autoSummarize: true, summaryEveryTurns: 10 }),
-  companion: Object.freeze({ initiative: 'normal', focus: 'available', expressionsEnabled: true, motionEnabled: true, commitments: Object.freeze([]) }),
+  companion: Object.freeze({ initiative: 'normal', screenObservationEnabled: false, focus: 'available', expressionsEnabled: true, motionEnabled: true, commitments: Object.freeze([]) }),
   training: Object.freeze({ enabled: false }),
   privacy: Object.freeze({ acceptedPolicyVersion: '', remoteChatAllowed: false, saveHistory: true, checkUpdatesOnStartup: true }),
   shortcuts: Object.freeze({ toggleVisibility: 'CommandOrControl+Shift+M' }),
@@ -130,6 +130,7 @@ export function normalizeDesktopPreferences(value) {
     },
     companion: {
       initiative: companionInitiatives.has(companion.initiative) ? companion.initiative : defaultDesktopPreferences.companion.initiative,
+      screenObservationEnabled: boolean(companion.screenObservationEnabled, false),
       focus: companionFocusModes.has(companion.focus) ? companion.focus : defaultDesktopPreferences.companion.focus,
       expressionsEnabled: boolean(companion.expressionsEnabled, true),
       motionEnabled: boolean(companion.motionEnabled, true),

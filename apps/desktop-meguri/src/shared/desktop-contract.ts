@@ -4,7 +4,7 @@ import type { DesktopColorPalette, DesktopMemoryPreferences, DesktopPrivacyPrefe
 import type { DesktopUpdateState } from './update-contract'
 import type { Live2DBridge } from './live2d-contract'
 import type { SpeechResourcesBridge } from './speech-resource-contract'
-import type { CompanionPreferences, CompanionPreferencesPatch } from './companion-contract'
+import type { CompanionActivityStatus, CompanionPreferences, CompanionPreferencesPatch, CompanionScreenContext } from './companion-contract'
 
 export type ReadinessCapability = 'gateway' | 'core' | 'tts' | 'assets' | 'renderer'
 
@@ -411,6 +411,11 @@ export interface DesktopVoiceState {
 }
 
 export interface MeguriDesktopBridge {
+  companionActivity?: {
+    status(): Promise<CompanionActivityStatus | undefined>
+    observe?(): Promise<CompanionScreenContext | undefined>
+    onChanged(listener: (status: CompanionActivityStatus) => void): () => void
+  }
   view: 'startup' | 'stage' | 'settings' | 'studio'
   readiness: {
     get(): Promise<ReadinessSnapshot>

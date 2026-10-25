@@ -32,6 +32,7 @@ describe('companion notice delivery', () => {
     vi.setSystemTime(5_000)
     Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
     setActivePinia(createPinia())
+    useCompanionDirectorStore().context.userActiveUntil = Number.MAX_SAFE_INTEGER
     const preferences = useDesktopPreferencesStore()
     preferences.value.companion.initiative = 'normal'
     preferences.value.privacy.saveHistory = true
@@ -79,6 +80,23 @@ describe('companion notice delivery', () => {
     expect(await pending).toBe(false)
     expect(useConversationStore().messages.some(message => message.id === candidate.id)).toBe(false)
     expect(director.deferred).toHaveLength(0)
+  })
+
+  it('rechecks the native deadline when a news claim waits across the inactivity boundary', async () => {
+    let release!: () => void
+    const wait = new Promise<void>(resolve => { release = resolve })
+    Object.defineProperty(navigator, 'locks', {
+      configurable: true,
+      value: { request: async (_name: string, _options: unknown, action: () => Promise<unknown>) => { await wait; return action() } },
+    })
+    const director = useCompanionDirectorStore()
+    director.context.userActiveUntil = 5_001
+    const pending = deliverCompanionNotice(notice, director.evaluateNotice(notice))
+    vi.setSystemTime(5_001)
+    release()
+    expect(await pending).toBe(false)
+    expect(useConversationStore().messages).toHaveLength(0)
+    expect(director.deferred.map(item => item.id)).toContain(notice.id)
   })
 
   it('requeues when focus changes during the durable claim and delivers after focus clears', async () => {
