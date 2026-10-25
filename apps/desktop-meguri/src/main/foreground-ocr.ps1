@@ -59,7 +59,7 @@ public static class MeguriForegroundOcr {
         $appName = (Get-Process -Id $foregroundProcessId).ProcessName
         if ($foregroundProcessId -eq $ExcludeProcessId -or $windowHandle -eq [IntPtr]::Zero -or
             $appName -match '(?i)^(LockApp|LogonUI|CredentialUIBroker|KeePass|KeePassXC|Bitwarden|1Password)$' -or
-            $title.ToString() -match '(?i)(password|credential|private key|incognito|inprivate|密码|密钥|验证码|无痕|隐私浏览)') {
+            $title.ToString() -match '(?i)(password|credential|private key|incognito|inprivate|\u5bc6\u7801|\u5bc6\u94a5|\u9a8c\u8bc1\u7801|\u65e0\u75d5|\u9690\u79c1\u6d4f\u89c8)') {
             @{ok=$false; reason='excluded'} | ConvertTo-Json -Compress; exit 0
         }
         $rect = New-Object MeguriForegroundOcr+Rect
