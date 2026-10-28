@@ -40,7 +40,6 @@ public final class TrainingFeedbackService {
     private final ObjectMapper mapper;
     private final Path feedbackFile;
     private final double trainingModeProbability;
-    private final double normalModeProbability;
     private final DoubleSupplier random;
     private final TrainingFeedbackArchive archive;
 
@@ -49,7 +48,7 @@ public final class TrainingFeedbackService {
             ObjectMapper mapper,
             @Value("${meguri.training-feedback.file:${user.home}/.meguri/training/behavior-feedback.jsonl}") String feedbackFile,
             @Value("${meguri.training-feedback.training-mode-probability:0.03}") double trainingModeProbability,
-            @Value("${meguri.training-feedback.normal-mode-probability:0.001}") double normalModeProbability) {
+            @Value("${meguri.training-feedback.normal-mode-probability:0}") double normalModeProbability) {
         this(mapper, Path.of(feedbackFile), trainingModeProbability, normalModeProbability, Math::random);
     }
 
@@ -59,7 +58,7 @@ public final class TrainingFeedbackService {
         this.mapper = mapper == null ? new ObjectMapper().findAndRegisterModules() : mapper.findAndRegisterModules();
         this.feedbackFile = feedbackFile.toAbsolutePath().normalize();
         this.trainingModeProbability = probability(trainingModeProbability, "training-mode probability");
-        this.normalModeProbability = probability(normalModeProbability, "normal-mode probability");
+        probability(normalModeProbability, "normal-mode probability"); // Validate legacy configuration only.
         this.random = random == null ? Math::random : random;
         this.archive = new TrainingFeedbackArchive(this.mapper, this.feedbackFile);
     }
@@ -71,7 +70,7 @@ public final class TrainingFeedbackService {
     }
 
     public boolean shouldCompare(boolean trainingMode) {
-        double threshold = trainingMode ? trainingModeProbability : normalModeProbability;
+        double threshold = trainingMode ? trainingModeProbability : 0;
         return threshold > 0 && random.getAsDouble() < threshold;
     }
 
@@ -83,6 +82,7 @@ public final class TrainingFeedbackService {
             LlmResponse second,
             String modelProvider,
             String buildId) {
+        if (!request.trainingMode()) return Optional.empty();
         if (first.equals(second)) return Optional.empty();
         String comparisonId = "comparison-" + UUID.randomUUID();
         Comparison comparison = new Comparison(
@@ -108,6 +108,7 @@ public final class TrainingFeedbackService {
 
     public void registerSingle(String turnId, TurnRequest request, List<String> recentContext,
                                LlmResponse response, String modelProvider, String buildId) {
+        if (!request.trainingMode()) return;
         String comparisonId = "observation-" + UUID.randomUUID();
         remember(new Comparison(
                 comparisonId,

@@ -15,13 +15,15 @@ import java.util.regex.Pattern;
 public final class WebSearchPolicy {
     private static final Pattern EXPLICIT_SEARCH = Pattern.compile(
             "(联网(?:搜索|查询|查找|检索|查)|网上(?:搜索|查询|查找|检索|查)|"
-                    + "搜索资料|查资料|查一下|搜一下|网上查|"
-                    + "search the web|web search|look up|browse|search online)",
+                    + "搜索(?!算法|功能|引擎是什么)|查官方|查资料|查一下|搜一下|网上查|"
+                    + "(?:按|打开|访问).{0,8}(?:链接|网址).{0,8}(?:核实|验证|确认|查看)|"
+                    + "\\bsearch\\b|web search|look up|browse)",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern EXPLICITLY_OFFLINE_REQUEST = Pattern.compile(
-            "^\\s*(?:请|麻烦)?\\s*(?:不要|别|不必|无需|不需要|不用|禁止)\\s*(?:再)?\\s*"
+            "(?:不要|别|不必|无需|不需要|不用|禁止)\\s*(?:再)?\\s*"
                     + "(?:联网(?:搜索|查询|查找|检索|查)?|上网(?:搜索|查询|查找|检索)?|"
-                    + "网上(?:搜索|查询|查找|检索)?|web\\s+(?:search|browse)|browse|search online)",
+                    + "网上(?:搜索|查询|查找|检索)?|搜索|检索)"
+                    + "|\\b(?:do not|don't|never|no)\\s+(?:use\\s+)?(?:web|internet|network|search|browse)\\b",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern FRESHNESS = Pattern.compile(
             "(今天|今日|现在|当前|目前|刚刚|刚才|最新|最近|近期|本周|本月|截至|实时|"
@@ -44,7 +46,7 @@ public final class WebSearchPolicy {
                     + "(?:(?:帮我|帮忙|为我|替我)\\s*)*",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern LOOKUP_WRAPPER = Pattern.compile(
-            "^(?:查看|查阅|查询|查找|检索|搜索|搜寻|搜一下|查一下|看看|"
+            "^(?:查官方|查看|查阅|查询|查找|检索|搜索|搜寻|搜一下|查一下|看看|"
                     + "联网(?:搜索|查询|查找|检索|查)|网上(?:搜索|查询|查找|检索|查)|"
                     + "search(?: the web| online)?|web search|look up)(?:一下|下)?\\s*",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
@@ -57,14 +59,20 @@ public final class WebSearchPolicy {
 
     public static boolean shouldSearch(String message) {
         if (message == null || message.isBlank()) return false;
-        if (EXPLICITLY_OFFLINE_REQUEST.matcher(message).find()) return false;
+        if (isOffline(message)) return false;
         String normalized = message.toLowerCase(Locale.ROOT);
-        if (EXPLICIT_SEARCH.matcher(normalized).find()
-                || DIRECT_CURRENT_FACT.matcher(normalized).find()) {
+        if (EXPLICIT_SEARCH.matcher(normalized).find()) {
             return true;
         }
+        if (Pattern.compile("虚构|编造|故事|设定|回顾|刚才.{0,12}(?:项目|模型)|fictional|imaginary",
+                Pattern.CASE_INSENSITIVE).matcher(normalized).find()) return false;
+        if (DIRECT_CURRENT_FACT.matcher(normalized).find()) return true;
         return FRESHNESS.matcher(normalized).find()
                 && VOLATILE_INFORMATION.matcher(normalized).find();
+    }
+
+    public static boolean isOffline(String message) {
+        return message != null && EXPLICITLY_OFFLINE_REQUEST.matcher(message).find();
     }
 
     /** Removes the common request wrapper before sending a bounded query upstream. */
@@ -72,6 +80,14 @@ public final class WebSearchPolicy {
         if (message == null) return "";
         String original = message.trim();
         String query = original;
+        // Explanatory setup is not the search subject. Keep the clause containing the request.
+        java.util.regex.Matcher action = EXPLICIT_SEARCH.matcher(query);
+        if (action.find() && action.start() > 0) {
+            int clauseStart = Math.max(Math.max(query.lastIndexOf('。', action.start()),
+                    query.lastIndexOf('；', action.start())), query.lastIndexOf('\n', action.start()));
+            if (clauseStart >= 0) query = query.substring(clauseStart + 1).trim();
+        }
+        query = query.replaceFirst("(?:[，,；;。]\\s*(?:并|然后|再)?(?:说明|给出|提供|列出|附上|总结|比较).*)$", "");
         java.util.LinkedHashSet<String> freshnessQualifiers = new java.util.LinkedHashSet<>();
         for (int pass = 0; pass < 4; pass++) {
             String before = query;

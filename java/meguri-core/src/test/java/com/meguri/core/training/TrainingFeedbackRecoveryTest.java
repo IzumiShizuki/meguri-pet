@@ -101,6 +101,7 @@ class TrainingFeedbackRecoveryTest {
         return new TrainingFeedbackService(mapper, output, 1, 0, () -> 0);
     }
     private TurnRequest request() {
-        return new TurnRequest("user-a", "desktop_pet", "session-a", "message").withTenantId("tenant-a");
+        return new TurnRequest("user-a", "desktop_pet", "session-a", null, "message", List.of(),
+                new com.meguri.core.dto.ClientCapabilities(), null, null, false, true).withTenantId("tenant-a");
     }
 }

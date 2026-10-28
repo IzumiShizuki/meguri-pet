@@ -10,6 +10,42 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WebSearchGatewayTest {
     @Test
+    void evaluationSearchIntentAndOfflineControls() {
+        for (String message : java.util.List.of("搜索一下 IETF RFC 9110 官方页面", "先查官方来源再比较",
+                "按链接核实 https://www.rfc-editor.org/rfc/rfc9110.html", "search RFC 9110")) {
+            assertTrue(WebSearchPolicy.shouldSearch(message), message);
+        }
+        for (String message : java.util.List.of("接下来不要联网，搜索这个词也只用已有知识",
+                "Do not search online; explain HTTP", "虚构项目白鹿的最新模型预算是多少？", "解释搜索算法")) {
+            assertFalse(WebSearchPolicy.shouldSearch(message), message);
+        }
+        assertEquals("IETF RFC 9110 官方页面", WebSearchPolicy.queryFor(
+                "这题是公开信息，可以联网。请搜索一下 IETF RFC 9110 官方页面，并说明来源。"));
+    }
+
+    @Test
+    void bingEncodesTheQueryAsOneUtf8Parameter() {
+        var seen = new java.util.concurrent.atomic.AtomicReference<java.net.URI>();
+        var client = org.springframework.web.reactive.function.client.WebClient.builder()
+                .exchangeFunction(request -> {
+                    seen.set(request.url());
+                    return reactor.core.publisher.Mono.just(
+                            org.springframework.web.reactive.function.client.ClientResponse
+                                    .create(org.springframework.http.HttpStatus.OK)
+                                    .header("Content-Type", "application/rss+xml")
+                                    .body("<rss><channel/></rss>").build());
+                }).build();
+        var gateway = new BingRssWebSearchGateway(client, new ObjectMapper(),
+                "https://www.bing.com/search", null, 5);
+        String query = "C++ 天气 & RFC 9110? a=100% {literal}";
+        gateway.search(query, 3).block();
+        String raw = seen.get().getRawQuery();
+        assertEquals(2, raw.split("&").length);
+        assertEquals(query, java.net.URLDecoder.decode(raw.substring(raw.indexOf("q=") + 2),
+                java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    @Test
     void policySearchesExplicitAndCurrentInformationRequests() {
         assertFalse(WebSearchPolicy.shouldSearch("陪我聊聊天"));
         assertTrue(WebSearchPolicy.shouldSearch("帮我联网搜索今天的新闻"));

@@ -143,6 +143,9 @@ import java.util.function.Supplier;
 @Service
 public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private static final int SUBSCRIBER_EVENT_BUFFER = 256;
+    private record ConversationScope(String user, String client, String session) { }
+    private final Map<ConversationScope, java.util.concurrent.CompletableFuture<Void>> conversationTails =
+            new ConcurrentHashMap<>();
 
     private final RuntimeStateMachine stateMachine;
     private final ExpressionResolver expressionResolver;
@@ -823,8 +826,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     public Mono<ChatResponse> runInline(TurnRequest request) {
+        return Mono.defer(() -> runInlineSubscribed(request));
+    }
+
+    private Mono<ChatResponse> runInlineSubscribed(TurnRequest request) {
         TurnRecord record = createRecord(request, Instant.now().plus(TurnCommand.DEFAULT_DEADLINE));
-        return runWithDeadline(record)
+        return serialExecution(record)
                 .then(Mono.defer(() -> {
                     if (record.getResult() != null) return Mono.just(record.getResult());
                     return Mono.error(new IllegalStateException(record.getError() == null
@@ -974,6 +981,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                     .subscribeOn(Schedulers.boundedElastic())
                     .subscribe(ignored -> {
                         if (sink.isCancelled()) return;
+                        // Observe inactivity before reading the journal, then drain its terminal publication.
+                        boolean inactive = !sessionIsActive(sessionId, userId, clientId);
                         List<EventEnvelope> available = eventsFor(sessionId).stream()
                                 .filter(event -> eventBelongsTo(event, userId, clientId))
                                 .sorted(java.util.Comparator.comparingLong(EventEnvelope::getSequence))
@@ -986,8 +995,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                             emitted = true;
                             lastEmissionNanos.set(System.nanoTime());
                         }
-                        if (!sessionIsActive(sessionId, userId, clientId)
-                                && !hasAfter(available, current.get())) {
+                        if (inactive && terminalEventsPublished(sessionId, userId, clientId, available)) {
                             sink.complete();
                             return;
                         }
@@ -1003,6 +1011,18 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 SUBSCRIBER_EVENT_BUFFER,
                 ignored -> { },
                 BufferOverflowStrategy.ERROR));
+    }
+
+    private boolean terminalEventsPublished(String sessionId, String userId, String clientId,
+                                            List<EventEnvelope> available) {
+        Set<String> published = available.stream()
+                .filter(event -> Set.of("turn.completed", "turn.failed", "turn.cancelled").contains(event.type()))
+                .map(EventEnvelope::getTurnId).collect(java.util.stream.Collectors.toSet());
+        return journal.turns().values().stream()
+                .filter(record -> sessionId.equals(record.getRequest().getSessionId()))
+                .filter(record -> userId == null || userId.equals(record.getRequest().getUserId()))
+                .filter(record -> clientId == null || clientId.equals(record.getRequest().getClientId()))
+                .allMatch(record -> record.isTerminal() && published.contains(record.getTurnId()));
     }
 
     private boolean eventBelongsTo(EventEnvelope event, String userId, String clientId) {
@@ -1024,6 +1044,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         });
         running.values().forEach(Disposable::dispose);
         running.clear();
+        conversationTails.clear();
         journal.clear();
         sessions.clear();
         stateMachine.clear();
@@ -1059,10 +1080,6 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         latency.markAt(TurnLatencyPoint.TURN_RECEIVED, record.getAcceptedAt());
         latency.mark(TurnLatencyPoint.PERSONA_STARTED);
         record.freezeLatencyTraceRecorder(latency);
-        sessions.appendNode(
-                request.getUserId(), request.getClientId(), request.getSessionId(),
-                userMessageId(record), null,
-                new SessionContextStore.Message("user", request.getMessage()));
         RuntimeState temporalState = stateMachine.stateFor(request);
         EffectivePersonaState effectivePersona = canonicalPipeline.resolvePersona(
                 record, temporalState);
@@ -1208,7 +1225,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         // Defer the state transition until the background subscription starts so
         // POST /v1/turns can faithfully return the accepted status (the Python
         // asyncio task is likewise scheduled after the response is constructed).
-        Disposable disposable = Mono.defer(() -> runWithDeadline(record))
+        Disposable disposable = serialExecution(record)
                 .subscribeOn(Schedulers.boundedElastic())
                 .doFinally(ignored -> running.remove(record.getTurnId()))
                 .subscribe(
@@ -1216,6 +1233,26 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         ignored -> { /* runRecord records the failure */ });
         running.put(record.getTurnId(), disposable);
         if (disposable.isDisposed()) running.remove(record.getTurnId(), disposable);
+    }
+
+    /** Serialize one conversation without holding a worker thread while its predecessor runs. */
+    private synchronized Mono<Void> serialExecution(TurnRecord record) {
+        TurnRequest request = record.getRequest();
+        ConversationScope scope = new ConversationScope(request.getUserId(), request.getClientId(), request.getSessionId());
+        var next = new java.util.concurrent.CompletableFuture<Void>();
+        var previous = conversationTails.put(scope, next);
+        var ready = previous == null ? java.util.concurrent.CompletableFuture.<Void>completedFuture(null) : previous;
+        return Mono.fromFuture(ready, true)
+                .then(Mono.defer(() -> record.isTerminal() ? Mono.empty()
+                        : record.isCancelRequested() ? cancelRecord(record, "client_requested") : runWithDeadline(record)))
+                .timeout(record.remaining())
+                .onErrorResume(TimeoutException.class,
+                        error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"))
+                .onErrorResume(error -> fail(record, error))
+                .doFinally(ignored -> ready.whenComplete((value, error) -> {
+                    next.complete(null);
+                    conversationTails.remove(scope, next);
+                }));
     }
 
     private Mono<Void> runWithDeadline(TurnRecord record) {
@@ -1250,6 +1287,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         record.transitionTo(TurnStage.PLANNING);
         RuntimeState state;
         try {
+            sessions.appendNode(request.getUserId(), request.getClientId(), request.getSessionId(),
+                    userMessageId(record), null, new SessionContextStore.Message("user", request.getMessage()));
             state = record.getPersonaSnapshot().state();
             LinkedHashMap<String, Object> started = new LinkedHashMap<>();
             started.put("stage", record.getStage().wireValue());
@@ -1847,7 +1886,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private Mono<TurnWeatherContext> retrieveWeather(TurnRecord record, TurnRequest request) {
         TurnResolution resolution = weatherResolution(record);
         WeatherConversationService.Intent intent = resolution.intent();
-        if (intent == WeatherConversationService.Intent.NONE) {
+        if (intent == WeatherConversationService.Intent.NONE || !weatherConversation.canQuery(resolution)) {
             return weatherConversation.contextFor(resolution);
         }
         emit(record, "tool.started", Map.of(
@@ -1870,6 +1909,13 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private Mono<Void> runDirectWeatherRecord(TurnRecord record, RuntimeState state) {
         TurnRequest request = record.getRequest();
         transition(record, TurnStage.RETRIEVING);
+        if (!weatherConversation.canQuery(weatherResolution(record))) {
+            return weatherConversation.contextFor(weatherResolution(record)).flatMap(context -> {
+                transition(record, TurnStage.GENERATING);
+                transition(record, TurnStage.FINALIZING);
+                return completeSemantic(record, state, context.directResponse(request.replyFormat()), false);
+            });
+        }
         return executeCapability(
                         record,
                         "weather.read",
@@ -2348,10 +2394,6 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private static boolean requiresApproval(String capabilityId) {
         return isWriteCapability(capabilityId)
                 || "agent.invoke".equals(capabilityId);
-    }
-
-    private static boolean hasAfter(List<EventEnvelope> available, long cursor) {
-        return available.stream().anyMatch(event -> event.getSequence() > cursor);
     }
 
     private Map<String, Object> beanMap(Object value) {

@@ -47,6 +47,38 @@ class WeatherConversationServiceTest {
     @TempDir Path tempDir;
 
     @Test
+    void documentationAndOfflineRequestsDoNotTriggerForecasts() {
+        AtomicInteger calls = new AtomicInteger();
+        var conversation = new WeatherConversationService(weather(location -> {
+            calls.incrementAndGet();
+            return Mono.just(briefing(location));
+        }));
+        for (String message : List.of("搜索 Open-Meteo 天气 API 文档", "用 Python 写一个温度查询代码",
+                "不要联网，解释天气预报", "weather API documentation")) {
+            assertThat(conversation.contextFor(message).block().intent()).isEqualTo(WeatherConversationService.Intent.NONE);
+        }
+        assertThat(calls).hasValue(0);
+    }
+
+    @Test
+    void unscopedWeatherRequestsNeverReadOrRevealTheOwnersLocation() {
+        AtomicInteger calls = new AtomicInteger();
+        var conversation = new WeatherConversationService(weather(location -> {
+            calls.incrementAndGet();
+            return Mono.just(briefing(location));
+        }));
+        var context = conversation.contextFor("明天天气怎么样？").block();
+        assertThat(context.attempted()).isFalse();
+        assertThat(context.directResponse("zh").reply()).contains("哪个地区").doesNotContain("钱塘", "杭州");
+        assertThat(conversation.contextFor("我要出门了").block().intent()).isEqualTo(WeatherConversationService.Intent.NONE);
+        assertThat(calls).hasValue(0);
+        assertThat(conversation.resolveTurn("那明天呢", List.of(
+                new SessionContextStore.Message("user", "钱塘区天气怎么样"),
+                new SessionContextStore.Message("user", "现在讨论画画"))).intent())
+                .isEqualTo(WeatherConversationService.Intent.NONE);
+    }
+
+    @Test
     void outingIntentAlwaysFetchesWeatherAndAddsCaringRoadSafetyGreeting() {
         AtomicInteger calls = new AtomicInteger();
         WeatherService weather = weather(location -> {
@@ -55,7 +87,7 @@ class WeatherConversationServiceTest {
         });
         WeatherConversationService conversation = new WeatherConversationService(weather);
 
-        var context = conversation.contextFor("我要出门了").block();
+        var context = conversation.contextFor("钱塘区我要出门了").block();
         LlmResponse response = context.augment(new LlmResponse("早点回来。"));
 
         assertThat(calls).hasValue(1);
@@ -69,9 +101,9 @@ class WeatherConversationServiceTest {
         WeatherService weather = weather(location -> Mono.error(new IllegalStateException("offline")));
         WeatherConversationService conversation = new WeatherConversationService(weather);
 
-        LlmResponse weatherReply = conversation.contextFor("今天湿度和风速怎么样？").block()
+        LlmResponse weatherReply = conversation.contextFor("钱塘区今天湿度和风速怎么样？").block()
                 .augment(new LlmResponse("稍后再试。"));
-        LlmResponse outingReply = conversation.contextFor("准备出门一下").block()
+        LlmResponse outingReply = conversation.contextFor("钱塘区准备出门一下").block()
                 .augment(new LlmResponse("好。"));
 
         assertThat(weatherReply.reply()).contains("实时天气暂时不可用");
@@ -114,7 +146,7 @@ class WeatherConversationServiceTest {
                 8, 18);
         WeatherConversationService conversation = new WeatherConversationService(weather);
 
-        var context = conversation.contextFor("明天天气怎么样？").block();
+        var context = conversation.contextFor("钱塘区明天天气怎么样？").block();
         LlmResponse response = context.directResponse("zh_ja_pairs");
 
         assertThat(requestedDate).hasValue(LocalDate.parse("2026-07-22"));
@@ -145,7 +177,7 @@ class WeatherConversationServiceTest {
         var resolution = conversation.resolveTurn(
                 "我问的是明天来着",
                 List.of(
-                        new SessionContextStore.Message("user", "明天天气怎么样？"),
+                        new SessionContextStore.Message("user", "钱塘区明天天气怎么样？"),
                         new SessionContextStore.Message("assistant", "会有阵雨。"),
                         new SessionContextStore.Message("user", "我问的是明天来着")));
 
@@ -162,7 +194,7 @@ class WeatherConversationServiceTest {
         WeatherConversationService conversation = new WeatherConversationService(
                 weather(location -> Mono.just(briefing(location))));
         List<SessionContextStore.Message> activeWeatherPath = List.of(
-                new SessionContextStore.Message("user", "明天天气怎么样？"),
+                new SessionContextStore.Message("user", "钱塘区明天天气怎么样？"),
                 new SessionContextStore.Message("assistant", "会有阵雨。"));
 
         var override = conversation.resolveTurn("那后天呢", activeWeatherPath);
@@ -191,7 +223,7 @@ class WeatherConversationServiceTest {
     void transientToolWeatherFactsCannotBecomeLongTermMemoryCandidates() {
         WeatherConversationService conversation = new WeatherConversationService(
                 weather(location -> Mono.just(briefing(location))));
-        var context = conversation.contextFor("天气怎么样？").block();
+        var context = conversation.contextFor("钱塘区天气怎么样？").block();
         LlmResponse raw = new LlmResponse("知道了。", ExpressionTag.NEUTRAL, Intensity.LOW,
                 VoiceStyle.NEUTRAL, List.of(
                 new MemoryCandidate(MemoryType.EVENT, "钱塘区目前多云，湿度72%", 0.9,
@@ -230,7 +262,7 @@ class WeatherConversationServiceTest {
                 Duration.ZERO, MAPPER, new NoopMemoryGateway(), new NoopWebSearchGateway(), feedback,
                 new WeatherConversationService(weather));
         TurnRequest request = new TurnRequest(
-                "user-a", "desktop_pet", "weather-session", null, "我要出门了",
+                "user-a", "desktop_pet", "weather-session", null, "钱塘区我要出门了",
                 List.of(), new ClientCapabilities(), null, null, false, true);
 
         var result = orchestrator.runInline(request).block();
@@ -273,7 +305,7 @@ class WeatherConversationServiceTest {
                         1, 0, () -> 0),
                 new WeatherConversationService(weather));
         TurnRequest request = new TurnRequest(
-                "user-a", "desktop_pet", "fast-weather-session", null, "今天天气怎么样？",
+                "user-a", "desktop_pet", "fast-weather-session", null, "钱塘区今天天气怎么样？",
                 List.of(), new ClientCapabilities(), null, null, false, false,
                 "zh_ja_pairs", RetrievalMode.FAST);
 

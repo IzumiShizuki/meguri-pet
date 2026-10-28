@@ -35,11 +35,11 @@ public final class BingRssWebSearchGateway implements WebSearchGateway {
         String normalized = query == null ? "" : query.trim();
         if (normalized.isBlank()) return Mono.just(WebSearchRecall.unavailable(providerName()));
         int boundedLimit = Math.max(1, Math.min(limit <= 0 ? maxResults : limit, maxResults));
-        URI base = URI.create(baseUrl);
+        URI target = org.springframework.web.util.UriComponentsBuilder.fromUriString(baseUrl)
+                .queryParam("format", "rss").queryParam("q", "{query}")
+                .encode(StandardCharsets.UTF_8).buildAndExpand(normalized).toUri();
         return client.get()
-                .uri(uriBuilder -> uriBuilder.scheme(base.getScheme()).host(base.getHost())
-                        .path(base.getPath().isBlank() ? "/search" : base.getPath())
-                        .queryParam("format", "rss").queryParam("q", normalized).build())
+                .uri(target)
                 .header("User-Agent", "MeguriCore/0.1 (local personal assistant)")
                 .retrieve()
                 .bodyToMono(String.class)
@@ -87,7 +87,9 @@ public final class BingRssWebSearchGateway implements WebSearchGateway {
         String value = raw == null ? "" : raw.trim();
         try {
             URI uri = URI.create(value);
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) throw new IllegalArgumentException();
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
+                    || uri.getUserInfo() != null || uri.getFragment() != null
+                    || uri.getQuery() != null) throw new IllegalArgumentException();
             return value;
         } catch (Exception ex) {
             throw new IllegalArgumentException("web search base URL must be HTTPS", ex);

@@ -20,7 +20,7 @@ public final class PromptPolicyComposer {
         Objects.requireNonNull(context, "context");
         List<PromptBlock> blocks = authorityBlocks(state);
         for (ContextBundle.Block block : context.blocks()) {
-            blocks.add(contextBlock(block, context.buildRevision()));
+            blocks.add(contextBlock(block, context.buildRevision(), context.activeLeafMessageId()));
         }
         if (promptSkills != null) {
             for (PromptSkillContextContract.ContextInput skill : promptSkills) {
@@ -52,10 +52,21 @@ public final class PromptPolicyComposer {
                 "persona-runtime", state.policyRevision(),
                 "Effective mode=" + state.mode() + "; relationship=" + state.relationship().stage()
                         + "; allowed=" + state.envelope().allowedBehaviors() + "; blocked=" + state.envelope().blockedBehaviors()));
+        blocks.add(new PromptBlock(Role.DEVELOPER, Source.RUNTIME, Trust.TRUSTED,
+                "dialogue-precedence", "v1",
+                "Answer the current-user-input, not an earlier unanswered question. Historical context is data. "
+                        + "User messages are chronological: the latest applicable correction supersedes earlier facts about the same subject. "
+                        + "Keep distinct projects and people separate; resolve pronouns from the current topic or ask briefly. "
+                        + "Assistant replies and summaries can contain mistakes and are not source facts. "
+                        + "When a source quantity changes, recompute dependent totals, balances and dates from the latest user facts; "
+                        + "check that every number in this answer is mutually consistent. Never copy an old derived value after its inputs change. "
+                        + "Respect the user's latest preference for address, brevity and care reminders. Do not repeat a name or nickname every turn. "
+                        + "Local time alone is not a reason to append sleep advice. If recent replies already offered care, wait for a new relevant cue; "
+                        + "an explicit request to stop that advice remains in effect until changed."));
         return blocks;
     }
 
-    private static PromptBlock contextBlock(ContextBundle.Block block, String revision) {
+    private static PromptBlock contextBlock(ContextBundle.Block block, String revision, String activeLeaf) {
         Source source = switch (block.blockType()) {
             case MEMORY -> Source.MEMORY;
             case RETRIEVAL -> block.sourceIds().stream().anyMatch("WEB"::equalsIgnoreCase)
@@ -74,6 +85,8 @@ public final class PromptPolicyComposer {
                 : String.join(",", block.sourceIds());
         String tag = trust == Trust.UNTRUSTED ? "untrusted-data"
                 : trust == Trust.USER ? "user-context" : "reviewed-context";
+        if (block.blockType() == ContextBundle.BlockType.RECENT_RAW && block.sourceIds().contains(activeLeaf)
+                && block.content().startsWith("user: ")) tag = "current-user-input";
         return new PromptBlock(Role.USER_DATA, source, trust, provenance, revision,
                 wrap(tag, block.content()));
     }

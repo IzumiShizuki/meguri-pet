@@ -109,7 +109,8 @@ meguri:
   training-feedback:
     file: ${MEGURI_TRAINING_FEEDBACK_FILE:${user.home}/.meguri/training/behavior-feedback.jsonl}
     training-mode-probability: ${MEGURI_TRAINING_MODE_COMPARISON_PROBABILITY:0.03}
-    normal-mode-probability: ${MEGURI_NORMAL_MODE_COMPARISON_PROBABILITY:0.001}
+    # Legacy property retained for configuration compatibility; ordinary chat never samples or archives.
+    normal-mode-probability: ${MEGURI_NORMAL_MODE_COMPARISON_PROBABILITY:0}
   resources:
     everything:
       enabled: ${MEGURI_EVERYTHING_ENABLED:true}

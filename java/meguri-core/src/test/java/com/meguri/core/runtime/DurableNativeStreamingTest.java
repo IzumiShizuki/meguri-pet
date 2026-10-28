@@ -24,6 +24,42 @@ import static org.awaitility.Awaitility.await;
 
 class DurableNativeStreamingTest {
     @Test
+    void sameConversationWaitsForFailureAndBindsNextInputToItsOwnReply() throws Exception {
+        var gate = Sinks.<LlmResponse>one();
+        var inputs = new java.util.concurrent.CopyOnWriteArrayList<String>();
+        LlmProvider provider = (request, state, canon, memories, recent) -> {
+            inputs.add(request.getMessage());
+            return request.getMessage().equals("first") ? gate.asMono()
+                    : Mono.just(new LlmResponse("answer:" + request.getMessage()));
+        };
+        var runtime = runtime(provider, new InMemoryTurnJournal(mapper()));
+        var first = runtime.start(syntheticRequest("serial", "first"));
+        await().atMost(Duration.ofSeconds(3)).until(() -> inputs.size() == 1);
+        var second = runtime.start(syntheticRequest("serial", "second"));
+        // An independent conversation remains available while this one waits.
+        var other = runtime.start(syntheticRequest("independent", "other"));
+        other.getDone().get(3, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(inputs).containsExactly("first", "other");
+        gate.tryEmitError(new IllegalStateException("synthetic provider failure"));
+        second.getDone().get(3, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(first.getStatus()).isEqualTo(TurnStatus.FAILED);
+        assertThat(second.getResult().response().reply()).isEqualTo("answer:second");
+        assertThat(runtime.sessionMessages("synthetic", "website", "serial"))
+                .extracting(SessionContextStore.Message::content).containsExactly("first", "second", "answer:second");
+        assertThat(runtime.eventsFor("serial").stream().filter(e -> e.type().equals("turn.completed")))
+                .singleElement().satisfies(e -> {
+                    assertThat(e.getTurnId()).isEqualTo(second.getTurnId());
+                    assertThat(e.data().get("reply")).isEqualTo("answer:second");
+                });
+        runtime.reset();
+    }
+
+    private static TurnRequest syntheticRequest(String session, String message) {
+        return new TurnRequest("synthetic", "website", session, message, List.of(),
+                new com.meguri.core.dto.ClientCapabilities(), null, null, false);
+    }
+
+    @Test
     void fallbackProviderKeepsOneCompleteTextDeltaAndDoesNotClaimNativeStreaming() {
         InMemoryTurnJournal journal = new InMemoryTurnJournal(mapper());
         LlmProvider provider = (request, state, canon, memories, recent) ->

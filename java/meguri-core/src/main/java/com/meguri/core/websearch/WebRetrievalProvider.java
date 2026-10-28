@@ -47,6 +47,9 @@ public final class WebRetrievalProvider implements RetrievalProvider {
     public RetrievalProviderResult retrieveWithDiagnostics(
             String query, int limit, RetrievalContext context) {
         if (limit <= 0) return RetrievalProviderResult.success(List.of());
+        if ("disabled".equals(search.providerName())) {
+            return new RetrievalProviderResult(List.of(), List.of("web_search_disabled"));
+        }
         if (context.turnRequest() != null
                 && !search.shouldSearch(context.turnRequest().getMessage())) {
             return new RetrievalProviderResult(List.of(), List.of("web_policy_skipped"));
@@ -57,8 +60,16 @@ public final class WebRetrievalProvider implements RetrievalProvider {
                     ? context.turnRequest() == null ? "" : context.turnRequest().getMessage()
                     : query;
             String searchQuery = WebSearchPolicy.queryFor(querySource);
-            WebSearchRecall recall = search.search(searchQuery, Math.min(12, Math.max(limit * 3, limit)))
-                    .block(context.remaining());
+            // Explicitly supplied links are already source candidates. Fetch them through
+            // the same URL/DNS/deadline policy instead of searching the instruction text.
+            List<WebSearchResult> requested = requestedSources(querySource);
+            if (requested.isEmpty() && WebSearchPolicy.shouldSearch(querySource)
+                    && querySource.matches("(?s).*https?://.*")) {
+                return new RetrievalProviderResult(List.of(), List.of("web_results_unusable"));
+            }
+            WebSearchRecall recall = requested.isEmpty()
+                    ? search.search(searchQuery, Math.min(12, Math.max(limit * 3, limit))).block(context.remaining())
+                    : new WebSearchRecall("ok", "requested-source", requested);
             if (recall == null) {
                 return new RetrievalProviderResult(List.of(), List.of("web_search_unavailable"));
             }
@@ -74,7 +85,19 @@ public final class WebRetrievalProvider implements RetrievalProvider {
             if (recall.results().isEmpty()) {
                 return new RetrievalProviderResult(List.of(), List.of("web_search_empty"));
             }
-            List<Candidate> extracted = extract(query, recall.results(), context, degradations);
+            List<WebSearchResult> relevant = requested.isEmpty()
+                    ? relevantResults(searchQuery, recall.results()) : requested;
+            if (relevant.size() != recall.results().size()) degradations.add("web_results_irrelevant");
+            if (relevant.isEmpty() && context.remaining().toMillis() > 300) {
+                degradations.add("web_search_retried");
+                WebSearchRecall retry = search.search(WebSearchRelevance.recoveryQuery(searchQuery),
+                                Math.min(12, Math.max(limit * 3, limit)))
+                        .block(context.remaining());
+                if (retry != null && "ok".equalsIgnoreCase(retry.status())) {
+                    relevant = relevantResults(searchQuery, retry.results());
+                }
+            }
+            List<Candidate> extracted = extract(searchQuery, relevant, context, degradations);
             extracted.sort(Comparator.comparingDouble(Candidate::score).reversed()
                     .thenComparing(Candidate::canonicalUrl));
             List<RetrievalItem> items = new ArrayList<>();
@@ -101,6 +124,23 @@ public final class WebRetrievalProvider implements RetrievalProvider {
             return new RetrievalProviderResult(List.of(), List.of(
                     causedByTimeout(error) ? "web_search_timeout" : "web_search_unavailable"));
         }
+    }
+
+    private List<WebSearchResult> requestedSources(String query) {
+        if (!WebSearchPolicy.shouldSearch(query)) return List.of();
+        var matcher = java.util.regex.Pattern.compile("https?://[^\\s<>\\\"，。；、（）()]+")
+                .matcher(query);
+        List<WebSearchResult> results = new ArrayList<>();
+        while (matcher.find() && results.size() < 3) {
+            String canonical = urls.canonicalize(matcher.group().replaceFirst("[.,;!?]+$", ""));
+            if (!canonical.isBlank()) results.add(new WebSearchResult("Requested source", canonical, ""));
+        }
+        return List.copyOf(results);
+    }
+
+    private List<WebSearchResult> relevantResults(String query, List<WebSearchResult> results) {
+        return results.stream().filter(result -> !urls.canonicalize(result.url()).isBlank())
+                .filter(result -> WebSearchRelevance.relevant(query, result)).toList();
     }
 
     private static boolean causedByTimeout(Throwable error) {
@@ -136,8 +176,10 @@ public final class WebRetrievalProvider implements RetrievalProvider {
                 degradations.add("web_extract_partial_failure");
                 continue;
             }
-            Instant pageDeadline = now.plusSeconds(1).isBefore(extractionDeadline)
-                    ? now.plusSeconds(1) : extractionDeadline;
+            // A sole requested source should have time for DNS/TLS; multiple results
+            // retain their short per-page cap so a stalled page cannot consume the lane.
+            Instant pageCap = now.plusSeconds(results.size() == 1 ? 3 : 1);
+            Instant pageDeadline = pageCap.isBefore(extractionDeadline) ? pageCap : extractionDeadline;
             Duration pageBudget = Duration.between(now, pageDeadline);
             try {
                 ExtractedWebPage page = Mono.defer(() -> extractor.extract(

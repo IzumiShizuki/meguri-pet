@@ -94,6 +94,28 @@ class TrainingFeedbackServiceTest {
     }
 
     @Test
+    void ordinaryChatNeverSamplesOrArchivesEvenWithLegacyNormalProbabilityEnabled() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        Path output = tempDir.resolve("ordinary-chat.jsonl");
+        var feedback = new TrainingFeedbackService(mapper, output, 1, 1, () -> 0);
+        AtomicInteger calls = new AtomicInteger();
+        LlmProvider llm = (request, state, canon, memories, recent) -> {
+            calls.incrementAndGet();
+            return Mono.just(new LlmResponse("ordinary reply"));
+        };
+        var orchestrator = new TurnOrchestrator(llm, null,
+                new RuntimeStateMachine(), new ExpressionResolver(), Duration.ZERO, mapper,
+                new NoopMemoryGateway(), new NoopWebSearchGateway(), feedback);
+        var result = orchestrator.runInline(new TurnRequest("synthetic-user", "website", "ordinary", null,
+                "hello", List.of(), new ClientCapabilities(), null, null, false, false)).block();
+        assertThat(calls).hasValue(1);
+        assertThat(feedback.hasComparison(result.turnId())).isFalse();
+        assertThat(Files.exists(output)).isFalse();
+        assertThat(orchestrator.eventsFor("ordinary")).noneMatch(event -> event.type().startsWith("training."));
+        orchestrator.reset();
+    }
+
+    @Test
     void optionalArchiveFailureDoesNotFailAnOtherwiseSuccessfulReply() throws Exception {
         Path blocker = tempDir.resolve("blocker");
         Files.writeString(blocker, "not a directory");

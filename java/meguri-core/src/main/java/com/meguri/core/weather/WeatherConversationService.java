@@ -18,6 +18,9 @@ import java.util.regex.Pattern;
 public final class WeatherConversationService {
     public enum Intent { NONE, WEATHER, OUTING }
 
+    private static final Pattern TECHNICAL_QUESTION = Pattern.compile(
+            "(?i)\\b(?:api|sdk|open-meteo|json|http|python|javascript)\\b|文档|代码|接口|编程|调用示例|请求参数|算法");
+
     private static final List<String> WEATHER_TERMS = List.of(
             "天气", "下雨", "降雨", "雨伞", "带伞", "温度", "气温", "湿度", "风速",
             "大风", "台风", "晴天", "阴天", "多云", "雷雨", "下雪", "雾霾");
@@ -68,6 +71,8 @@ public final class WeatherConversationService {
 
     public Intent classify(String message) {
         if (message == null || message.isBlank()) return Intent.NONE;
+        if (com.meguri.core.websearch.WebSearchPolicy.isOffline(message)
+                || TECHNICAL_QUESTION.matcher(message).find()) return Intent.NONE;
         String normalized = message.toLowerCase(Locale.ROOT).replaceAll("\\s+", "")
                 .replaceAll("[。！？!?，,~]+$", "");
         if (OUTING_TERMS.stream().anyMatch(normalized::contains)
@@ -89,10 +94,27 @@ public final class WeatherConversationService {
         Objects.requireNonNull(resolution, "resolution");
         Intent intent = resolution.intent();
         if (intent == Intent.NONE || weather == null) return Mono.just(TurnWeatherContext.none());
+        if (!canQuery(resolution)) {
+            return Mono.just(intent == Intent.OUTING ? TurnWeatherContext.none()
+                    : new TurnWeatherContext(intent, false, null));
+        }
         LocalDate targetDate = weather.resolveForecastDate(resolution.dateSource());
         return weather.forecast(targetDate, true)
                 .map(briefing -> TurnWeatherContext.available(intent, briefing))
                 .onErrorReturn(TurnWeatherContext.unavailable(intent));
+    }
+
+    /** A global preference is not proof that this conversation belongs to its owner. */
+    public boolean canQuery(TurnResolution resolution) {
+        if (weather == null || resolution.intent() == Intent.NONE) return false;
+        String source = resolution.locationSource();
+        String name = weather.location().name();
+        if (source.contains(name)) return true;
+        Matcher regions = Pattern.compile("[\\p{IsHan}]{2,}?[省市区县]").matcher(name);
+        // Require the most specific configured region; a province alone is not the same place.
+        String region = name;
+        while (regions.find()) region = regions.group();
+        return source.contains(region);
     }
 
     /** Resolves only narrow follow-ups from the supplied active branch. */
@@ -113,8 +135,10 @@ public final class WeatherConversationService {
             if (index == history.size() - 1 && candidate.content().equals(current)) continue;
             if (classify(candidate.content()) == Intent.WEATHER) {
                 String dateSource = hasExplicitDate(current) ? current : candidate.content();
-                return new TurnResolution(Intent.WEATHER, dateSource, true);
+                return new TurnResolution(Intent.WEATHER, dateSource, true, candidate.content());
             }
+            // A short 'tomorrow?' after another topic must not revive an old forecast.
+            break;
         }
         return TurnResolution.none(current);
     }
@@ -125,10 +149,14 @@ public final class WeatherConversationService {
                 || CHINESE_DATE.matcher(value).find();
     }
 
-    public record TurnResolution(Intent intent, String dateSource, boolean inherited) {
+    public record TurnResolution(Intent intent, String dateSource, boolean inherited, String locationSource) {
+        public TurnResolution(Intent intent, String dateSource, boolean inherited) {
+            this(intent, dateSource, inherited, dateSource);
+        }
         public TurnResolution {
             intent = Objects.requireNonNull(intent, "intent");
             dateSource = dateSource == null ? "" : dateSource;
+            locationSource = locationSource == null ? "" : locationSource;
         }
 
         static TurnResolution none(String message) {
@@ -179,7 +207,10 @@ public final class WeatherConversationService {
         public LlmResponse directResponse(String replyFormat) {
             String chinese;
             String japanese;
-            if (!available()) {
+            if (!attempted && intent == Intent.WEATHER) {
+                chinese = "你想查哪个地区的天气？当前对话还没有选择可用的天气位置。";
+                japanese = "どの地域の天気を知りたい？この会話では、まだ場所が選ばれていないよ。";
+            } else if (!available()) {
                 chinese = intent == Intent.OUTING
                         ? "实时天气暂时没查到，出门路上注意安全。"
                         : "实时天气查询暂时不可用，请稍后再试。";

@@ -21,6 +21,62 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class WebRetrievalProviderTest {
+    @Test
+    void soleSourceHasABoundedTlsBudgetInsteadOfTheMultiResultOneSecondCap() {
+        var allowedBudget = new AtomicReference<Duration>();
+        WebContentExtractor extractor = (result, deadline) -> {
+            allowedBudget.set(Duration.between(Instant.now(), deadline));
+            return Mono.just(new ExtractedWebPage(result.url(), result.title(), "source", Instant.now()));
+        };
+        var provider = new WebRetrievalProvider((query, limit) -> Mono.just(WebSearchRecall.disabled()),
+                extractor, Set.of("allowed.test"), null);
+        var context = new RetrievalContext("user", Set.of("web:read"), "snapshot", 1,
+                Instant.now(), Instant.now().plusSeconds(6), "trace");
+        assertThat(provider.retrieve("按链接核实 https://allowed.test/source", 1, context)).hasSize(1);
+        assertThat(allowedBudget.get()).isGreaterThan(Duration.ofSeconds(2)).isLessThanOrEqualTo(Duration.ofSeconds(3));
+    }
+    @Test
+    void explicitlyRequestedPublicLinkUsesExtractionWithoutSearchingItsWrapper() {
+        AtomicInteger searches = new AtomicInteger();
+        WebSearchGateway search = (query, limit) -> {
+            searches.incrementAndGet();
+            return Mono.just(new WebSearchRecall("empty", "test", List.of()));
+        };
+        WebContentExtractor extractor = (result, deadline) -> Mono.just(
+                new ExtractedWebPage(result.url(), "HTTP semantics", "retrieved source body", Instant.now()));
+        var provider = new WebRetrievalProvider(search, extractor, Set.of("allowed.test"), null);
+        var result = provider.retrieveWithDiagnostics("按链接核实 https://allowed.test/rfc9110。", 2, context());
+        assertThat(searches).hasValue(0);
+        assertThat(result.items()).singleElement().satisfies(item -> {
+            assertThat(item.sourceId()).isEqualTo("https://allowed.test/rfc9110");
+            assertThat(item.content()).isEqualTo("retrieved source body");
+        });
+    }
+
+    @Test
+    void genericProductPageDoesNotSatisfySpecificTechnicalSubject() {
+        assertThat(WebSearchRelevance.relevant("Java 21 virtual threads", new WebSearchResult(
+                "Java downloads", "https://allowed.test/java", "Download Java 21 now"))).isFalse();
+    }
+
+    @Test
+    void requestedLinksCannotBypassDisabledNetworkingOrLeakRejectedPrivateUrlsToSearch() {
+        AtomicInteger calls = new AtomicInteger();
+        WebContentExtractor extractor = (result, deadline) -> {
+            calls.incrementAndGet();
+            return Mono.empty();
+        };
+        var disabled = new WebRetrievalProvider(new NoopWebSearchGateway(), extractor, Set.of(), null);
+        assertThat(disabled.retrieveWithDiagnostics("按链接核实 https://example.com/", 1, context()).items()).isEmpty();
+        WebSearchGateway search = (query, limit) -> {
+            calls.incrementAndGet();
+            return Mono.just(new WebSearchRecall("empty", "test", List.of()));
+        };
+        var enabled = new WebRetrievalProvider(search, extractor, Set.of(), null);
+        assertThat(enabled.retrieveWithDiagnostics("按链接核实 http://127.0.0.1/admin", 1, context()).items()).isEmpty();
+        assertThat(calls).hasValue(0);
+    }
+
     @ParameterizedTest
     @CsvSource({
             "disabled, web_search_disabled",
@@ -131,9 +187,9 @@ class WebRetrievalProviderTest {
         RetrievalProviderResult result = provider.retrieveWithDiagnostics(
                 "meguri runtime", 2, context());
 
-        assertThat(extracts).hasValue(2);
-        assertThat(result.degradations()).isEmpty();
-        assertThat(result.items()).hasSize(2);
+        assertThat(extracts).hasValue(1);
+        assertThat(result.degradations()).contains("web_results_irrelevant");
+        assertThat(result.items()).hasSize(1);
         assertThat(result.items().getFirst().sourceId()).isEqualTo("https://allowed.test/best");
         assertThat(result.items()).allSatisfy(item -> {
             assertThat(item.sourceType()).isEqualTo(SourceType.WEB);
@@ -148,7 +204,7 @@ class WebRetrievalProviderTest {
     void extractionFailureIsolatedAndReportedWithoutDiscardingOtherPages() {
         WebSearchGateway search = (query, limit) -> Mono.just(new WebSearchRecall(
                 "ok", "test", List.of(
-                new WebSearchResult("bad", "https://allowed.test/bad", "bad"),
+                new WebSearchResult("bad", "https://allowed.test/bad", "good topic, bad page"),
                 new WebSearchResult("good", "https://allowed.test/good", "good"))));
         WebContentExtractor extractor = (result, deadline) -> result.url().endsWith("/bad")
                 ? Mono.error(new IllegalStateException("broken"))
@@ -197,8 +253,8 @@ class WebRetrievalProviderTest {
     void stalledPageLeavesTimeForAnotherReadableResult() {
         WebSearchGateway search = (query, limit) -> Mono.just(new WebSearchRecall(
                 "ok", "test", List.of(
-                new WebSearchResult("stalled", "https://allowed.test/stalled", "search-only"),
-                new WebSearchResult("readable", "https://allowed.test/readable", "search-only"))));
+                new WebSearchResult("stalled", "https://allowed.test/stalled", "release search-only"),
+                new WebSearchResult("readable", "https://allowed.test/readable", "release search-only"))));
         AtomicInteger cancelled = new AtomicInteger();
         WebContentExtractor extractor = (result, deadline) -> result.url().endsWith("/stalled")
                 ? Mono.<ExtractedWebPage>never().doOnCancel(cancelled::incrementAndGet)
@@ -215,5 +271,34 @@ class WebRetrievalProviderTest {
         assertThat(cancelled).hasValue(1);
         assertThat(result.degradations()).contains("web_extract_partial_failure")
                 .doesNotContain("web_search_snippet_fallback");
+    }
+
+    @Test
+    void rejectsUnrelatedResultsAndRetriesOnlyOnceWithTheSameSubject() {
+        var queries = new java.util.ArrayList<String>();
+        WebSearchGateway search = (query, limit) -> {
+            queries.add(query);
+            return Mono.just(new WebSearchRecall("ok", "test", List.of(new WebSearchResult(
+                    "Minecraft", "https://allowed.test/game", "unrelated game"))));
+        };
+        var provider = new WebRetrievalProvider(search, WebContentExtractor.snippets(), Set.of(), null);
+        var result = provider.retrieveWithDiagnostics("RFC 9110", 3, context());
+        assertThat(queries).containsExactly("RFC 9110", "\"rfc\" \"9110\"");
+        assertThat(result.items()).isEmpty();
+        assertThat(result.degradations()).contains("web_results_irrelevant", "web_search_retried");
+    }
+
+    @Test
+    void boundedRecoveryCanReturnRelevantEvidence() {
+        AtomicInteger calls = new AtomicInteger();
+        WebSearchGateway search = (query, limit) -> Mono.just(new WebSearchRecall("ok", "test",
+                calls.incrementAndGet() == 1
+                        ? List.of(new WebSearchResult("QQ", "https://allowed.test/qq", "chat"))
+                        : List.of(new WebSearchResult("HTTP semantics RFC 9110", "https://allowed.test/rfc9110", "RFC 9110 HTTP"))));
+        var provider = new WebRetrievalProvider(search, WebContentExtractor.snippets(), Set.of(), null);
+        var result = provider.retrieveWithDiagnostics("RFC 9110", 3, context());
+        assertThat(calls).hasValue(2);
+        assertThat(result.items()).singleElement().satisfies(item ->
+                assertThat(item.sourceId()).endsWith("/rfc9110"));
     }
 }

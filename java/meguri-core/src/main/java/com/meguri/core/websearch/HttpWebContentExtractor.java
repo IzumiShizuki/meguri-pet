@@ -13,12 +13,14 @@ public final class HttpWebContentExtractor implements WebContentExtractor {
     private static final Pattern NON_CONTENT = Pattern.compile(
             "(?is)<(script|style|noscript|svg|iframe)[^>]*>.*?</\\1>");
     private static final Pattern TAG = Pattern.compile("(?s)<[^>]+>");
-    private static final int MAX_BODY_CHARS = 1_000_000;
+    private static final int MAX_BODY_CHARS = 2_000_000;
     private static final int MAX_CONTENT_CHARS = 12_000;
     private final WebClient client;
 
     public HttpWebContentExtractor(WebClient client) {
-        this.client = client == null ? WebClient.builder().build() : client;
+        // Match the documented body bound; WebClient otherwise stops at 256 KiB.
+        this.client = (client == null ? WebClient.builder() : client.mutate())
+                .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(MAX_BODY_CHARS)).build();
     }
 
     @Override

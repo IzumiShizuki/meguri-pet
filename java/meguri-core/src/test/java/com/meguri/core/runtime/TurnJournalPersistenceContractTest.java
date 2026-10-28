@@ -23,6 +23,35 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TurnJournalPersistenceContractTest {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void replayDrainsTerminalEventPublishedAfterItsFirstSnapshot(boolean terminalBeforeRead) {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        RecordingJournal journal = new RecordingJournal(mapper) {
+            @Override public List<EventEnvelope> events(String sessionId) {
+                var snapshot = super.events(sessionId);
+                if (reads.getAndIncrement() == 0) {
+                    var record = turns().values().iterator().next();
+                    record.tryFail("synthetic failure");
+                    append(record, "turn.failed", Map.of("error", "synthetic failure"), null);
+                }
+                return snapshot;
+            }
+        };
+        var request = new TurnRequest("synthetic", "website", "replay-race", "hello",
+                List.of(), new ClientCapabilities(), null, null, false);
+        var record = journal.create(request, Instant.now().plusSeconds(10));
+        if (terminalBeforeRead) record.tryFail("synthetic failure");
+        var runtime = new TurnOrchestrator(null, null, new RuntimeStateMachine(), new ExpressionResolver(),
+                Duration.ZERO, mapper, new NoopMemoryGateway(), new NoopWebSearchGateway(),
+                TrainingFeedbackService.disabled(mapper), WeatherConversationService.disabled(), journal);
+        var events = runtime.sessionEvents("replay-race", 0).collectList().block(Duration.ofSeconds(3));
+        assertThat(events).extracting(EventEnvelope::getType).containsExactly("turn.failed");
+        assertThat(events.getFirst().getTurnId()).isEqualTo(record.getTurnId());
+        runtime.reset();
+    }
+
     @Test
     void persistsFrozenManifestAndEveryLifecycleStage() {
         ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
@@ -126,7 +155,7 @@ class TurnJournalPersistenceContractTest {
             boolean manifestPresent,
             boolean resultPresent) { }
 
-    private static final class RecordingJournal implements TurnJournal {
+    private static class RecordingJournal implements TurnJournal {
         private final InMemoryTurnJournal delegate;
         private final CopyOnWriteArrayList<PersistedSnapshot> snapshots = new CopyOnWriteArrayList<>();
 
