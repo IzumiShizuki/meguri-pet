@@ -15,11 +15,18 @@ from .bridge import MessageRoutePolicy, is_meguri_command, platform_message_from
 from .client import HttpMeguriCoreClient
 from .daily_reports import DailyReportPoller
 from .gateway import MeguriGateway
+from .gateway_settings import effective_gateway_settings
 from .identity import IdentityBindingStore
 from .persona_routing import PersonaBackendRouting
+from .plugin_routing import activated_handlers, plugins_own_event
 from .relay import HttpMeguriRelayClient
 from .turn_checkpoints import TurnCheckpointStore
 from .timeprism_reminders import TimePrismReminderPoller
+from .timeprism_todo_creation import (
+    TimePrismTodoCreation,
+    TimePrismTodoDraftStore,
+    is_timeprism_todo_command,
+)
 
 
 @register(
@@ -33,6 +40,7 @@ class MeguriGatewayPlugin(Star):
 
     def __init__(self, context: Context, config: AstrBotConfig) -> None:
         super().__init__(context)
+        config = effective_gateway_settings(config)
         self.config = config
         self.persona_routing = PersonaBackendRouting(
             enabled=bool(config.get("persona_routing_enabled", False)),
@@ -63,6 +71,7 @@ class MeguriGatewayPlugin(Star):
                 str(binding.get("meguri_user_id", "")).strip(),
                 account_id=str(binding.get("account_id", "*")).strip() or "*",
             )
+        self.identities = identities
 
         core = HttpMeguriCoreClient(
             base_url=str(config.get("core_url", "http://127.0.0.1:18080")),
@@ -185,29 +194,100 @@ class MeguriGatewayPlugin(Star):
                 10, int(config.get("timeprism_reminder_poll_seconds", 15))
             )
             self._timeprism_reminder_task = asyncio.create_task(self._timeprism_reminder_loop())
+        self.timeprism_todo_creation = None
+        if bool(config.get("timeprism_todo_creation_enabled", False)):
+            owner_senders = {
+                str(value).strip()
+                for value in (config.get("timeprism_todo_operator_senders", []) or [])
+                if str(value).strip()
+            }
+            if not owner_senders or any(
+                len(sender.split(":", 2)) != 3
+                or not all(sender.split(":", 2))
+                or sender.split(":", 2)[1] == "*"
+                for sender in owner_senders
+            ):
+                raise RuntimeError(
+                    "timeprism_todo_creation_enabled requires exact "
+                    "timeprism_todo_operator_senders entries"
+                )
+            self.timeprism_todo_creation = TimePrismTodoCreation(
+                core,
+                owner_user_id=int(config.get("timeprism_owner_user_id", 0)),
+                owner_senders=owner_senders,
+                store=TimePrismTodoDraftStore(
+                    str(
+                        config.get(
+                            "timeprism_todo_draft_file",
+                            "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-todo-drafts.json",
+                        )
+                    )
+                ),
+            )
         logger.info("Meguri AstrBot gateway initialized")
 
     @filter.event_message_type(filter.EventMessageType.ALL, priority=100)
     async def on_message(self, event: AstrMessageEvent):
         """Handle explicit /meguri commands and optionally private chat messages.
 
-        Messages owned by another plugin's registered command are released here
-        before routing, so this plugin never calls ``should_call_llm(True)`` or
-        ``stop_event()`` on them: AstrBot then keeps its normal plugin dispatch
-        and the owning plugin answers instead of Meguri.
+        Plugin-owned messages suppress default LLM chat but leave event dispatch
+        running, so the owning plugin answers without starting a Core turn.
         """
 
         message = platform_message_from_event(event)
+        handlers = activated_handlers(event)
         if message is None:
+            if handlers is not None and plugins_own_event(event, handlers):
+                event.should_call_llm(True)
             return
-        if self.route_policy.matches_passthrough(message.text):
+        if message.text.strip().lower() in {"/ainews", "/ai早报", "/meguri news"}:
+            event.should_call_llm(True)
+            if not self.route_policy.is_allowed(message):
+                yield event.plain_result("当前聊天账号未获准访问 Meguri。")
+            else:
+                try:
+                    report = await self.gateway.core.latest_daily_report("ai_news")
+                    text = report.get("delivery_text", "") if report else ""
+                    if not isinstance(text, str) or len(text) > 8000:
+                        text = ""
+                    yield event.plain_result(text or "AI 早报还没有准备好，我会在更新后自动送来。")
+                except Exception as error:
+                    logger.warning("AI news lookup will retry (%s)", type(error).__name__)
+                    yield event.plain_result("暂时无法读取 AI 早报，请稍后再试。")
+            event.stop_event()
             return
         explicit = is_meguri_command(message.text)
+        if not explicit and (
+            self.route_policy.matches_passthrough(
+                message.text, include_registered=handlers is None
+            )
+            or (handlers is not None and plugins_own_event(event, handlers))
+        ):
+            event.should_call_llm(True)
+            return
         if (
             not is_meguri_command(message.text)
             and not await self.persona_routing.should_use_meguri(self.context, event)
         ):
             return
+        if is_timeprism_todo_command(message.text):
+            event.should_call_llm(True)
+            if self.timeprism_todo_creation is None:
+                reply_text = "TimePrism 待办创建尚未启用。"
+            else:
+                actor_id = self.identities.resolve(message).platform_actor_id
+                reply_text = await self.timeprism_todo_creation.handle(message, actor_id)
+            yield event.plain_result(reply_text or "无法处理这条待办指令。")
+            event.stop_event()
+            return
+        if self.timeprism_todo_creation is not None:
+            actor_id = self.identities.resolve(message).platform_actor_id
+            todo_reply = await self.timeprism_todo_creation.handle(message, actor_id)
+            if todo_reply is not None:
+                event.should_call_llm(True)
+                yield event.plain_result(todo_reply)
+                event.stop_event()
+                return
         if not self.route_policy.should_route(message):
             return
         if not self.route_policy.is_allowed(message):

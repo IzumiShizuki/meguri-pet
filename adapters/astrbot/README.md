@@ -51,6 +51,44 @@ but before the cursor was persisted can produce one duplicate. Old events are
 skipped after `timeprism_reminder_max_age_minutes` (default 30). No new events
 are generated while the desktop is stopped.
 
+## Create TimePrism reminders from private chat
+
+The gateway can prepare and confirm one-time TimePrism Todos for one configured
+owner. This feature is disabled by default. Enable
+`timeprism_todo_creation_enabled`, set `timeprism_owner_user_id` to the same
+positive Shizuki account ID configured in Core, and add the exact private sender
+as `platform:bot_account:sender_id` under `timeprism_todo_operator_senders`.
+Group messages cannot create or confirm drafts. A request such as
+`提醒我1点睡觉` gets a date and AM/PM inferred from the next future
+Asia/Shanghai occurrence and returns a preview without writing anything.
+
+Use the commands shown in the preview:
+
+```text
+/meguri todo confirm <草稿编号>
+/meguri todo edit <草稿编号> <新的提醒描述>
+/meguri todo cancel <草稿编号>
+```
+
+Before enabling the feature, configure the Core process with absolute paths to
+two external files containing the Shizuki owner email and password:
+`MEGURI_TIMEPRISM_OWNER_EMAIL_FILE` and
+`MEGURI_TIMEPRISM_OWNER_PASSWORD_FILE`. Keep those files outside the repository
+and readable only by the Core service account. Core also needs its existing
+`MEGURI_REMINDER_OWNER_SHIZUKI_USER_ID`, authenticated AstrBot shared-token
+configuration (`MEGURI_CORE_SHARED_TOKEN_FILE`), and writable
+`MEGURI_REMINDER_DIR`. Todo creation always verifies the token and exact
+owner/client/session identity, including when legacy chat uses
+`MEGURI_CORE_AUTH_REQUIRED=false`. Restart Core and AstrBot after configuration
+changes. Missing writer credentials fail closed; the existing reminder-delivery
+poller is configured independently.
+
+`MEGURI_TIMEPRISM_HTTP_TIMEOUT_MS` defaults to 15000 and bounds each HTTP exchange
+through the complete response body, including a body stalled after headers.
+Confirmed receipts use the draft's minute precision even if the website returns
+zero seconds. The persistent write journal retains verified website data;
+uncertain writes reconcile the original request marker before any retry.
+
 Because this plugin lives in a monorepo subdirectory, AstrBot URL/marketplace
 installation must not point at the monorepo root. Build the standalone archive
 first, then inspect it and install it through the separately approved AstrBot
@@ -145,20 +183,32 @@ With `route_all_private_messages=true` (or `route_all_group_messages=true`) the
 gateway sees essentially every message, so it must yield messages that belong to
 another plugin instead of answering them. Two mechanisms decide that:
 
-- **Discovery**: command names and aliases are read from every other plugin's
-  registered `CommandFilter`/`CommandGroupFilter`, cached for 60 seconds. A
-  discovery failure leaves the configured list authoritative rather than routing
-  everything to Meguri.
+- **Per-event ownership**: AstrBot's `activated_handlers` is authoritative for
+  registered command, command-group and regex handlers. AstrBot has already
+  applied platform, permission, message-type, plugin and session filters. The
+  gateway does not evaluate those filters twice or alter parsed parameters.
+- **Automatic triggers**: matched Bilibili share-card, media-parser,
+  image-search and meme listeners have narrow checks against their existing
+  instances/settings. The gateway does no parsing downloads or resource loading.
+  General ALL-message listeners alone do not claim ordinary chat.
+- **Legacy discovery**: when per-event metadata is unavailable, command names
+  and aliases are read from other plugins' `CommandFilter`/`CommandGroupFilter`,
+  cached for 60 seconds. Discovery failure leaves configured aliases working.
 - **`passthrough_commands`**: an explicit release list, prefix-matched and
   case-insensitive, for plugins that match commands as plain text instead of
   registering a `CommandFilter`. `astrbot_plugin_animewifex` is such a plugin, so
   `jrlp`, `jrlb`, and its Chinese commands belong in that list.
 
-Matching accepts the bare command and the command followed by arguments
-(`查老婆 @某人`). An explicit `/meguri ...` message is never released, even when the
-text after the prefix looks like another plugin's command. Released messages are
-not blocked from AstrBot's default LLM and are not stopped, so they behave exactly
-as if the gateway had not run.
+Matching accepts bare or slash-prefixed commands, case-insensitively, and
+whitespace-delimited arguments (`查老婆 @某人`). An explicit `/meguri ...` message
+is never released, including after AstrBot strips its wake prefix. Released
+messages suppress AstrBot's default LLM and leave dispatch running, so the owning
+plugin answers without a Core turn or a competing ordinary-chat reply.
+
+The installed plugin support matrix and complete command/alias catalogue are in
+[AstrBot 个人模式命令表](../../docs/astrbot-personal-commands.md). Private support
+does not enable group administration, unavailable platform APIs, or AstrBot LLM
+tools inside Meguri Core.
 
 ## Chinese/Japanese learning replies
 

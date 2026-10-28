@@ -192,6 +192,17 @@ function Update-RemoteStaging {
         MEGURI_AGENT_PLANNER_QUEUE_TIMEOUT_MS = '250'
         MEGURI_AGENT_PLANNER_PROVIDER_TIMEOUT_MS = '4000'
         MEGURI_AGENT_PLANNER_DEADLINE_MS = '5000'
+        # Explicit capability activation prevents an otherwise healthy image
+        # upgrade from inheriting the old container's disabled web setting.
+        MEGURI_WEB_SEARCH_ENABLED = 'true'
+        MEGURI_WEB_SEARCH_BASE_URL = 'https://cn.bing.com/search'
+        MEGURI_WEB_SEARCH_TIMEOUT_MS = '8000'
+        MEGURI_WEB_SEARCH_MAX_RESULTS = '5'
+        MEGURI_INPUT_CHECK_ENABLED = 'true'
+        MEGURI_INPUT_CHECK_MODEL = 'deepseek-v4-flash'
+        MEGURI_INPUT_CHECK_TIMEOUT_MS = '2000'
+        MEGURI_INPUT_CHECK_QUEUE_TIMEOUT_MS = '50'
+        MEGURI_INPUT_CHECK_MAX_CONCURRENCY = '2'
     }
     $remoteEnvironment = Merge-EnvironmentOverrides `
         -Environment @($active.Config.Env) `

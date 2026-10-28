@@ -7,7 +7,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 PLUGIN_NAME = "astrbot_plugin_meguri_gateway"
 PLUGIN_ROOT = Path(__file__).resolve().parent / PLUGIN_NAME
-INCLUDED_SUFFIXES = {".py", ".json", ".yaml", ".txt", ".png", ".ttf", ".otf"}
+INCLUDED_SUFFIXES = {".md", ".py", ".json", ".yaml", ".txt", ".png", ".ttf", ".otf"}
 
 
 def build_plugin_archive(output: Path) -> Path:

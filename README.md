@@ -1,6 +1,6 @@
-# Meguri local framework bootstrap
+# Meguri companion workspace
 
-This repository now contains the phase 0/1 local runtime skeleton described by the Notion contracts. It is deliberately offline-first: no API key, production server, AstrBot data directory, PostgreSQL, Redis, Kafka, or MemoryOS instance is contacted.
+This workspace contains both an offline Python mock harness and the current Java Core-backed desktop runtime. The Python harness remains useful for isolated contract and simulation work; the native desktop launcher starts Java Core, the local gateway, and optional local speech services. Runtime selection depends on launcher configuration and local resources, so the mock harness is not evidence that the desktop is running against mocks.
 
 ## Run the mock core
 
@@ -29,22 +29,39 @@ D:\environment\anaconda3\envs\py314\python.exe -m unittest discover -v
 D:\environment\nodejs\runtime\node-v24.17.0-win-x64\node.exe --test tests-ts\protocol.test.ts tests-ts\renderer.test.ts tests-ts\airi-adapter.test.ts tests-ts\tts-adapter.test.ts tests-ts\website-adapter.test.ts
 ```
 
-The provider interfaces are intentionally replaceable. `MockLLMProvider`, `MockRagProvider`, and `FakeMemoryProvider` remain the enabled local defaults. Production provider selection, pgvector, Mem0, OpenResty, authentication, backup/restore validation, and deployment remain separate follow-up stages.
+In the Python harness, the provider interfaces are intentionally replaceable and `MockLLMProvider`, `MockRagProvider`, and `FakeMemoryProvider` remain the local defaults. The Java desktop runtime has its own provider and persistence configuration, described below; these mock-harness checks do not validate a production deployment.
 
-## Java online runtime (parallel phase)
+## Java Core desktop runtime
 
 The first Java migration phase lives in `java/meguri-core`. It uses JDK 21,
 Spring Boot WebFlux and LangChain4j, starts on port `18080`, and preserves the
-existing Python core on port `8000` as the authoritative memory service. The
-default profile is offline mock; the Java service does not contact an external
-LLM unless `MEGURI_LLM_PROVIDER=openai-compatible` and an API-key file are
-configured explicitly. See `java/meguri-core/README.md` for Maven commands and
-the Python memory bridge configuration.
+Python memory bridge on port `8000` when that bridge is enabled. The Java
+application defaults to the `local-mock` profile, loopback port `18080`, mock
+LLM, and in-memory turn journal. The desktop Core launcher can override these
+defaults: it enables execution mode and Limited ReAct, configures the
+OpenAI-compatible LLM when its local key file exists, and
+selects PostgreSQL turn storage when a dedicated runtime database file is
+available. Memory bridge activation is configured separately. See
+`docs/p2-runtime-map-2026-10-08.md` for the exact default/launcher split and
+rollback controls, and `java/meguri-core/README.md` for Core details.
+
+The native desktop launcher starts Core on `127.0.0.1:18080`, its loopback
+gateway on `127.0.0.1:15173`, and local TTS on `127.0.0.1:9880` when those
+services are not already listening. Local commitment follow-up, desktop
+notifications and speech therefore require the relevant desktop process and
+resources to be running; TimePrism reminders remain a separate server-backed
+path.
 
 The trusted local launcher also enables a bounded, loopback-only adapter for
 controlling the Shizuki desktop app. See `docs/shizuki-desktop-control.md` for
 startup instructions, supported natural-language operations, security
 boundaries, and troubleshooting.
+
+The native desktop can also initiate a short, context-grounded conversation
+after an idle period using the existing initiative controls. Focus, local quiet
+hours, AI consent, voice activity and daily limits gate this independent
+assistant-only flow. Core and desktop must both include the reach-out endpoints;
+older or unavailable services stay silent. See `docs/idle-companion-reach-outs.md`.
 
 ## Local text-model MVP
 

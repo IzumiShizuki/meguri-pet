@@ -1,0 +1,30 @@
+## Context
+
+See proposal.md for motivation. Current memory production configuration disables embedding and reranking; the repository contains a synthetic exact-vector benchmark and a limited fixed recall validator. GUI observations currently use a mock provider. Cross-client memory reads share PostgreSQL authority after verified binding, while session event sequences are not memory replication revisions. The design therefore evaluates captured observations without asserting that all runtime capabilities exist.
+
+## Goals / Non-Goals
+
+**Goals:** Give Luna a bounded, independently testable coding task supporting all three research tracks; establish exact metric denominators; preserve raw evidence identity and current/obsolete version labels; make missing and synthetic evidence visible.
+
+**Non-Goals:** This change does not enable external embedding services, alter recall ranking, change PostgreSQL schemas, connect OCR/VLM providers, execute desktop actions, bind platform identities, train a model, or claim the task-sheet coverage has been collected. Those runtime changes need separate OpenSpec changes from the strengthening report.
+
+## Decisions
+
+1. **Offline evidence evaluator.** Add a standard-library Python module under an independent tooling path and a `scripts/evaluate_thesis_strengthening.py` CLI. Read a versioned JSON document with `evidence_kind` (`observed` or `synthetic`), metadata and optional memory/gui/cross-client sections. The module does not fetch or manufacture observations. Extending the random cosine benchmark was considered, but that measures a different construct and invites confusion with cross-session accuracy.
+2. **Version-aware gold labels.** Memory observations contain ranked hit pairs and explicit obsolete pairs, plus canonical tenant/user for queries and hits. Gold positives are current pairs, and missing answers are represented by an empty gold set. Recall@5 is macro mean of per-query set recall; old-version error rate is the fraction of all queries containing at least one obsolete pair in their first five. Report raw counts as well. Probe records separately measure credential admission. Dataset reviewers must annotate old versions and expected owners; labels are not inferred from answer text.
+3. **Separate GUI objectives.** Use same-coordinate gold boxes and predicted points for localization, and a strict success boolean for the complete task. Do not infer completion from a click or successful grounding. Distinct application class/scenario identifiers enforce coverage. Explicit sensitive-operation probes report authorization and actual success.
+4. **Fail unsuccessful synchronization explicitly.** Cross-client cases carry authoritative committed version and canonical state digest, observed version/digest, distinct source/target clients, stable-network status and commit/delivery timestamps in a common monotonic clock domain. Digest inputs include relevant authorization, active/deleted status and version pointers so matching version labels alone cannot hide incorrect deletion or grants. Only consistent stable cases generate synchronization durations. Missing or inconsistent stable deliveries block the latency gate; receipt latency can be reported separately. Report total/stable/delivered/missing/inconsistent/unstable counts and all percentile exclusions. The percentile uses sorted observations at `(n - 1) * 0.95` with linear interpolation. Memory observations identify distinct source/query sessions; empty-gold cases identify the available history session and count toward cross-session coverage. Distinct case IDs can reuse source/query sessions and source/receiving clients. GUI safety requires at least one explicit unauthorized operation probe, rather than only authorized operations with no violations.
+5. **Strict validation and evidence scope.** Required numeric values must be finite and not booleans; boolean values must be real booleans. Reject duplicate IDs within a section and invalid geometry/timestamps. JSON `NaN`/Infinity is invalid. CLI returns a validation error without a report on malformed input. Empty sections return null metrics. A caller-supplied `observed` label is a provenance assertion, not independent proof; experimental capture logs and dataset review are still required.
+6. **Small synthetic fixture.** Check in a small labeled example covering current/obsolete versions, unanswerable query, missing synchronization, localization/task disagreement and forbidden admission. It demonstrates report behavior and intentionally does not reach 150/60/50. Meaningful tests verify independently calculated expected results, malformed data, duplicates, boundaries and all acceptance gates. No new dependency or environment install is required.
+
+## Risks / Trade-offs
+
+- [Manual labels are wrong or incomplete] → Preserve dataset version and review record; compare against authoritative version history. An unannotated obsolete pair cannot be counted as known obsolete.
+- [P95 hides timeout or late clients] → Report missing stable deliveries and fail the latency gate when any exist; do not treat their absent durations as zero.
+- [Offline observed label is trusted too much] → Report evidence kind, run metadata and coverage; require independently retained capture logs for thesis conclusions.
+- [Coordinate systems differ under DPI or multiple screens] → Require annotation and prediction in the same declared coordinates; adapters must normalize before exporting observations.
+- [Global accuracy masks regressions] → Preserve per-case detail and design the later dataset with named strata and ablation splits in the strengthening report.
+
+## Migration Plan
+
+Additive tooling only. Run CLI against the included synthetic example and the new targeted evaluator tests. Removal of the new tooling and files is sufficient rollback; no runtime restart or database migration is needed. Real capture datasets remain separate and must avoid storing plaintext credentials or private user content.

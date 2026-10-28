@@ -6,7 +6,12 @@ param(
     [string]$ReportPython = 'D:\environment\anaconda3\envs\py314\python.exe',
     [string]$CoreUrl = 'https://bot.shizuki.online/meguri-core',
     [string]$CoreTokenFile = 'D:\environment\secrets\meguri\desktop-core-token.txt',
+    [string]$ContentLlmBaseUrl = '',
+    [string]$ContentLlmModel = '',
+    [string]$ContentLlmKeyFile = '',
+    [ValidateRange(1, 24)][int]$ContentMaxVideos = 12,
     [string]$TargetDate = '',
+    [switch]$MetadataOnly,
     [switch]$AllowLate,
     [switch]$SkipRemotePublish,
     [switch]$DryRun
@@ -62,6 +67,27 @@ $bootstrapScript = Join-Path $BhfRoot 'scripts\bootstrap_private_config.py'
 $serverScript = Join-Path $BhfRoot 'main.py'
 $reportScript = Join-Path $MeguriRoot 'tools\generate_bilibili_browser_report.py'
 $publisherScript = Join-Path $MeguriRoot 'tools\publish_daily_report.py'
+$contentScript = Join-Path $MeguriRoot 'tools\enrich_bilibili_report.py'
+if (-not $ContentLlmBaseUrl) {
+    $ContentLlmBaseUrl = if ($env:MEGURI_LLM_BASE_URL) { $env:MEGURI_LLM_BASE_URL } else { 'https://api.deepseek.com' }
+}
+if (-not $ContentLlmModel) {
+    $ContentLlmModel = if ($env:MEGURI_LLM_MODEL) { $env:MEGURI_LLM_MODEL } else { 'deepseek-v4-flash' }
+}
+if (-not $ContentLlmKeyFile) {
+    # Reuse external key files; never copy keys into arguments, logs or reports.
+    # The established default key belongs only to the established DeepSeek endpoint.
+    if ($env:MEGURI_LLM_API_KEY_FILE) {
+        $ContentLlmKeyFile = $env:MEGURI_LLM_API_KEY_FILE
+    } elseif ($ContentLlmBaseUrl.TrimEnd('/') -in @('https://api.deepseek.com', 'https://api.deepseek.com/v1')) {
+        foreach ($candidateKeyFile in @('D:\environment\secrets\meguri-deepseek-api-key.txt', 'D:\environment\secrets\meguri\deepseek-api-key.txt')) {
+            if (Test-Path -LiteralPath $candidateKeyFile -PathType Leaf) {
+                $ContentLlmKeyFile = $candidateKeyFile
+                break
+            }
+        }
+    }
+}
 $privateRoot = Join-Path $HOME '.meguri\bilibili'
 $stateFile = Join-Path $privateRoot 'state\daily-sync-latest.json'
 $taskStateFile = Join-Path $privateRoot 'state\meguri-daily-latest.json'
@@ -88,6 +114,9 @@ $preview = [ordered]@{
     core_url = $CoreUrl
     core_token_file = $CoreTokenFile
     skip_remote_publish = [bool]$SkipRemotePublish
+    content_enabled = -not [bool]$MetadataOnly
+    content_max_videos = $ContentMaxVideos
+    content_llm_model = $ContentLlmModel
 }
 if ($DryRun) {
     $preview | ConvertTo-Json -Depth 3
@@ -192,6 +221,7 @@ $reportSyncStatus = 'unavailable'
 $reportStatus = 'unavailable'
 $publishExitCode = 2
 $publishStatus = 'not_attempted'
+$contentStatus = if ($MetadataOnly) { 'disabled' } else { 'not_attempted' }
 $pipelineError = $null
 try {
     New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
@@ -258,6 +288,32 @@ try {
             $reportSyncStatus = [string]$reportResult.sync_status
             $reportStatus = [string]$reportResult.status
             if ($reportExitCode -eq 0 -and $reportStatus -in @('ready', 'empty')) {
+                if (-not $MetadataOnly -and (Test-Path -LiteralPath $contentScript -PathType Leaf)) {
+                    try {
+                        $contentReportJson = Join-Path $logDirectory ('content-report-' + $TargetDate + '.json')
+                        $contentArguments = @(
+                            $contentScript, '--project-root', $MeguriRoot,
+                            '--report-json', $reportStdout, '--output-json', $contentReportJson,
+                            '--max-videos', [string]$ContentMaxVideos,
+                            '--budget-seconds', '100',
+                            '--llm-base-url', $ContentLlmBaseUrl, '--llm-model', $ContentLlmModel
+                        )
+                        if ($ContentLlmKeyFile) { $contentArguments += @('--llm-key-file', $ContentLlmKeyFile) }
+                        $contentStopAt = (Get-Date).AddSeconds(110)
+                        if ($contentStopAt -gt $reportDeadline) { $contentStopAt = $reportDeadline }
+                        if ((Get-Date).AddSeconds(5) -lt $contentStopAt) {
+                            $contentExitCode = Invoke-BoundedProcess `
+                                -FilePath $ReportPython -ArgumentList $contentArguments `
+                                -WorkingDirectory $MeguriRoot -StopAt $contentStopAt `
+                                -LogPrefix ('content-' + $TargetDate)
+                            if ($contentExitCode -eq 0) {
+                                $contentResult = Get-Content -Raw -Encoding UTF8 -LiteralPath $contentReportJson | ConvertFrom-Json
+                                $contentStatus = [string]$contentResult.content_analysis.status
+                                $reportStdout = $contentReportJson
+                            } else { $contentStatus = 'failed_metadata_retained' }
+                        } else { $contentStatus = 'skipped_deadline' }
+                    } catch { $contentStatus = 'failed_metadata_retained' }
+                } elseif (-not $MetadataOnly) { $contentStatus = 'script_missing' }
                 $reportPath = Join-Path $MeguriRoot ('reports\daily\bilibili-' + $TargetDate + '.md')
                 $localNotice = Join-Path $MeguriRoot 'reports\daily\latest.json'
                 $publishArguments = @(
@@ -333,6 +389,7 @@ $taskState = [ordered]@{
     report_sync_status = $reportSyncStatus
     report_status = $reportStatus
     publish_status = $publishStatus
+    content_status = $contentStatus
     publish_exit_code = $publishExitCode
     report_path = $reportPath
     report_exists = Test-Path -LiteralPath $reportPath -PathType Leaf

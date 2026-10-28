@@ -603,6 +603,8 @@ def build_account_report(
                 "_latest_time": view_at,
                 "author_name": author,
                 "author_mid": _integer(record.get("author_mid")),
+                "cid": _integer(record.get("cid")) or None,
+                "watched_cids": [],
                 "tag_name": " ".join(str(record.get("tag_name") or "").split()) or None,
                 "main_category": " ".join(str(record.get("main_category") or "").split()) or None,
                 "business": " ".join(str(record.get("business") or "").split()) or None,
@@ -613,6 +615,9 @@ def build_account_report(
             },
         )
         item["visit_count"] += 1
+        record_cid = _integer(record.get("cid"))
+        if record_cid > 0 and record_cid not in item["watched_cids"]:
+            item["watched_cids"].append(record_cid)
         item["estimated_watch_seconds"] += progress_seconds
         item["_first_time"] = min(item["_first_time"], view_at)
         item["_last_time"] = max(item["_last_time"], view_at)
@@ -622,6 +627,7 @@ def build_account_report(
                     "title": title,
                     "author_name": author,
                     "author_mid": _integer(record.get("author_mid")),
+                    "cid": _integer(record.get("cid")) or None,
                     "tag_name": " ".join(str(record.get("tag_name") or "").split()) or None,
                     "main_category": " ".join(str(record.get("main_category") or "").split()) or None,
                     "business": " ".join(str(record.get("business") or "").split()) or None,
@@ -646,6 +652,8 @@ def build_account_report(
             "sources": ["BilibiliHistoryFetcher/MCP"],
             "author_name": item["author_name"],
             "author_mid": item["author_mid"],
+            "cid": item["cid"],
+            "watched_cids": item["watched_cids"],
             "tag_name": item["tag_name"],
             "main_category": item["main_category"],
             "business": item["business"],
@@ -1102,7 +1110,29 @@ def build_report(
 
 
 def markdown_escape(value: object) -> str:
-    return str(value or "").replace("\\", "\\\\").replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+    return (str(value or "").replace("\\", "\\\\").replace("|", "\\|")
+            .replace("[", "\\[").replace("]", "\\]").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\r", " ").replace("\n", " "))
+
+
+def content_markdown(analysis: dict) -> list[str]:
+    lines = ["## 具体内容与观看方向", "", markdown_escape(analysis.get("coverage")), "",
+             f"> {markdown_escape(analysis.get('scope'))}",
+             f"> 语义分析状态：{markdown_escape(analysis.get('model_status'))}；"
+             "字幕为提供的资料片段，简介与仅标题分析均不等于读过视频正文。", ""]
+    for direction in analysis.get("directions", []):
+        links = "、".join(f"[{bvid}](https://www.bilibili.com/video/{bvid}/)" for bvid in direction["bvids"])
+        lines.append(f"- **{markdown_escape(direction['topic'])}**：{links}")
+    if not analysis.get("directions"):
+        lines.append("- 未生成语义方向归纳；下方保留已获取资料的摘录。")
+    lines.extend(["", "| 视频 | 具体内容 | 方向 | 依据与方法 |", "| --- | --- | --- | --- |"])
+    for item in analysis.get("videos", []):
+        method = "AI 概括" if item.get("method") == "model" else "资料摘录/标题推测"
+        lines.append(f"| [{markdown_escape(item['title'])}]({item['url']}) | "
+                     f"{markdown_escape(item['summary'])} | {markdown_escape('、'.join(item['topics'])) or '待归纳'} | "
+                     f"{markdown_escape(item['basis_label'])} · {method} |")
+    lines.extend(["", "未纳入内容分析的视频仍保留在下面的元数据表中。", ""])
+    return lines
 
 
 def write_markdown(report: dict, project_root: Path) -> Path:
@@ -1125,13 +1155,18 @@ def write_markdown(report: dict, project_root: Path) -> Path:
         f"> 数据源：{source_label}",
         f"> 同步状态：{report.get('sync_status') or 'unknown'}",
         f"> 数据边界：{report['boundary']}",
-        "> 本日报只做元数据分析；所有视频的内容总结状态默认为 `not_requested`，"
-        "只有用户明确选择 BV 号后才可进入后续内容总结接口。",
+        (
+            "> 本日报启用了独立的内容增强步骤，各视频标明实际可用的内容依据。"
+            if report.get("content_analysis") else
+            "> 本日报只做元数据分析；所有视频的内容总结状态默认为 `not_requested`，"
+            "只有用户明确选择 BV 号后才可进入后续内容总结接口。"
+        ),
         "",
         "## 快速总结",
         "",
         str(report["summary"]),
         "",
+        *(content_markdown(report["content_analysis"]) if report.get("content_analysis") else []),
         "## 统计",
         "",
         f"- 独立 BV 视频：{report['unique_videos']}",
@@ -1194,7 +1229,16 @@ def write_markdown(report: dict, project_root: Path) -> Path:
     else:
         lines.append("- 未发现默认 Chrome/Edge Profile 的 History 文件。")
     lines.extend(["", f"生成时间：{report['generated_at']}", ""])
-    target.write_text("\n".join(lines), encoding="utf-8")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                                         prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write("\n".join(lines))
+        os.replace(temporary, target)
+    finally:
+        if temporary:
+            temporary.unlink(missing_ok=True)
     return target
 
 

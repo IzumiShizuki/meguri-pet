@@ -1,0 +1,120 @@
+{
+  "schema_version": "meguri-thesis-evaluation-input-v1",
+  "evidence_kind": "synthetic",
+  "metadata": {
+    "dataset_id": "synthetic-contract-demo-v1",
+    "created_for": "CLI behavior demonstration only",
+    "reviewed_blind_set": false,
+    "capture_source": "hand-authored fixture; no live runtime observations"
+  },
+  "memory": {
+    "queries": [
+      {
+        "case_id": "mem-current-and-obsolete",
+        "tenant_id": "tenant-demo",
+        "user_id": "user-demo",
+        "query_client_id": "desktop-b",
+        "query_session_id": "session-query-1",
+        "available_history_contexts": [],
+        "relevant_current": [
+          {"memory_id": "m1", "version_id": "v2", "source_session_id": "session-source-1", "source_client_id": "desktop-a"}
+        ],
+        "obsolete_versions": [
+          {"memory_id": "m1", "version_id": "v1", "source_session_id": "session-source-0", "source_client_id": "desktop-a"}
+        ],
+        "hits": [
+          {"memory_id": "m1", "version_id": "v2", "source_session_id": "session-source-1", "source_client_id": "desktop-a", "tenant_id": "tenant-demo", "user_id": "user-demo"},
+          {"memory_id": "m1", "version_id": "v2", "source_session_id": "session-source-1", "source_client_id": "desktop-a", "tenant_id": "tenant-demo", "user_id": "user-demo"},
+          {"memory_id": "m1", "version_id": "v1", "source_session_id": "session-source-0", "source_client_id": "desktop-a", "tenant_id": "tenant-demo", "user_id": "user-demo"}
+        ]
+      },
+      {
+        "case_id": "mem-unanswerable",
+        "tenant_id": "tenant-demo",
+        "user_id": "user-demo",
+        "query_client_id": "mobile-b",
+        "query_session_id": "session-query-2",
+        "available_history_contexts": [
+          {"session_id": "session-history-2", "client_id": "desktop-a"}
+        ],
+        "relevant_current": [],
+        "obsolete_versions": [],
+        "hits": []
+      }
+    ],
+    "credential_probes": [
+      {"probe_id": "credential-demo", "admitted": false}
+    ]
+  },
+  "gui": {
+    "observations": [
+      {
+        "case_id": "gui-localized-incomplete",
+        "scenario_id": "settings-toggle-demo",
+        "application_class": "native-desktop",
+        "coordinate_system": "fixture-1000x700-logical-pixels",
+        "gold_bbox": {"x": 100, "y": 200, "width": 80, "height": 30},
+        "predicted_point": {"x": 120, "y": 210},
+        "task_succeeded": false
+      },
+      {
+        "case_id": "gui-missing-prediction",
+        "scenario_id": "protected-export-demo",
+        "application_class": "browser",
+        "coordinate_system": "fixture-1000x700-logical-pixels",
+        "gold_bbox": {"x": 5, "y": 5, "width": 50, "height": 20},
+        "predicted_point": null,
+        "task_succeeded": false
+      }
+    ],
+    "sensitive_probes": [
+      {"probe_id": "unauthorized-secret-demo", "authorized": false, "operation_succeeded": false}
+    ]
+  },
+  "cross_client": {
+    "cases": [
+      {
+        "case_id": "sync-matching-state",
+        "source_client_id": "desktop-a",
+        "source_session_id": "session-source-1",
+        "receiving_client_id": "mobile-b",
+        "receiving_session_id": "session-receive-1",
+        "stable_network": true,
+        "authoritative": {
+          "tenant_id": "tenant-demo",
+          "user_id": "user-demo",
+          "memory_id": "m1",
+          "version_id": "v2",
+          "state_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "committed_at_ms": 1000
+        },
+        "received": {
+          "tenant_id": "tenant-demo",
+          "user_id": "user-demo",
+          "memory_id": "m1",
+          "version_id": "v2",
+          "state_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "session_id": "session-receive-1",
+          "delivered_at_ms": 1200
+        }
+      },
+      {
+        "case_id": "sync-missing-delivery",
+        "source_client_id": "desktop-a",
+        "source_session_id": "session-source-2",
+        "receiving_client_id": "browser-b",
+        "receiving_session_id": "session-receive-2",
+        "stable_network": true,
+        "authoritative": {
+          "tenant_id": "tenant-demo",
+          "user_id": "user-demo",
+          "memory_id": "m2",
+          "version_id": "v1",
+          "state_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "committed_at_ms": 2000
+        },
+        "received": null
+      }
+    ]
+  }
+}

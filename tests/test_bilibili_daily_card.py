@@ -1,8 +1,9 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 
 from adapters.astrbot.astrbot_plugin_meguri_gateway.bilibili_daily_card import (
     BilibiliDailyCardError,
@@ -54,6 +55,27 @@ def fixture_payload() -> dict:
 
 
 class BilibiliDailyCardTests(unittest.TestCase):
+    def _record_text(self, payload):
+        records = []
+        original_factory = ImageDraw.Draw
+
+        class RecordingDraw:
+            def __init__(self, image):
+                self.draw = original_factory(image)
+
+            def __getattr__(self, name):
+                return getattr(self.draw, name)
+
+            def text(self, position, text, **kwargs):
+                records.append((text, self.draw.textbbox(position, text, font=kwargs["font"])))
+                return self.draw.text(position, text, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("adapters.astrbot.astrbot_plugin_meguri_gateway.bilibili_daily_card.ImageDraw.Draw",
+                       side_effect=RecordingDraw):
+                render_bilibili_daily_card(payload, Path(directory) / "aligned.png")
+        return records
+
     def test_renders_the_template_without_changing_canvas_size(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "daily.png"
@@ -74,6 +96,51 @@ class BilibiliDailyCardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(BilibiliDailyCardError):
                 render_bilibili_daily_card(payload, Path(directory) / "daily.png")
+
+    def test_visible_single_and_wrapped_tags_are_centered_inside_template_pills(self):
+        payload = fixture_payload()
+        payload["analysis_basis"] = "content_evidence"
+        payload["interest_tags"] = ["Java并发", "日语授受动词", "人工智能视频内容理解",
+                                    "游戏隐藏关卡探索路线", "音乐编曲与混音技巧", "历史文化"]
+        records = self._record_text(payload)
+        # Measured template pill interiors, independently of text-rendering code.
+        boxes = ((608, 623, 798, 681), (829, 623, 1006, 681),
+                 (608, 730, 798, 788), (829, 730, 1006, 788),
+                 (608, 836, 798, 894), (829, 836, 1006, 894))
+        for left, top, right, bottom in boxes:
+            with self.subTest(pill=(left, top)):
+                lines = [b for _, b in records if left <= b[0] < right and top <= b[1] < bottom]
+                self.assertTrue(lines)
+                ink = (min(b[0] for b in lines), min(b[1] for b in lines),
+                       max(b[2] for b in lines), max(b[3] for b in lines))
+                self.assertLessEqual(ink[2], right)
+                self.assertLessEqual(ink[3], bottom)
+                self.assertAlmostEqual((left + right) / 2, (ink[0] + ink[2]) / 2, delta=1)
+                self.assertAlmostEqual((top + bottom) / 2, (ink[1] + ink[3]) / 2, delta=1)
+
+    def test_long_subjects_and_summary_stay_clear_of_rules_and_decorations(self):
+        payload = fixture_payload()
+        payload["analysis_basis"] = "content_evidence"
+        payload["top_commentary"] = [dict(summary="比较线程调度、共享状态与阻塞任务吞吐，说明虚拟线程与固定线程池的使用边界。" * 3,
+                                         topic="Java并发", basis_label="字幕", author_name="演示UP") for _ in range(3)]
+        payload["overall_summary"] = "按已提供的资料归纳具体内容与观看方向，完整信息请查看日报。" * 15
+        records = self._record_text(payload)
+        for text, bounds in records:
+            if 141 <= bounds[0] <= 143 and 600 < bounds[1] < 940:
+                inside_slot = any(
+                    142 <= bounds[0] and bounds[2] <= 517
+                    and top <= bounds[1] and bounds[3] <= bottom
+                    for index in range(3)
+                    for top, bottom in ((612 + 112 * index, 640 + 112 * index),
+                                        (652 + 112 * index, 680 + 112 * index),
+                                        (686 + 112 * index, 708 + 112 * index)))
+                self.assertTrue(inside_slot, (text, bounds))
+            if bounds[0] == 78 and bounds[1] > 1080:
+                self.assertLessEqual(bounds[2], 675)
+                self.assertLessEqual(bounds[3], 1295)
+        summary_lines = [text for text, bounds in records if bounds[0] == 78 and bounds[1] > 1080]
+        self.assertEqual(6, len(summary_lines))
+        self.assertTrue(summary_lines[-1].endswith("…"))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,19 @@ Meguri SHALL present title, date/time, timezone, behavior and local-only availab
 - **WHEN** the user submits a complete reminder or edits a voice transcript
 - **THEN** no Todo is written until the user confirms the reviewed values
 
+#### Scenario: Cancel before request dispatch
+- **WHEN** the user cancels before a request is sent
+- **THEN** the review closes and no Todo write is submitted
+
+#### Scenario: Cancel while a request is in flight
+- **WHEN** the user cancels after dispatch while the server call is pending
+- **THEN** Meguri stops the current review flow after the in-flight call returns, refreshes the unresolved request list, and preserves the original request identity for later reconciliation
+- **AND** if the server confirms creation, Meguri reports that result instead of implying the Todo was cancelled
+
+#### Scenario: Dismiss an uncertain request review
+- **WHEN** the user cancels after a request has entered uncertain state
+- **THEN** Meguri refreshes the unresolved request list, closes the active review flow, and keeps the original request identity available for later reconciliation
+
 #### Scenario: Unsupported action
 - **WHEN** the user submits “明天下午 3 点帮我检查订单”
 - **THEN** Meguri says scheduled order checking is unavailable and does not create a reminder or action in its place

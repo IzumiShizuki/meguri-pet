@@ -1,6 +1,6 @@
 name: astrbot_plugin_meguri_gateway
-display_name: Meguri Gateway
-desc: Routes AstrBot messages to the shared meguri-core runtime.
+display_name: Meguri 网关
+desc: 将 AstrBot 消息接入 Meguri Core，并提供 TimePrism 待办创建和 QQ 提醒投递。
 version: 0.8.0
 author: IzumiShizuki
 astrbot_version: ">=4.26,<5"

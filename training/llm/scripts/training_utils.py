@@ -172,6 +172,11 @@ def validate_enablement_gate_report(path: Path | None, config: dict[str, Any]) -
 
 def validate_dataset_for_training(dataset_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     manifest = read_json(dataset_dir / "dataset_manifest.json")
+    if manifest.get("dataset_kind") is not None:
+        from .feedback import DATASET_KIND, validate_feedback_dataset
+        if manifest["dataset_kind"] != DATASET_KIND:
+            raise PipelineError("unsupported dataset manifest kind")
+        return validate_feedback_dataset(dataset_dir)
     quality = read_json(dataset_dir / "quality_report.json")
     if quality.get("status") != "pass" or manifest.get("quality_gate_status") != "pass":
         raise PipelineError("dataset quality gates are not passing")

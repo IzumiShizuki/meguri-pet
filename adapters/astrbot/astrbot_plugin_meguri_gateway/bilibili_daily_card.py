@@ -16,6 +16,11 @@ DATE_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
 TEXT_COLOR = "#8F3C38"
 SECONDARY_TEXT_COLOR = "#B35F5A"
 FOOTER_BACKGROUND = "#FFF5E6"
+TAG_BOXES = (
+    (608, 623, 798, 681), (829, 623, 1006, 681),
+    (608, 730, 798, 788), (829, 730, 1006, 788),
+    (608, 836, 798, 894), (829, 836, 1006, 894),
+)
 
 
 class BilibiliDailyCardError(ValueError):
@@ -74,19 +79,44 @@ def _fit_line(
     return text + ellipsis if text else ellipsis
 
 
-def _draw_centered(
+def _draw_in_box(
     draw: ImageDraw.ImageDraw,
-    center_x: int,
-    y: int,
+    box: tuple[int, int, int, int],
     value: object,
     font: ImageFont.FreeTypeFont,
-    maximum_width: int,
     *,
+    maximum_lines: int = 1,
+    line_gap: int = 6,
+    align: str = "center",
+    vertical: str = "center",
     fill: str = TEXT_COLOR,
 ) -> None:
-    text = _fit_line(draw, value, font, maximum_width)
-    box = draw.textbbox((0, 0), text, font=font)
-    draw.text((center_x - (box[2] - box[0]) / 2, y), text, font=font, fill=fill)
+    left, top, right, bottom = box
+    lines = _wrap_lines(draw, value, font, right - left, maximum_lines)
+    if not lines:
+        return
+    bounds = [draw.textbbox((0, 0), line, font=font) for line in lines]
+    line_height = max(bound[3] - bound[1] for bound in bounds)
+    height = line_height * len(lines) + line_gap * (len(lines) - 1)
+    y = top if vertical == "top" else top + (bottom - top - height) / 2
+    for line, bound in zip(lines, bounds):
+        width, ink_height = bound[2] - bound[0], bound[3] - bound[1]
+        x = left if align == "left" else left + (right - left - width) / 2
+        # PIL's default origin includes ascent offsets; align the visible ink.
+        draw.text((x - bound[0], y + (line_height - ink_height) / 2 - bound[1]),
+                  line, font=font, fill=fill)
+        y += line_height + line_gap
+
+
+def _fit_font(draw: ImageDraw.ImageDraw, value: object, font_path: Path,
+              size: int, width: int, minimum: int) -> ImageFont.FreeTypeFont:
+    while size > minimum:
+        font = _font(size, font_path)
+        bounds = draw.textbbox((0, 0), _text(value, 80), font=font)
+        if bounds[2] - bounds[0] <= width:
+            return font
+        size -= 1
+    return _font(minimum, font_path)
 
 
 def _compact_duration(seconds: object) -> str:
@@ -134,51 +164,69 @@ def _wrap_lines(
 
 def _draw_statistics(draw: ImageDraw.ImageDraw, payload: dict[str, Any], font_path: Path) -> None:
     statistics = payload["statistics"]
-    value_font = _font(45, font_path)
-    topic_font = _font(34, font_path)
-    detail_font = _font(18, font_path)
+    detail_font = _font(17, font_path)
     centers = (170, 425, 680, 934)
 
     video_count = int(_number(statistics.get("video_count")) or 0)
     record_count = int(_number(statistics.get("record_count")) or 0)
-    _draw_centered(draw, centers[0], 348, f"{video_count} 个", value_font, 205)
-    _draw_centered(draw, centers[0], 400, f"{record_count} 条观看记录", detail_font, 205, fill=SECONDARY_TEXT_COLOR)
-
     watch_seconds = statistics.get("estimated_watch_seconds")
-    _draw_centered(draw, centers[1], 348, _compact_duration(watch_seconds), value_font, 210)
     duration_note = "根据播放进度估算" if _number(watch_seconds) is not None else "浏览器历史无法估算"
-    _draw_centered(draw, centers[1], 400, duration_note, detail_font, 210, fill=SECONDARY_TEXT_COLOR)
 
     topics = [_text(item, 8) for item in statistics.get("primary_topics", []) if _text(item, 8)][:2]
     if not topics:
         topics = ["暂无识别"]
-    topic_start = 350 if len(topics) == 2 else 372
+    topic_start = 349 if len(topics) == 2 else 367
     for index, topic in enumerate(topics):
-        _draw_centered(draw, centers[2], topic_start + index * 45, topic, topic_font, 210)
+        y = topic_start + index * 37
+        topic_font = _fit_font(draw, topic, font_path, 29, 184, 21)
+        _draw_in_box(draw, (588, y, 772, y + 34), topic, topic_font)
 
     average = _number(statistics.get("average_completion_rate"), maximum=1)
     average_text = f"{average:.0%}" if average is not None else "--"
-    _draw_centered(draw, centers[3], 348, average_text, value_font, 205)
     completed = _number(statistics.get("completed_videos"))
     progress_note = f"看完 {int(completed)} 个视频" if completed is not None else "浏览器历史无法估算"
-    _draw_centered(draw, centers[3], 400, progress_note, detail_font, 205, fill=SECONDARY_TEXT_COLOR)
+    values = ((0, f"{video_count} 个", f"{record_count} 条观看记录"),
+              (1, _compact_duration(watch_seconds), duration_note),
+              (3, average_text, progress_note))
+    for index, value, note in values:
+        center = centers[index]
+        value_font = _fit_font(draw, value, font_path, 45, 194, 27)
+        _draw_in_box(draw, (center - 97, 346, center + 97, 398), value, value_font)
+        _draw_in_box(draw, (center - 100, 404, center + 100, 430), note, detail_font,
+                     fill=SECONDARY_TEXT_COLOR)
 
 
 def _draw_top_commentary(draw: ImageDraw.ImageDraw, payload: dict[str, Any], font_path: Path) -> None:
     title_font = _font(23, font_path)
     detail_font = _font(17, font_path)
-    title_y = (626, 738, 850)
-    detail_y = (666, 778, 890)
     items = [item for item in payload.get("top_commentary", []) if isinstance(item, dict)][:3]
+    content_mode = payload.get("analysis_basis") == "content_evidence"
+    if content_mode:
+        draw.rounded_rectangle((208, 528, 464, 569), radius=8, fill="#FF87A5")
+        _draw_in_box(draw, (208, 528, 464, 569), "具体内容 TOP3", _font(28, font_path), fill="#FFFFFF")
     for index in range(3):
+        row_top = 612 + index * 112
         if index >= len(items):
-            placeholder = "昨日未识别到更多时评内容" if index == 0 else "--"
-            draw.text((142, title_y[index]), placeholder, font=detail_font, fill="#C98A86")
+            placeholder = ("暂无可分析的内容" if content_mode else "昨日未识别到更多时评内容") if index == 0 else "--"
+            _draw_in_box(draw, (142, row_top, 517, row_top + 28), placeholder,
+                         detail_font, align="left", fill="#C98A86")
             continue
         item = items[index]
-        title = _fit_line(draw, item.get("title"), title_font, 378, 80)
-        draw.text((142, title_y[index]), title, font=title_font, fill=TEXT_COLOR)
+        if content_mode:
+            content_font = _font(21, font_path)
+            subject = _text(item.get("summary"), 160).rstrip("。；;")
+            lines = _wrap_lines(draw, subject, content_font, 375, 2)
+            if len(lines) == 2 and len(lines[-1]) <= 3 and not lines[-1].endswith("…"):
+                content_font = _fit_font(draw, subject, font_path, 21, 375, 18)
+                lines = _wrap_lines(draw, subject, content_font, 375, 2)
+            for line_index, line in enumerate(lines):
+                y = row_top + line_index * 40
+                _draw_in_box(draw, (142, y, 517, y + 28), line, content_font, align="left")
+        else:
+            _draw_in_box(draw, (142, row_top, 517, row_top + 28), item.get("title"), title_font, align="left")
         detail_parts = [_text(item.get("topic"), 12)]
+        if content_mode:
+            detail_parts.append(_text(item.get("basis_label"), 10))
         author = _text(item.get("author_name"), 20)
         if author:
             detail_parts.append(author)
@@ -188,30 +236,32 @@ def _draw_top_commentary(draw: ImageDraw.ImageDraw, payload: dict[str, Any], fon
         else:
             visits = int(_number(item.get("visit_count")) or 0)
             detail_parts.append(f"访问{visits}次")
-        detail = _fit_line(draw, " · ".join(part for part in detail_parts if part), detail_font, 378)
-        draw.text((142, detail_y[index]), detail, font=detail_font, fill=SECONDARY_TEXT_COLOR)
+        detail_top = row_top + (74 if content_mode else 40)
+        _draw_in_box(draw, (142, detail_top, 510, detail_top + 22),
+                     " · ".join(part for part in detail_parts if part), detail_font,
+                     align="left", fill=SECONDARY_TEXT_COLOR)
 
 
 def _draw_interest_tags(draw: ImageDraw.ImageDraw, payload: dict[str, Any], font_path: Path) -> None:
-    font = _font(26, font_path)
-    centers = ((705, 650), (925, 650), (705, 757), (925, 757), (705, 864), (925, 864))
-    tags = [_text(item, 8) for item in payload.get("interest_tags", []) if _text(item, 8)][:6]
-    for (center_x, y), tag in zip(centers, tags):
-        _draw_centered(draw, center_x, y, tag, font, 185, fill="#A85830")
+    font = _font(24, font_path)
+    content_mode = payload.get("analysis_basis") == "content_evidence"
+    tags = [_text(item, 18 if content_mode else 8) for item in payload.get("interest_tags", []) if _text(item, 18)][:6]
+    for box, tag in zip(TAG_BOXES, tags):
+        _draw_in_box(draw, box, tag, font, maximum_lines=2 if content_mode else 1,
+                     line_gap=6, fill="#A85830")
 
 
 def _draw_summary(draw: ImageDraw.ImageDraw, payload: dict[str, Any], font_path: Path) -> None:
     font = _font(23, font_path)
-    lines = _wrap_lines(draw, payload.get("overall_summary"), font, 600, 8)
-    for index, line in enumerate(lines):
-        draw.text((78, 1086 + index * 34), line, font=font, fill=TEXT_COLOR)
+    _draw_in_box(draw, (78, 1090, 675, 1295), payload.get("overall_summary"), font,
+                 maximum_lines=6, line_gap=10, align="left", vertical="top")
 
 
 def _draw_source(draw: ImageDraw.ImageDraw, payload: dict[str, Any], font_path: Path) -> None:
     draw.rectangle((245, 1402, 845, 1446), fill=FOOTER_BACKGROUND)
     font = _font(17, font_path)
     source = "数据来源：" + (_text(payload.get("source_label"), 42) or "本地元数据")
-    _draw_centered(draw, 543, 1415, source, font, 570, fill="#8C766A")
+    _draw_in_box(draw, (260, 1408, 830, 1440), source, font, fill="#8C766A")
 
 
 def render_bilibili_daily_card(
@@ -231,6 +281,12 @@ def render_bilibili_daily_card(
     if image.size != (1086, 1448):
         raise BilibiliDailyCardError("Bilibili daily template must be 1086x1448")
     draw = ImageDraw.Draw(image)
+    if normalized.get("analysis_basis") == "content_evidence":
+        draw.rounded_rectangle((340, 144, 766, 181), radius=8, fill=FOOTER_BACKGROUND)
+        _draw_in_box(draw, (340, 144, 766, 181), _text(normalized.get("date"), 10) + " · 内容与方向",
+                     _font(25, font_path))
+        draw.rounded_rectangle((742, 530, 897, 570), radius=8, fill="#FFB33B")
+        _draw_in_box(draw, (742, 530, 897, 570), "内容方向", _font(30, font_path), fill="#FFFFFF")
     _draw_statistics(draw, normalized, font_path)
     _draw_top_commentary(draw, normalized, font_path)
     _draw_interest_tags(draw, normalized, font_path)

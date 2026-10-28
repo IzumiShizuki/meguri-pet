@@ -131,6 +131,9 @@ class MeguriCoreClient(Protocol):
     async def clear_override(self, scope: str) -> dict[str, Any]: ...
     async def latest_daily_report(self, kind: str) -> dict[str, Any] | None: ...
     async def timeprism_reminders(self, after: int, limit: int = 50) -> dict[str, Any]: ...
+    async def create_timeprism_todo(
+        self, *, owner_user_id: int, request_id: str, title: str, due_at: str
+    ) -> dict[str, Any]: ...
     async def close(self) -> None: ...
 
 
@@ -587,6 +590,31 @@ class HttpMeguriCoreClient:
             headers=self._identity_headers("reminder-poller", "reminder-poller"),
         )
 
+    async def create_timeprism_todo(
+        self, *, owner_user_id: int, request_id: str, title: str, due_at: str
+    ) -> dict[str, Any]:
+        if owner_user_id <= 0:
+            raise ValueError("TimePrism owner ID must be positive")
+        result = await self._request(
+            "POST",
+            "/v1/reminders/timeprism/todos",
+            json={"requestId": request_id, "title": title, "dueAt": due_at},
+            headers=self._identity_headers(
+                f"shizuki-{owner_user_id}", "timeprism-todo-writer"
+            ),
+        )
+        if result.get("requestId") != request_id or result.get("state") not in {
+            "confirmed", "uncertain"
+        }:
+            raise CoreProtocolError("meguri-core returned an invalid Todo write receipt")
+        if result.get("state") == "confirmed":
+            todo_id = result.get("todoId")
+            if not isinstance(todo_id, int) or isinstance(todo_id, bool) or todo_id <= 0:
+                raise CoreProtocolError("meguri-core returned an unverified Todo receipt")
+            if result.get("title") != title or result.get("dueAt") != due_at:
+                raise CoreProtocolError("meguri-core returned a Todo receipt for different content")
+        return result
+
     async def close(self) -> None:
         if self._client is not None:
             await self._client.aclose()
@@ -732,8 +760,6 @@ def _accept_sse_data(
             raise CoreProtocolError(
                 f"meguri-core event metadata {field} is invalid"
             )
-    if event_turn_id != turn_id:
-        raise CoreProtocolError("meguri-core event crossed the requested turn scope")
     if event_session_id != session_id:
         raise CoreProtocolError("meguri-core event crossed the requested session scope")
     expected_replay = _expected_replay_policy(event_type, data)
@@ -763,6 +789,8 @@ def _accept_sse_data(
             raise CoreProtocolError(f"unsupported required event type: {event_type}")
         return None
     if event_turn_id != turn_id:
+        # This endpoint replays the session-wide sequence, including older turns.
+        # Advance its cursor above, but never apply another turn's reply or terminal.
         return None
     build = metadata.get("build_id")
     if isinstance(build, str) and build:

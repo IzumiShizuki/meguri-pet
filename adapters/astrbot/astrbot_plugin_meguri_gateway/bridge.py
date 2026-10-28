@@ -26,6 +26,7 @@ def _registered_command_filters() -> Iterable[Any]:
     """Yield AstrBot command filters registered by plugins other than the gateway."""
 
     from astrbot.core.star.filter.command import CommandFilter
+    from astrbot.core.star.filter.command_group import CommandGroupFilter
     from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
     handlers = star_handlers_registry.get_handlers_by_event_type(
@@ -36,7 +37,7 @@ def _registered_command_filters() -> Iterable[Any]:
         if _OWN_PLUGIN_MODULE in module_path:
             continue
         for event_filter in getattr(handler, "event_filters", []) or []:
-            if isinstance(event_filter, CommandFilter):
+            if isinstance(event_filter, (CommandFilter, CommandGroupFilter)):
                 yield event_filter
 
 
@@ -78,7 +79,9 @@ class MessageRoutePolicy:
     allowed_senders: frozenset[str] = field(default_factory=frozenset)
     passthrough_commands: tuple[str, ...] = ()
 
-    def matches_passthrough(self, text: str | None) -> bool:
+    def matches_passthrough(
+        self, text: str | None, *, include_registered: bool = True
+    ) -> bool:
         """Return True when another plugin owns this message.
 
         Matching is case-insensitive and argument-aware: the bare command and the
@@ -91,10 +94,20 @@ class MessageRoutePolicy:
         if not value or is_meguri_command(value, self.prefix):
             return False
 
-        candidates = set(self.passthrough_commands)
-        candidates |= registered_plugin_commands()
+        value = value.removeprefix("/")
+        candidates = {
+            str(command).strip().casefold().removeprefix("/")
+            for command in self.passthrough_commands
+            if str(command).strip().removeprefix("/")
+        }
+        if include_registered:
+            candidates |= registered_plugin_commands()
         return any(
-            value == command or value.startswith(f"{command} ")
+            value == command or (
+                value.startswith(command)
+                and len(value) > len(command)
+                and value[len(command)].isspace()
+            )
             for command in candidates
         )
 
@@ -123,6 +136,17 @@ def platform_message_from_event(event: Any) -> PlatformMessage | None:
     message_obj = getattr(event, "message_obj", None)
     message_id = str(getattr(message_obj, "message_id", "") or "")
     text = str(event.get_message_str()).strip()
+    # WakingCheckStage removes wake_prefix before dispatch. Restore only an
+    # actual Meguri invocation, so Core's command parser still sees /meguri.
+    if getattr(event, "is_at_or_wake_command", False):
+        parts = text.split(maxsplit=1)
+        original_text = getattr(message_obj, "message_str", None)
+        raw = str(original_text or "").strip()
+        if (
+            parts and parts[0].casefold() == "meguri"
+            and (not raw or (raw != text and raw.endswith(text)))
+        ):
+            text = "/" + text
     if not text:
         return None
     if not message_id:

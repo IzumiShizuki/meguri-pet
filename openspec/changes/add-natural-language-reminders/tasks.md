@@ -23,3 +23,4 @@
 - [x] 5.1 Cover parsing, clarification, confirmation, server payload/response, rejection, ambiguous writes, retry, account binding and concurrency with tests.
 - [x] 5.2 Run desktop tests, preload checks, typecheck, build and strict OpenSpec validation.
 - [x] 5.3 Update user documentation and write an evidence-based verification report, preserving unrelated incomplete tasks.
+- [x] 5.4 Make the existing cancel-review button stop the current renderer flow while preserving and restoring any dispatched request journal entry.

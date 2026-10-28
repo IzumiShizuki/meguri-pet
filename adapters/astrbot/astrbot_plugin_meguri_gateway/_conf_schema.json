@@ -1,133 +1,167 @@
 {
   "core_url": {
-    "description": "Loopback-only meguri-core URL",
+    "description": "Meguri Core 地址。仅允许本机回环地址，默认值通常无需修改。",
     "type": "string",
-    "default": "http://127.0.0.1:18080"
+    "default": "http://127.0.0.1:18080",
+    "invisible": true
   },
   "tenant_id": {
-    "description": "Meguri tenant identifier sent to the local core",
+    "description": "发送给 Meguri Core 的租户标识。",
     "type": "string",
-    "default": "meguri-local"
+    "default": "meguri-local",
+    "invisible": true
   },
   "timeout_seconds": {
-    "description": "Fail-fast timeout used for Core and Relay requests",
+    "description": "Core 和 Relay 请求的超时时间（秒）。",
     "type": "float",
-    "default": 8.0
+    "default": 8.0,
+    "invisible": true
   },
   "async_turns_enabled": {
-    "description": "Use the shared asynchronous Turn and SSE protocol; fall back only when the Core explicitly lacks the endpoint",
+    "description": "启用异步 Turn 和 SSE 对话协议。只有 Core 明确不支持时才回退到旧协议。",
     "type": "bool",
-    "default": true
+    "default": true,
+    "invisible": true
   },
   "turn_checkpoint_file": {
-    "description": "Persistent async Turn cursor and reducer state outside the plugin source directory",
+    "description": "保存异步 Turn 游标和状态的文件路径。建议放在插件数据目录之外的持久化位置。",
     "type": "string",
-    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/turn-checkpoints.json"
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/turn-checkpoints.json",
+    "invisible": true
   },
   "identity_salt_env": {
-    "description": "Environment variable containing the identity HMAC salt",
+    "description": "保存身份 HMAC 盐值的环境变量名称。",
     "type": "string",
-    "default": "MEGURI_IDENTITY_SALT"
+    "default": "MEGURI_IDENTITY_SALT",
+    "invisible": true
   },
   "identity_salt_file": {
-    "description": "Optional direct path to the identity HMAC salt file; used when the environment variable is absent",
+    "description": "身份 HMAC 盐值文件路径。环境变量没有配置时使用此文件。",
     "type": "string",
-    "default": ""
+    "default": "",
+    "invisible": true
   },
   "core_token_file_env": {
-    "description": "Environment variable pointing to the optional Core token file",
+    "description": "指向 Core 共享令牌文件的环境变量名称。",
     "type": "string",
-    "default": "MEGURI_ASTRBOT_SHARED_TOKEN_FILE"
+    "default": "MEGURI_ASTRBOT_SHARED_TOKEN_FILE",
+    "invisible": true
   },
   "core_token_file": {
-    "description": "Optional direct path to the Core shared-token file; used before the environment-variable path",
+    "description": "Core 共享令牌文件路径。优先使用此路径，其次才读取环境变量指定的路径。",
     "type": "string",
-    "default": ""
+    "default": "",
+    "invisible": true
   },
   "route_all_private_messages": {
-    "description": "Route every private message to Meguri; otherwise require /meguri",
+    "description": "将所有私聊消息交给 Meguri；关闭时必须使用 /meguri 命令。",
     "type": "bool",
     "default": false
   },
   "allow_group_messages": {
-    "description": "Allow explicit /meguri commands in group chats",
+    "description": "允许在群聊中使用明确的 /meguri 命令。",
     "type": "bool",
     "default": false
   },
   "route_all_group_messages": {
-    "description": "Route every group message delivered to AstrBot to Meguri; requires allow_group_messages",
+    "description": "将 AstrBot 收到的所有群消息交给 Meguri。必须同时开启群聊命令。",
     "type": "bool",
     "default": false
   },
   "bilingual_zh_ja": {
-    "description": "Render AstrBot replies as paired Chinese translations and Japanese originals",
+    "description": "将回复渲染为中文翻译在前、日语原文在后的中日对照格式。",
     "type": "bool",
     "default": true
   },
   "daily_reports_enabled": {
-    "description": "Poll the remote Core inbox and proactively deliver validated local daily reports",
+    "description": "轮询远程 Core 收件箱，并主动发送已校验的日报。",
     "type": "bool",
     "default": false
   },
   "timeprism_reminders_enabled": {
-    "description": "Send owner TimePrism Todo reminders to one QQ private chat",
+    "description": "启用后，将主账号的 TimePrism 待办提醒投递到一个 QQ 私聊。需要同时填写下面的主账号 ID 和 QQ 私聊目标。",
     "type": "bool",
     "default": false
   },
+  "timeprism_todo_creation_enabled": {
+    "description": "允许指定的 QQ 私聊用户创建并确认一次性 TimePrism 待办。默认关闭。",
+    "type": "bool",
+    "default": false
+  },
+  "timeprism_todo_operator_senders": {
+    "description": "允许创建待办的私聊发送者，格式为 platform:bot_account:sender_id。必须填写完整值，不能只填 QQ 号。",
+    "type": "list",
+    "default": []
+  },
+  "timeprism_todo_draft_file": {
+    "description": "保存私聊待办草稿的文件路径。",
+    "type": "string",
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-todo-drafts.json",
+    "invisible": true
+  },
   "timeprism_owner_user_id": {
-    "description": "Exact Shizuki user ID selected as the main account",
+    "description": "桌面端设置为主账号的 Shizuki 用户 ID。必须与 Core 和桌面端使用的账号一致。",
     "type": "int",
     "default": 0
   },
   "timeprism_reminder_target": {
-    "description": "Exact AstrBot FriendMessage origin for the owner's QQ private chat",
+    "description": "接收提醒的 QQ 私聊目标，填写 AstrBot 实际消息来源中的完整 FriendMessage origin，不要只填 QQ 号。",
     "type": "string",
     "default": ""
   },
   "timeprism_reminder_poll_seconds": {
-    "description": "Seconds between reminder feed polls; minimum 10",
+    "description": "轮询提醒队列的间隔秒数，最小为 10 秒。",
     "type": "int",
-    "default": 15
+    "default": 15,
+    "invisible": true
   },
   "timeprism_reminder_max_age_minutes": {
-    "description": "Skip old events rather than sending stale reminders after downtime",
+    "description": "超过此分钟数的旧提醒将跳过，避免 AstrBot 重启后发送过期提醒。",
     "type": "int",
-    "default": 30
+    "default": 30,
+    "invisible": true
   },
   "timeprism_reminder_state_file": {
-    "description": "Persistent owner reminder delivery cursor outside the plugin source directory",
+    "description": "保存提醒投递游标的文件路径。",
     "type": "string",
-    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-reminder-state.json"
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-reminder-state.json",
+    "invisible": true
   },
   "daily_report_targets": {
-    "description": "Exact AstrBot unified message origins receiving daily reports",
+    "description": "接收日报的 AstrBot 完整消息来源列表。",
     "type": "list",
     "default": []
   },
   "daily_report_kinds": {
-    "description": "Report kinds polled from the Core inbox",
+    "description": "从 Core 收件箱轮询的日报类型。",
     "type": "list",
-    "default": ["bilibili"]
+    "default": [
+      "bilibili"
+    ]
   },
   "daily_report_poll_seconds": {
-    "description": "Seconds between Core inbox polls; minimum 30",
+    "description": "轮询 Core 收件箱的间隔秒数，最小为 30 秒。",
     "type": "int",
-    "default": 60
+    "default": 60,
+    "invisible": true
   },
   "daily_report_max_age_hours": {
-    "description": "Do not proactively send reports older than this window",
+    "description": "超过此小时数的日报不再主动发送。",
     "type": "int",
-    "default": 48
+    "default": 48,
+    "invisible": true
   },
   "daily_report_state_file": {
-    "description": "Persistent per-target delivery state outside the plugin source directory",
+    "description": "保存每个日报目标投递状态的文件路径。",
     "type": "string",
-    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/daily-report-state.json"
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/daily-report-state.json",
+    "invisible": true
   },
   "daily_report_render_directory": {
-    "description": "Persistent directory for rendered daily report images",
+    "description": "保存已渲染日报图片的目录。",
     "type": "string",
-    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/rendered-reports"
+    "default": "data/plugin_data/astrbot_plugin_meguri_gateway/rendered-reports",
+    "invisible": true
   },
   "persona_routing_enabled": {
     "description": "按当前生效的 AstrBot 人格选择聊天后端。开启后，只有下面名单内的人格自动进入 Meguri，其余使用 AstrBot 默认流程。显式 /meguri 命令仍可使用。",
@@ -140,36 +174,36 @@
     "default": []
   },
   "allowed_senders": {
-    "description": "Optional sender allowlist using platform:bot_account:sender_id",
+    "description": "可选的发送者白名单，格式为 platform:bot_account:sender_id。",
     "type": "list",
     "default": []
   },
   "identity_bindings": {
-    "description": "Explicit platform identities bound to stable Meguri users",
+    "description": "将明确的平台身份绑定到稳定的 Meguri 用户。",
     "type": "template_list",
     "default": [],
     "templates": {
       "binding": {
-        "name": "Identity binding",
+        "name": "身份绑定",
         "display_item": "meguri_user_id",
         "items": {
           "platform": {
-            "description": "AstrBot platform name",
+            "description": "AstrBot 平台名称。",
             "type": "string",
             "default": ""
           },
           "account_id": {
-            "description": "Bot account ID or * for every account",
+            "description": "机器人账号 ID；填写 * 表示所有账号。",
             "type": "string",
             "default": "*"
           },
           "sender_id": {
-            "description": "Platform sender ID",
+            "description": "平台发送者 ID。",
             "type": "string",
             "default": ""
           },
           "meguri_user_id": {
-            "description": "Stable Meguri user ID",
+            "description": "稳定的 Meguri 用户 ID。",
             "type": "string",
             "default": ""
           }
@@ -178,28 +212,138 @@
     }
   },
   "remote_commands_enabled": {
-    "description": "Enable remote development commands through Meguri Relay",
+    "description": "启用通过 Meguri Relay 执行远程开发命令。除非你明确配置了 Relay，否则保持关闭。",
     "type": "bool",
     "default": false
   },
   "relay_url": {
-    "description": "Meguri Relay URL; non-loopback addresses must use HTTPS",
+    "description": "Meguri Relay 地址。非本机地址必须使用 HTTPS。",
     "type": "string",
-    "default": "http://127.0.0.1:18100"
+    "default": "http://127.0.0.1:18100",
+    "invisible": true
   },
   "relay_token_file_env": {
-    "description": "Environment variable pointing to the Relay access-token file",
+    "description": "指向 Relay 访问令牌文件的环境变量名称。",
     "type": "string",
-    "default": "MEGURI_RELAY_TOKEN_FILE"
+    "default": "MEGURI_RELAY_TOKEN_FILE",
+    "invisible": true
   },
   "remote_operator_senders": {
-    "description": "Remote-development operators using platform:bot_account:sender_id",
+    "description": "允许执行远程开发命令的发送者，格式为 platform:bot_account:sender_id。",
     "type": "list",
     "default": []
   },
   "passthrough_commands": {
-    "description": "命令放行清单：命中前缀的消息不交给 Meguri，而由其它插件/AstrBot 默认流程处理（例如 jrlp）。其它插件已注册的指令会按插件注册表自动放行，这里只需补充注册表看不到的别名。",
+    "description": "插件命令放行清单（例如 jrlp）：完整命令或空白分隔的参数匹配，支持 / 前缀与大小写别名；放行时阻止默认 LLM，但保留插件处理。注册命令/命令组/正则优先使用 AstrBot 本轮匹配结果；这里只需补充插件内部匹配的别名。显式 /meguri 始终进入 Core。",
     "type": "list",
     "default": []
+  },
+  "advanced_settings": {
+    "description": "高级设置",
+    "hint": "服务地址、凭据文件和轮询参数。已自动沿用现有配置，日常使用通常无需修改。",
+    "type": "object",
+    "collapsed": true,
+    "items": {
+      "core_url": {
+        "description": "Meguri Core 地址。仅允许本机回环地址，默认值通常无需修改。",
+        "type": "string",
+        "default": "http://127.0.0.1:18080"
+      },
+      "tenant_id": {
+        "description": "发送给 Meguri Core 的租户标识。",
+        "type": "string",
+        "default": "meguri-local"
+      },
+      "timeout_seconds": {
+        "description": "Core 和 Relay 请求的超时时间（秒）。",
+        "type": "float",
+        "default": 8.0
+      },
+      "async_turns_enabled": {
+        "description": "启用异步 Turn 和 SSE 对话协议。只有 Core 明确不支持时才回退到旧协议。",
+        "type": "bool",
+        "default": true
+      },
+      "turn_checkpoint_file": {
+        "description": "保存异步 Turn 游标和状态的文件路径。建议放在插件数据目录之外的持久化位置。",
+        "type": "string",
+        "default": "data/plugin_data/astrbot_plugin_meguri_gateway/turn-checkpoints.json"
+      },
+      "identity_salt_env": {
+        "description": "保存身份 HMAC 盐值的环境变量名称。",
+        "type": "string",
+        "default": "MEGURI_IDENTITY_SALT"
+      },
+      "identity_salt_file": {
+        "description": "身份 HMAC 盐值文件路径。环境变量没有配置时使用此文件。",
+        "type": "string",
+        "default": ""
+      },
+      "core_token_file_env": {
+        "description": "指向 Core 共享令牌文件的环境变量名称。",
+        "type": "string",
+        "default": "MEGURI_ASTRBOT_SHARED_TOKEN_FILE"
+      },
+      "core_token_file": {
+        "description": "Core 共享令牌文件路径。优先使用此路径，其次才读取环境变量指定的路径。",
+        "type": "string",
+        "default": ""
+      },
+      "timeprism_todo_draft_file": {
+        "description": "保存私聊待办草稿的文件路径。",
+        "type": "string",
+        "default": "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-todo-drafts.json"
+      },
+      "timeprism_reminder_poll_seconds": {
+        "description": "轮询提醒队列的间隔秒数，最小为 10 秒。",
+        "type": "int",
+        "default": 15
+      },
+      "timeprism_reminder_max_age_minutes": {
+        "description": "超过此分钟数的旧提醒将跳过，避免 AstrBot 重启后发送过期提醒。",
+        "type": "int",
+        "default": 30
+      },
+      "timeprism_reminder_state_file": {
+        "description": "保存提醒投递游标的文件路径。",
+        "type": "string",
+        "default": "data/plugin_data/astrbot_plugin_meguri_gateway/timeprism-reminder-state.json"
+      },
+      "daily_report_poll_seconds": {
+        "description": "轮询 Core 收件箱的间隔秒数，最小为 30 秒。",
+        "type": "int",
+        "default": 60
+      },
+      "daily_report_max_age_hours": {
+        "description": "超过此小时数的日报不再主动发送。",
+        "type": "int",
+        "default": 48
+      },
+      "daily_report_state_file": {
+        "description": "保存每个日报目标投递状态的文件路径。",
+        "type": "string",
+        "default": "data/plugin_data/astrbot_plugin_meguri_gateway/daily-report-state.json"
+      },
+      "daily_report_render_directory": {
+        "description": "保存已渲染日报图片的目录。",
+        "type": "string",
+        "default": "data/plugin_data/astrbot_plugin_meguri_gateway/rendered-reports"
+      },
+      "relay_url": {
+        "description": "Meguri Relay 地址。非本机地址必须使用 HTTPS。",
+        "type": "string",
+        "default": "http://127.0.0.1:18100"
+      },
+      "relay_token_file_env": {
+        "description": "指向 Relay 访问令牌文件的环境变量名称。",
+        "type": "string",
+        "default": "MEGURI_RELAY_TOKEN_FILE"
+      }
+    }
+  },
+  "_advanced_settings_migrated": {
+    "type": "bool",
+    "default": false,
+    "invisible": true
   }
 }

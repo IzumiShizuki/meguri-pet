@@ -3,7 +3,7 @@ import os
 import sys
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from adapters.astrbot.astrbot_plugin_meguri_gateway.models import (
     GatewayReply,
@@ -123,6 +123,27 @@ def _astrbot_modules():
 
 
 class AstrBotPluginEntrypointTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ai_news_command_reads_shared_report_without_starting_a_chat_turn(self):
+        sys.modules.pop(MODULE_NAME, None)
+        with patch.dict(sys.modules, _astrbot_modules()), patch.dict(
+            os.environ, {"MEGURI_IDENTITY_SALT": "entrypoint-test-salt"}
+        ):
+            module = importlib.import_module(MODULE_NAME)
+            plugin = module.MeguriGatewayPlugin(object(), {})
+            event = _Event()
+            with patch.object(event, "get_message_str", return_value="/ainews"), patch.object(
+                plugin.gateway.core, "latest_daily_report", new_callable=AsyncMock,
+                return_value={"delivery_text": "2026-10-07 橘鸦 AI 早报与原文链接"},
+            ) as lookup, patch.object(plugin.gateway, "handle", new_callable=AsyncMock) as chat:
+                replies = [reply async for reply in plugin.on_message(event)]
+                self.assertEqual(replies, ["2026-10-07 橘鸦 AI 早报与原文链接"])
+                lookup.assert_awaited_once_with("ai_news")
+                chat.assert_not_awaited()
+                self.assertTrue(event.stopped)
+                self.assertTrue(event.llm_blocked)
+            await plugin.terminate()
+        sys.modules.pop(MODULE_NAME, None)
+
     async def test_real_entrypoint_stops_default_llm_and_returns_gateway_reply(self):
         sys.modules.pop(MODULE_NAME, None)
         with patch.dict(sys.modules, _astrbot_modules()), patch.dict(

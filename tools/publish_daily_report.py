@@ -99,7 +99,8 @@ def build_envelope(kind: str, report: dict, markdown: str) -> dict:
     render_payload = _render_payload(report.get("visual_payload"))
     source_zh, source_ja = _source_labels(data_source)
 
-    title = f"{report_date.isoformat()} Bilibili 观看元数据日报"
+    enriched = isinstance(report.get("content_analysis"), dict)
+    title = f"{report_date.isoformat()} Bilibili " + ("观看内容日报" if enriched else "观看元数据日报")
     delivery_text_zh = "\n".join(
         (
             f"【兄さん，{report_date.isoformat()} 的 Bilibili 观看元数据日报送到了。】",
@@ -112,6 +113,9 @@ def build_envelope(kind: str, report: dict, markdown: str) -> dict:
             f"【動画は{unique_videos}本、視聴記録は{total_visits}件。データソース：{source_ja}。】",
         )
     )
+    if enriched:
+        delivery_text_zh = delivery_text_zh.replace("观看元数据日报", "观看内容日报")
+        delivery_text_ja = delivery_text_ja.replace("視聴メタデータ日報", "視聴内容日報")
     delivery_text = "\n".join(
         (
             delivery_text_zh.splitlines()[0],
