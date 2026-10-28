@@ -15,4 +15,4 @@
 
 - [x] 3.1 Run relevant Java, Python, TypeScript and desktop checks; record failures and untested boundaries.
 - [x] 3.2 Run bounded isolated Core dialogue and public-search probes where available without formal memory writes or service disruption.
-- [ ] 3.3 Review final diff and secret boundaries, validate OpenSpec, commit and push the separate fix branch, verify remote SHA.
+- [x] 3.3 Review final diff and secret boundaries, validate OpenSpec, commit and push the separate fix branch, verify remote SHA.

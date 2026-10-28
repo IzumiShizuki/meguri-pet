@@ -6,6 +6,8 @@ The pre-repair workspace was saved and pushed first:
 [`47462684e7f121ab9b429bb0feab9d54e582438f`](https://github.com/IzumiShizuki/meguri-pet/commit/47462684e7f121ab9b429bb0feab9d54e582438f),
 branch `codex/companion-memory-corrections`. Remote SHA was verified before editing.
 Repairs are on `fix/dialogue-reliability-20261028`; no merge or deployment is part of this change.
+The code repair commit [`f43c9743151b9106acd1d5d1584040a2686c52e5`](https://github.com/IzumiShizuki/meguri-pet/commit/f43c9743151b9106acd1d5d1584040a2686c52e5)
+was pushed and independently matched with `git ls-remote`. A following documentation-only commit records this receipt.
 
 The original 301-input evaluation was evidence for targeted repairs, not proof of UI, compression-limit,
 long-term-memory, or installed-skill failures. Tests below use synthetic identities and public technical sources.
