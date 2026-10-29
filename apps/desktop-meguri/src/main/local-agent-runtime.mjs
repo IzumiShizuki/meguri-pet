@@ -36,8 +36,8 @@ export function createLocalAgentRuntime(options = {}) {
   let config = options.config ?? { version: 1, enabled: false, harnessAutoStart: false }
   let receipts
   let forwarding
-  let codex
-  let harness
+  let codex = options.codexBridge
+  let harness = options.harnessBridge
   let hostProcess
   let closing = false
 

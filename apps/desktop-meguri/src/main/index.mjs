@@ -21,7 +21,8 @@ import { createDesktopTray, recoverDesktopWindow, revealDesktop } from './deskto
 import { ensureEverythingIpc } from './everything-runtime.mjs'
 import { cycleOutfitCode, meguriGlobalShortcutBindings, registerMeguriGlobalShortcuts } from './global-shortcuts.mjs'
 import { createLocalAgentRuntime, LocalAgentError } from './local-agent-runtime.mjs'
-import { readLocalAgentConfig, saveLocalAgentConfig } from './local-agent-config.mjs'
+import { readLocalAgentConfig } from './local-agent-config.mjs'
+import { registerLocalAgentSettingsIpc } from './local-agent-settings-ipc.mjs'
 import {
   readMultimodalRelayConfig,
   saveMultimodalRelayConfig,
@@ -1191,34 +1192,13 @@ function installIpc() {
   ipcMain.handle(channels.multimodalRelayTest, (event, draft) => trustedSettingsRenderer(event)
     ? testMultimodalRelayConfig(draft)
     : { ok: false, error: '多模态测试请求不受信任。' })
-  ipcMain.handle(channels.localAgentsGet, event => trustedSettingsRenderer(event)
-    ? localAgents().settings()
-    : { version: 1, enabled: false, harnessAutoStart: false, dshHome: '', install: { codex: { installed: false, home: '', signedIn: false }, harness: { cli: 'missing', credentials: 'missing', preset: 'unavailable', logReady: false } } })
-  ipcMain.handle(channels.localAgentsSave, (event, patch) => {
-    if (!trustedSettingsRenderer(event))
-      return { ok: false, error: '本地 Agent 配置请求不受信任。' }
-    const saved = saveLocalAgentConfig(localAgentConfigPath ?? resolveLocalAgentConfigPath(), patch)
-    if (!saved.ok)
-      return saved
-    const settings = localAgents().updateSettings(saved.config)
-    if (settings.enabled && settings.harnessAutoStart)
-      localAgents().startHarnessHost()
-    if (settings.enabled)
-      startWorkObservation()
-    else
-      stopWorkObservation()
-    return { ok: true, settings }
-  })
-  ipcMain.handle(channels.localAgentsTest, async (event) => {
-    if (!trustedSettingsRenderer(event))
-      return { codex: { ok: false, message: '连接测试请求不受信任。' }, harness: { ok: false, message: '连接测试请求不受信任。' } }
-    try {
-      return await localAgents().connectTest()
-    }
-    catch (error) {
-      const failure = localAgentFailure(error)
-      return { codex: { ok: false, message: failure.error }, harness: { ok: false, message: failure.error } }
-    }
+  registerLocalAgentSettingsIpc({
+    ipcMain, channels, trustedSettingsRenderer,
+    getRuntime: localAgents,
+    resolveConfigPath: () => localAgentConfigPath ?? resolveLocalAgentConfigPath(),
+    startObservation: startWorkObservation,
+    stopObservation: stopWorkObservation,
+    failure: localAgentFailure,
   })
   // Task forwarding: the renderer may only freeze a card and confirm the exact version it was shown.
   ipcMain.handle(channels.workSnapshot, event => trustedRenderer(event)

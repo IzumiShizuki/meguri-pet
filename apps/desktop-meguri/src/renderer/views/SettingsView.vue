@@ -63,6 +63,7 @@ const agentSaving = ref(false)
 const agentProbing = ref(false)
 const agentDirty = ref(false)
 const agentProbe = ref<LocalAgentProbeResult>()
+const agentFeedback = ref<RelayFeedback>()
 
 const startupDraft = ref<DesktopStartupPreferencesPatch>({ openAtLogin: true, runAsAdministrator: true })
 const startupLoading = ref(true)
@@ -134,6 +135,7 @@ function applyAgentSettings(settings: LocalAgentSettings) {
 function markAgentDirty() {
   agentDirty.value = true
   agentProbe.value = undefined
+  agentFeedback.value = undefined
 }
 
 async function saveAgentSettings() {
@@ -145,16 +147,24 @@ async function saveAgentSettings() {
     return
   }
   agentSaving.value = true
+  agentFeedback.value = { kind: 'neutral', message: '正在保存工作 Agent 配置…' }
   try {
-    const result = await bridge.save(agentDraft.value)
+    // Vue refs contain Proxies, which Electron cannot clone across contextBridge.
+    const result = await bridge.save({
+      enabled: agentDraft.value.enabled,
+      harnessAutoStart: agentDraft.value.harnessAutoStart,
+      dshHome: agentDraft.value.dshHome,
+    })
     if (!result.ok || !result.settings) {
-      agentProbe.value = { codex: { ok: false, message: result.error ?? '配置没有保存。' }, harness: { ok: false, message: result.error ?? '配置没有保存。' } }
+      agentFeedback.value = { kind: 'error', message: result.error ?? '配置没有保存，请检查输入后重试。' }
       return
     }
     applyAgentSettings(result.settings)
+    agentProbe.value = undefined
+    agentFeedback.value = { kind: 'success', message: '配置已保存并应用。可以测试连接。' }
   }
   catch {
-    agentProbe.value = { codex: { ok: false, message: '保存失败，请检查本地配置目录。' }, harness: { ok: false, message: '保存失败，请检查本地配置目录。' } }
+    agentFeedback.value = { kind: 'error', message: '未能确认桌面服务的保存结果，请重新打开设置核对后重试。' }
   }
   finally {
     agentSaving.value = false
@@ -716,6 +726,9 @@ async function testRelay() {
                 {{ agentProbing ? '正在测试…' : '测试连接' }}
               </button>
             </div>
+            <p v-if="agentFeedback" class="relay-feedback" :class="agentFeedback.kind" role="status" aria-live="polite">
+              {{ agentFeedback.message }}
+            </p>
 
             <div v-if="agentProbe" class="agent-facts" role="status" aria-live="polite">
               <div><span>Codex</span><b :class="{ warn: !agentProbe.codex.ok }">{{ agentProbe.codex.message }}</b></div>
