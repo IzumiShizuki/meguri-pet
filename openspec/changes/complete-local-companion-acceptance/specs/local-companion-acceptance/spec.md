@@ -57,3 +57,14 @@ Limited ReAct execution SHALL inherit network authority only from its server-cre
 #### Scenario: Explicit offline request
 - **WHEN** the user forbids network access for an otherwise eligible AGENT turn
 - **THEN** public discovery remains unavailable and its HTTP fixture receives zero calls
+
+### Requirement: Ordinary public Skill entry
+A direct ordinary-chat request to search or inspect public ModelScope Skill metadata SHALL be eligible for the existing read-only agent path when the server has granted skill:read. Intent detection SHALL NOT create capability authority or imply installation/execution approval.
+
+#### Scenario: Direct public metadata request without execution mode
+- **WHEN** an authorized user explicitly asks to discover or inspect public Skill metadata without setting execution_mode
+- **THEN** the server can select the bounded tool path and return its observed public result
+
+#### Scenario: Non-action mentions remain non-action
+- **WHEN** the text is quoted, explanatory, asks how to implement the feature, explicitly forbids network access, or lacks authorized skill:read
+- **THEN** it does not trigger public metadata HTTP calls merely from those keywords

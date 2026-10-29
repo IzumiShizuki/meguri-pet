@@ -1151,10 +1151,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
             intents.add("architecture");
         }
         boolean shizukiControl = ShizukiControlIntent.isExplicitRequest(normalized);
+        boolean publicSkillRead = request.authorizedCapabilityScopes().contains("skill:read")
+                && com.meguri.core.skill.PublicSkillReadIntent.isExplicitRequest(normalized);
         boolean explicitAgent = request.agentProposal() != null || shizukiControl
                 || containsAny(normalized, "agent", "仓库分析", "repository analysis", "多步骤执行");
         if (explicitAgent) intents.add("repository_analysis");
-        if (shizukiControl) intents.add("tool_required");
+        if (shizukiControl || publicSkillRead) intents.add("tool_required");
         boolean externalObservation = request.retrievalMode() != RetrievalMode.NONE
                 && weatherResolution(record).intent() != WeatherConversationService.Intent.NONE;
         if (externalObservation) intents.add("tool_required");

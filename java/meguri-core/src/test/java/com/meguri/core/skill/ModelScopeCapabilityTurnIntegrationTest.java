@@ -77,6 +77,54 @@ class ModelScopeCapabilityTurnIntegrationTest {
     }
 
     @Test
+    void naturalRequestsEnterAuthorizedPublicReadWithoutAnExplicitExecutionMode() throws Exception {
+        try (Fixture fixture = new Fixture(temporary, false)) {
+            TurnRecord discovered = fixture.runNatural("natural-discover",
+                    "请去魔搭社区寻找表格处理技能，只查询，不安装", Set.of("skill:read"));
+            assertThat(discovered.getExecutionModeDecision().mode()).isEqualTo(TurnExecutionMode.AGENT);
+            assertThat(discovered.getExecutionModeDecision().userExplicit()).isFalse();
+            assertThat(fixture.httpCalls).hasValue(1);
+            assertThat(fixture.lastObservations()).singleElement().satisfies(observation -> {
+                assertThat(observation.status()).isEqualTo(RawReactObservation.Status.SUCCESS);
+                assertThat(observation.summary()).contains("Table reader", "MIT");
+            });
+
+            fixture.plans.clear();
+            fixture.firstCapability = "meguri.skill.inspect";
+            TurnRecord inspected = fixture.runNatural("natural-inspect",
+                    "请在魔搭社区核实 owner/table-reader 的公开详情与许可", Set.of("skill:read"));
+            assertThat(inspected.getExecutionModeDecision().mode()).isEqualTo(TurnExecutionMode.AGENT);
+            assertThat(fixture.httpCalls).hasValue(2);
+            assertThat(fixture.paths).containsExactly("/openapi/v1/skills", "/openapi/v1/skills/owner/table-reader");
+            assertThat(fixture.repository.list()).isEmpty();
+        }
+    }
+
+    @Test
+    void naturalEntryDoesNotEscalateWithoutScopeOrForOfflineDiscussionAndQuotedRequests() throws Exception {
+        try (Fixture fixture = new Fixture(temporary, false)) {
+            String direct = "请去魔搭社区寻找表格处理技能";
+            TurnRecord unscoped = fixture.runNatural("natural-unscoped", direct, Set.of("capability:read"));
+            assertThat(unscoped.getExecutionModeDecision().mode()).isNotEqualTo(TurnExecutionMode.AGENT);
+            int number = 0;
+            for (String message : List.of(
+                    "不要联网，请去魔搭社区寻找表格处理技能",
+                    "请说明魔搭社区技能搜索 API 的实现方式",
+                    "如何在魔搭社区搜索技能？",
+                    "“请去魔搭社区搜索表格技能”这句话是什么意思？",
+                    "```text\n请去魔搭社区搜索表格技能\n```",
+                    "请安装魔搭社区的表格处理技能")) {
+                TurnRecord turn = fixture.runNatural("natural-negative-" + number++, message, Set.of("skill:read"));
+                assertThat(turn.getExecutionModeDecision().mode()).as(message).isNotEqualTo(TurnExecutionMode.AGENT);
+            }
+            TurnRecord explicitFast = fixture.runWithMode("natural-fast", direct, Set.of("skill:read"), TurnExecutionMode.FAST);
+            assertThat(explicitFast.getExecutionModeDecision().mode()).isEqualTo(TurnExecutionMode.FAST);
+            assertThat(fixture.httpCalls).hasValue(0);
+            assertThat(fixture.plans).isEmpty();
+        }
+    }
+
+    @Test
     void explicitOfflineRequestAndMissingScopeProduceNoHttpEvenWhenPlannerProposesDiscovery() throws Exception {
         try (Fixture fixture = new Fixture(temporary, false)) {
             fixture.run("offline", "不要联网，请仅检查本地技能", Set.of("skill:read"));
@@ -148,6 +196,7 @@ class ModelScopeCapabilityTurnIntegrationTest {
         final InMemoryTurnJournal journal;
         final SkillManagementService management;
         final TurnOrchestrator runtime;
+        String firstCapability = "meguri.skill.discover";
 
         Fixture(Path temporary, boolean inspect) throws Exception {
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -195,7 +244,8 @@ class ModelScopeCapabilityTurnIntegrationTest {
             runtime.configureLimitedReactPlanner(context -> {
                 plans.add(context);
                 ReactAction action = context.roundIndex() == 1
-                        ? new ReactAction("meguri.skill.discover", Map.of("query", "tabular"))
+                        ? new ReactAction(firstCapability, firstCapability.equals("meguri.skill.inspect")
+                                ? Map.of("external_id", "owner/table-reader") : Map.of("query", "tabular"))
                         : inspect && context.roundIndex() == 2
                                 ? new ReactAction("meguri.skill.inspect", Map.of("external_id", "owner/table-reader")) : null;
                 return Mono.just(new ReactPlannerDecision(action == null ? ReactDecision.FINALIZE : ReactDecision.CONTINUE,
@@ -205,9 +255,18 @@ class ModelScopeCapabilityTurnIntegrationTest {
         }
 
         TurnRecord run(String session, String message, Set<String> scopes) throws Exception {
+            return runWithMode(session, message, scopes, TurnExecutionMode.AGENT);
+        }
+
+        TurnRecord runNatural(String session, String message, Set<String> scopes) throws Exception {
+            return runWithMode(session, message, scopes, null);
+        }
+
+        TurnRecord runWithMode(String session, String message, Set<String> scopes, TurnExecutionMode mode) throws Exception {
             TurnRequest request = new TurnRequest("fictional-capability-user", "website", session, message,
                     List.of(), new ClientCapabilities(), null, null, false)
-                    .withAuthorizedCapabilityScopes(scopes).withRequestedExecutionMode(TurnExecutionMode.AGENT);
+                    .withAuthorizedCapabilityScopes(scopes);
+            if (mode != null) request = request.withRequestedExecutionMode(mode);
             TurnRecord turn = runtime.start(request);
             turn.getDone().get(10, TimeUnit.SECONDS);
             assertThat(turn.getStatus()).isEqualTo(TurnStatus.COMPLETED);

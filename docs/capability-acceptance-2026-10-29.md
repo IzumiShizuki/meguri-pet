@@ -174,3 +174,24 @@ transport failure followed by a successful independent turn, and rejection of
 forged/released freeze tokens. No packages are installed and no external HTTP or
 model calls occur in these tests. Test results and a renewed live probe are still
 required before claiming deployment acceptance.
+
+## Natural public-skill entry
+
+The successful public capability probes explicitly requested AGENT mode. A later
+ordinary client request without `execution_mode` selected `SERVER_DEFAULT_FAST`
+with zero tool calls (`natural-skill-entry-before.json`), so those earlier probes
+did not establish the normal language entry. `PublicSkillReadIntent` now proposes
+the existing `tool_required` signal only for a direct public discovery/detail
+read request naming ModelScope/魔搭 and a Skill or concrete external ID, and only
+when the request already has the server-authorized `skill:read` scope. Explicit
+mode choices, availability, budgets, frozen exposure and network policy remain
+authoritative. This does not add installation, activation or execution rights.
+
+The intent rejects offline instructions, quoted/code examples, explanation or
+implementation questions and non-read commands. Its unit tests cover Chinese and
+English requests and negative controls. The turn/HTTP integration test now also
+omits the execution-mode override, verifies discovery and direct-ID inspection,
+and checks zero planner/network calls for missing `skill:read`, negation,
+discussion, quotation, installation requests and an explicit FAST override.
+These deterministic tests do not prove live model selection; the coordinator
+must repeat ordinary client probes after deployment.
