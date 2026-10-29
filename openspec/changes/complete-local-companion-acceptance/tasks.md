@@ -6,6 +6,7 @@
 - [ ] 2.2 Preserve current site recurrence and dated-instance semantics through authenticated Todo integration.
 - [ ] 2.3 Fix verified skill selection/disclosure gaps and test controlled execution, denial, receipts and recovery.
 - [ ] 2.4 Verify community discovery/staging/activation boundaries without installing unknown extensions.
+- [ ] 2.5 Repair PostgreSQL idempotent replay lock inversion; cover concurrent replay and failed retry without weakening turn ordering.
 ## 3. Local deployment and live acceptance
 - [ ] 3.1 Run affected tests/builds and record rollback artifact plus schema compatibility.
 - [ ] 3.2 Confirm idle service and normal host consent, deploy Core and verify process/build/health evidence.

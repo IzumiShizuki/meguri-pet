@@ -89,8 +89,7 @@ public final class PostgresTurnJournal implements TurnJournal {
             return new Acceptance(candidate, true);
         });
         if (acceptance == null) throw new IllegalStateException("turn acceptance transaction returned no result");
-        if (acceptance.created()) turns.put(acceptance.record().getTurnId(), acceptance.record());
-        return acceptance;
+        return cacheAcceptance(acceptance);
     }
 
     @Override
@@ -138,8 +137,7 @@ public final class PostgresTurnJournal implements TurnJournal {
             return new Acceptance(candidate, true);
         });
         if (acceptance == null) throw new IllegalStateException("retry acceptance returned no result");
-        if (acceptance.created()) turns.put(acceptance.record().getTurnId(), acceptance.record());
-        return acceptance;
+        return cacheAcceptance(acceptance);
     }
 
     @Override
@@ -155,14 +153,12 @@ public final class PostgresTurnJournal implements TurnJournal {
     @Override
     public TurnRecord turn(String turnId) {
         if (turnId == null || turnId.isBlank()) return null;
-        List<TurnRecord> records = jdbc.query(
-                "SELECT " + TURN_COLUMNS + " FROM turn_runtime WHERE turn_id = ?",
-                (rs, rowNum) -> readRecord(rs), turnId);
-        if (records.isEmpty()) {
+        TurnRecord fresh = readUncachedTurn(turnId);
+        if (fresh == null) {
             turns.remove(turnId);
             return null;
         }
-        return refreshCached(records.getFirst());
+        return refreshCached(fresh);
     }
 
     @Override
@@ -667,9 +663,28 @@ public final class PostgresTurnJournal implements TurnJournal {
 
     private Acceptance existingAcceptance(IdempotencyRow existing, String payloadHash) {
         if (!Objects.equals(existing.payloadHash(), payloadHash)) throw new IdempotencyConflictException();
-        TurnRecord record = turn(existing.turnId());
+        // findIdempotency holds the database row lock until acceptance commits.
+        // Execution writers acquire the cached record monitor before that row
+        // lock. Do not wait for the same monitor in the opposite order here.
+        TurnRecord record = readUncachedTurn(existing.turnId());
         if (record == null) throw new IllegalStateException("idempotent turn row disappeared");
         return new Acceptance(record, false);
+    }
+
+    private TurnRecord readUncachedTurn(String turnId) {
+        List<TurnRecord> records = jdbc.query(
+                "SELECT " + TURN_COLUMNS + " FROM turn_runtime WHERE turn_id = ?",
+                (rs, rowNum) -> readRecord(rs), turnId);
+        return records.isEmpty() ? null : records.getFirst();
+    }
+
+    /** Merge only after the acceptance transaction has released its row lock. */
+    private Acceptance cacheAcceptance(Acceptance acceptance) {
+        if (acceptance.created()) {
+            turns.put(acceptance.record().getTurnId(), acceptance.record());
+            return acceptance;
+        }
+        return new Acceptance(refreshCached(acceptance.record()), false);
     }
 
     private TurnRecord refreshCached(TurnRecord fresh) {

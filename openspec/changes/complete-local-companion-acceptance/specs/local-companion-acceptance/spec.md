@@ -31,3 +31,9 @@ Local acceptance SHALL record actual runtime identity, preserve user data, and p
 #### Scenario: Deployment confirmation
 - **WHEN** a verified build replaces the local Core after required host confirmation
 - **THEN** the new process, health and build evidence are checked before live acceptance; a failed replacement attempts the recorded safe rollback
+
+### Requirement: Concurrent idempotent requests remain responsive
+Duplicate requests SHALL return the same turn identity while that turn is executing, without deadlocking status or cancellation access.
+#### Scenario: Replay races with persistence
+- **WHEN** a duplicate idempotency request overlaps execution persistence for the same turn
+- **THEN** both operations finish within their bounds and expose the same durable turn without lock inversion
