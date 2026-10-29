@@ -1,22 +1,31 @@
 ## 1. Preflight and authority
 - [x] 1.1 Record source/runtime baseline and preserve unrelated changes.
-- [ ] 1.2 Build acceptance matrix from site, Skills/MCP and persona contracts.
+- [x] 1.2 Build acceptance matrix from site, Skills/MCP and persona contracts.
 ## 2. Repairs and isolated validation
-- [ ] 2.1 Wire speechStyle and canonical-dialogue purpose; test provider request and identity-scoped recall.
-- [ ] 2.2 Preserve current site recurrence and dated-instance semantics through authenticated Todo integration.
-- [ ] 2.3 Fix verified skill selection/disclosure gaps and test controlled execution, denial, receipts and recovery.
-- [ ] 2.4 Verify community discovery/staging/activation boundaries without installing unknown extensions.
-- [ ] 2.5 Repair PostgreSQL idempotent replay lock inversion; cover concurrent replay and failed retry without weakening turn ordering.
+- [x] 2.1 Wire speechStyle and canonical-dialogue purpose; test provider request and identity-scoped recall.
+- [x] 2.2 Preserve current site recurrence and dated-instance semantics through authenticated Todo integration.
+- [x] 2.3 Fix verified skill selection/disclosure gaps and test controlled execution, denial, receipts and recovery.
+- [x] 2.4 Verify community discovery/staging/activation boundaries without installing unknown extensions.
+- [x] 2.5 Repair PostgreSQL idempotent replay lock inversion; cover concurrent replay and failed retry without weakening turn ordering.
 ## 3. Local deployment and live acceptance
-- [ ] 3.1 Run affected tests/builds and record rollback artifact plus schema compatibility.
-- [ ] 3.2 Confirm idle service and normal host consent, deploy Core and verify process/build/health evidence.
-- [ ] 3.3 Run bounded isolated live persona, search, SSE and capability probes; separate UI and credential blockers.
-- [ ] 3.4 Produce reproducible evidence, remaining limitations and scope-only local commit.
+- [x] 3.1 Run affected tests/builds and record rollback artifact plus schema compatibility.
+- [x] 3.2 Confirm idle service and normal host consent, deploy Core and verify process/build/health evidence.
+- [x] 3.3 Run bounded isolated live persona, search, SSE and capability probes; separate UI and credential blockers.
+- [x] 3.4 Produce reproducible evidence, remaining limitations and scope-only local commit.
 
 ## 4. Cancellation acceptance follow-up
-- [ ] 4.1 Fix request-path cancellation lease violation; cover cancellation before claim, queued cancellation, duplicate cancellation and subsequent-turn recovery.
-- [ ] 4.2 Preserve server-frozen network authority in ReAct and prove explicit offline requests make zero public discovery calls.
-- [ ] 4.3 Route explicit public Skill read requests from ordinary chat into the authorized tool path; keep quoted, explanatory, offline and unauthorized requests out.
-- [ ] 4.4 Keep deadline terminal writes within execution ownership; cover active provider timeout, queued expiry, unique terminal events and following-turn recovery without bypassing the owner fence.
-- [ ] 4.5 Scope SSE polling to lightweight session lifecycle state; preserve identity filtering and terminal publication ordering without full-turn scans or per-event owner reads.
-- [ ] 4.6 Serialize lifecycle transition/persistence/rollback across competing cancellation paths; prove no premature lease release with a latch fixture and log only turn ID plus error category for unhandled execution errors.
+- [x] 4.1 Fix request-path cancellation lease violation; cover cancellation before claim, queued cancellation, duplicate cancellation and subsequent-turn recovery.
+- [x] 4.2 Preserve server-frozen network authority in ReAct and prove explicit offline requests make zero public discovery calls.
+- [x] 4.3 Route explicit public Skill read requests from ordinary chat into the authorized tool path; keep quoted, explanatory, offline and unauthorized requests out.
+- [x] 4.4 Keep deadline terminal writes within execution ownership; cover active provider timeout, queued expiry, unique terminal events and following-turn recovery without bypassing the owner fence.
+- [x] 4.5 Scope SSE polling to lightweight session lifecycle state; preserve identity filtering and terminal publication ordering without full-turn scans or per-event owner reads.
+- [x] 4.6 Serialize lifecycle transition/persistence/rollback across competing cancellation paths; prove no premature lease release with a latch fixture and log only turn ID plus error category for unhandled execution errors.
+
+## 5. Explicit follow-up boundaries (not yet accepted)
+- [ ] 5.1 After specific user approval, provision the local-only MCP administration credential and register the named trusted source; verify a production invocation, approval and recovery. Pending approval and source URL/configuration.
+- [ ] 5.2 Load the new renderer in the current user desktop after checking unsaved work, then use an explicitly isolated test account/task to verify real UI save and two-end Todo synchronization. Current hidden renderer/mock-IPC validation is separate.
+- [ ] 5.3 Validate and approve a concrete trusted external Skill before installing it; the production installed catalog is still empty. No unknown package installation was authorized.
+- [ ] 5.4 Implement and validate a separately reviewed bounded retrieval improvement for the remaining RFC and long wrapped canonical-query misses. Preserve identity, language, negation and relevance controls.
+- [ ] 5.5 Validate concise-answer adherence and sustained streaming performance with a comparable bounded workload; the recovered-session marker included unwanted explanation.
+
+Completed item evidence and explicit limits are recorded in `docs/local-companion-acceptance-2026-10-29.md` and the ignored local acceptance report. Items 2.2/2.3 validate implementation and controlled execution, not the unapproved production MCP or real-account Todo operations in section 5. The change remains open.

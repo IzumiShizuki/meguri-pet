@@ -195,3 +195,22 @@ and checks zero planner/network calls for missing `skill:read`, negation,
 discussion, quotation, installation requests and an explicit FAST override.
 These deterministic tests do not prove live model selection; the coordinator
 must repeat ordinary client probes after deployment.
+
+## Final deployed acceptance
+
+The follow-ups above were tested and deployed in runtime source
+`b4b03a40b12379c8447510c84083491a3ecdfa08` on 2026-10-29 at 16:44 UTC.
+Four ordinary client probes omitted execution_mode: public discovery and direct
+inspection entered AGENT and completed with successful public callback audits;
+offline explanation and quoted non-action requests stayed FAST with zero audit
+calls. All four terminal revisions matched, stream/snapshot text matched, and
+44 mechanical/execution checks passed. Public discovery used 280 ms and its
+follow-up inspection 645 ms; direct-ID inspection used 221 ms. Whole-turn
+observations were 24.290/9.517/4.007/4.233 seconds.
+
+Production MCP sources remain zero and admin remains disabled pending the
+explicit local credential/API approval and chosen source URL/configuration.
+Controlled HTTP MCP fixtures and public ModelScope success do not establish
+production MCP acceptance or authority to install an external Skill. See
+[the final local acceptance](local-companion-acceptance-2026-10-29.md) for
+runtime, cancellation recovery, test counts and remaining limitations.
