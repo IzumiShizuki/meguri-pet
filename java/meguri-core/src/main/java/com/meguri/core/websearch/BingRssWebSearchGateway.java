@@ -41,11 +41,22 @@ public final class BingRssWebSearchGateway implements WebSearchGateway {
         return client.get()
                 .uri(target)
                 .header("User-Agent", "MeguriCore/0.1 (local personal assistant)")
-                .retrieve()
-                .bodyToMono(String.class)
+                .exchangeToMono(response -> {
+                    if (!response.statusCode().is2xxSuccessful()) {
+                        return Mono.just(WebSearchRecall.unavailable(providerName(),
+                                "web_http_" + response.statusCode().value()));
+                    }
+                    if (response.headers().contentType()
+                            .map(type -> type.isCompatibleWith(org.springframework.http.MediaType.TEXT_HTML))
+                            .orElse(false)) {
+                        return Mono.just(WebSearchRecall.unavailable(providerName(), "web_response_non_rss"));
+                    }
+                    return response.bodyToMono(String.class).defaultIfEmpty("")
+                            .map(body -> parse(body, boundedLimit));
+                })
                 .timeout(timeout)
-                .map(body -> parse(body, boundedLimit))
-                .onErrorReturn(WebSearchRecall.unavailable(providerName()));
+                .onErrorResume(error -> Mono.just(WebSearchRecall.unavailable(providerName(),
+                        transportDiagnostic(error))));
     }
 
     @Override
@@ -54,6 +65,15 @@ public final class BingRssWebSearchGateway implements WebSearchGateway {
     }
 
     WebSearchRecall parse(String body, int limit) {
+        if (body == null || body.isBlank()) {
+            return WebSearchRecall.unavailable(providerName(), "web_response_empty_body");
+        }
+        // HTML error/landing pages may omit or mislabel Content-Type. Classify them
+        // before the secure XML parser rejects the common HTML doctype.
+        if (java.util.regex.Pattern.compile("(?is)^\\s*\\uFEFF?\\s*(?:<\\?xml[^>]*>\\s*)?(?:<!doctype\\s+html\\b|<html\\b)")
+                .matcher(body).find()) {
+            return WebSearchRecall.unavailable(providerName(), "web_response_non_rss");
+        }
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
@@ -61,8 +81,13 @@ public final class BingRssWebSearchGateway implements WebSearchGateway {
             factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
             factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
             factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
-            var document = factory.newDocumentBuilder().parse(
-                    new ByteArrayInputStream((body == null ? "" : body).getBytes(StandardCharsets.UTF_8)));
+            var builder = factory.newDocumentBuilder();
+            builder.setErrorHandler(new org.xml.sax.helpers.DefaultHandler());
+            var document = builder.parse(new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)));
+            if (document.getDocumentElement() == null
+                    || !"rss".equalsIgnoreCase(document.getDocumentElement().getNodeName())) {
+                return WebSearchRecall.unavailable(providerName(), "web_response_non_rss");
+            }
             NodeList items = document.getElementsByTagName("item");
             List<WebSearchResult> results = new ArrayList<>();
             for (int i = 0; i < items.getLength() && results.size() < limit; i++) {
@@ -74,8 +99,18 @@ public final class BingRssWebSearchGateway implements WebSearchGateway {
             }
             return new WebSearchRecall(results.isEmpty() ? "empty" : "ok", providerName(), results);
         } catch (Exception ignored) {
-            return WebSearchRecall.unavailable(providerName());
+            return WebSearchRecall.unavailable(providerName(), "web_xml_parse_error");
         }
+    }
+
+    private static String transportDiagnostic(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof java.util.concurrent.TimeoutException) return "web_transport_timeout";
+            if (current instanceof java.net.UnknownHostException) return "web_dns_error";
+            if (current instanceof javax.net.ssl.SSLException) return "web_tls_error";
+            if (current instanceof java.net.ConnectException) return "web_connect_error";
+        }
+        return "web_transport_error";
     }
 
     private static String childText(Element parent, String name) {

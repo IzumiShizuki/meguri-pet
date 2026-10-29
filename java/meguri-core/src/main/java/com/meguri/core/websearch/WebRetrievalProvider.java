@@ -60,6 +60,15 @@ public final class WebRetrievalProvider implements RetrievalProvider {
                     ? context.turnRequest() == null ? "" : context.turnRequest().getMessage()
                     : query;
             String searchQuery = WebSearchPolicy.queryFor(querySource);
+            WebSearchScope originalScope = WebSearchScope.parse(querySource);
+            WebSearchScope normalizedScope = WebSearchScope.parse(searchQuery);
+            if (!originalScope.valid() || !normalizedScope.valid()) {
+                return failure(degradations, "web_query_scope_invalid");
+            }
+            String missingScope = String.join(" ", originalScope.domains().stream()
+                    .filter(domain -> !normalizedScope.domains().contains(domain))
+                    .map(domain -> "site:" + domain).toList());
+            if (!missingScope.isBlank()) searchQuery = missingScope + " " + searchQuery;
             // Explicitly supplied links are already source candidates. Fetch them through
             // the same URL/DNS/deadline policy instead of searching the instruction text.
             List<WebSearchResult> requested = requestedSources(querySource);
@@ -71,30 +80,42 @@ public final class WebRetrievalProvider implements RetrievalProvider {
                     ? search.search(searchQuery, Math.min(12, Math.max(limit * 3, limit))).block(context.remaining())
                     : new WebSearchRecall("ok", "requested-source", requested);
             if (recall == null) {
-                return new RetrievalProviderResult(List.of(), List.of("web_search_unavailable"));
+                return failure(degradations, "web_search_unavailable");
             }
+            degradations.addAll(recall.diagnosticCodes());
             if ("disabled".equalsIgnoreCase(recall.status())) {
-                return new RetrievalProviderResult(List.of(), List.of("web_search_disabled"));
+                return failure(degradations, "web_search_disabled");
             }
             if ("empty".equalsIgnoreCase(recall.status())) {
-                return new RetrievalProviderResult(List.of(), List.of("web_search_empty"));
+                return failure(degradations, "web_search_empty");
             }
             if (!"ok".equalsIgnoreCase(recall.status())) {
-                return new RetrievalProviderResult(List.of(), List.of("web_search_unavailable"));
+                return failure(degradations, "web_search_unavailable");
             }
             if (recall.results().isEmpty()) {
-                return new RetrievalProviderResult(List.of(), List.of("web_search_empty"));
+                return failure(degradations, "web_search_empty");
             }
             List<WebSearchResult> relevant = requested.isEmpty()
-                    ? relevantResults(searchQuery, recall.results()) : requested;
-            if (relevant.size() != recall.results().size()) degradations.add("web_results_irrelevant");
-            if (relevant.isEmpty() && context.remaining().toMillis() > 300) {
+                    ? relevantResults(searchQuery, recall.results(), degradations)
+                    : scopedResults(searchQuery, requested, degradations);
+            if (requested.isEmpty() && relevant.isEmpty() && context.remaining().toMillis() > 300) {
                 degradations.add("web_search_retried");
                 WebSearchRecall retry = search.search(WebSearchRelevance.recoveryQuery(searchQuery),
                                 Math.min(12, Math.max(limit * 3, limit)))
                         .block(context.remaining());
-                if (retry != null && "ok".equalsIgnoreCase(retry.status())) {
-                    relevant = relevantResults(searchQuery, retry.results());
+                if (retry == null) {
+                    degradations.add("web_retry_unavailable");
+                } else {
+                    retry.diagnosticCodes().stream()
+                            .map(code -> code.replaceFirst("^web_", "web_retry_"))
+                            .forEach(degradations::add);
+                    if ("ok".equalsIgnoreCase(retry.status())) {
+                        relevant = relevantResults(searchQuery, retry.results(), degradations);
+                    } else if ("empty".equalsIgnoreCase(retry.status())) {
+                        degradations.add("web_retry_empty");
+                    } else {
+                        degradations.add("web_retry_unavailable");
+                    }
                 }
             }
             List<Candidate> extracted = extract(searchQuery, relevant, context, degradations);
@@ -121,8 +142,8 @@ public final class WebRetrievalProvider implements RetrievalProvider {
             }
             return new RetrievalProviderResult(items, List.copyOf(degradations));
         } catch (RuntimeException error) {
-            return new RetrievalProviderResult(List.of(), List.of(
-                    causedByTimeout(error) ? "web_search_timeout" : "web_search_unavailable"));
+            return failure(degradations,
+                    causedByTimeout(error) ? "web_search_timeout" : "web_search_unavailable");
         }
     }
 
@@ -138,9 +159,31 @@ public final class WebRetrievalProvider implements RetrievalProvider {
         return List.copyOf(results);
     }
 
-    private List<WebSearchResult> relevantResults(String query, List<WebSearchResult> results) {
-        return results.stream().filter(result -> !urls.canonicalize(result.url()).isBlank())
+    private List<WebSearchResult> relevantResults(String query, List<WebSearchResult> results,
+                                                 Set<String> degradations) {
+        List<WebSearchResult> allowed = results.stream()
+                .filter(result -> !urls.canonicalize(result.url()).isBlank()).toList();
+        if (allowed.size() != results.size()) degradations.add("web_results_url_rejected");
+        allowed = scopedResults(query, allowed, degradations);
+        List<WebSearchResult> relevant = allowed.stream()
                 .filter(result -> WebSearchRelevance.relevant(query, result)).toList();
+        if (relevant.size() != allowed.size()) degradations.add("web_results_irrelevant");
+        return relevant;
+    }
+
+    private List<WebSearchResult> scopedResults(String query, List<WebSearchResult> results,
+                                               Set<String> degradations) {
+        WebSearchScope scope = WebSearchScope.parse(query);
+        List<WebSearchResult> scoped = results.stream()
+                .filter(result -> scope.accepts(urls.canonicalize(result.url()))).toList();
+        if (scoped.size() != results.size()) degradations.add("web_results_scope_rejected");
+        return scoped;
+    }
+
+    private static RetrievalProviderResult failure(Set<String> existing, String reason) {
+        LinkedHashSet<String> codes = new LinkedHashSet<>(existing);
+        codes.add(reason);
+        return new RetrievalProviderResult(List.of(), List.copyOf(codes));
     }
 
     private static boolean causedByTimeout(Throwable error) {
@@ -193,6 +236,10 @@ public final class WebRetrievalProvider implements RetrievalProvider {
                     continue;
                 }
                 String finalCanonical = urls.canonicalize(page.canonicalUrl());
+                if (!WebSearchScope.parse(query).accepts(finalCanonical)) {
+                    degradations.add("web_extract_scope_rejected");
+                    continue;
+                }
                 if (finalCanonical.isBlank() || !extractedUrls.add(finalCanonical)) continue;
                 candidates.add(new Candidate(finalCanonical, page, index + 1,
                         lexicalScore(query, page.title() + " " + page.content())));

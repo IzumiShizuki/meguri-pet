@@ -20,19 +20,30 @@ final class WebSearchRelevance {
         if (anchors.isEmpty()) return true;
         String document = (result.title() + " " + result.url() + " " + result.snippet()).toLowerCase(Locale.ROOT);
         if (anchors.stream().filter(term -> term.matches("\\d{3,}"))
-                .anyMatch(term -> !document.contains(term))) return false;
-        long matched = anchors.stream().filter(document::contains).count();
+                .anyMatch(term -> !containsAnchor(document, term))) return false;
+        long matched = anchors.stream().filter(term -> containsAnchor(document, term)).count();
         return matched >= Math.max(1, (int) Math.ceil(anchors.size() * 0.75));
     }
 
+    private static boolean containsAnchor(String document, String term) {
+        if (term.matches("\\d{3,}")) {
+            return Pattern.compile("(?<![0-9])" + Pattern.quote(term) + "(?![0-9])")
+                    .matcher(document).find();
+        }
+        return document.contains(term);
+    }
+
     static String recoveryQuery(String query) {
+        WebSearchScope scope = WebSearchScope.parse(query);
         Set<String> anchors = anchors(query);
-        if (anchors.isEmpty()) return "\"" + query.replace("\"", "") + "\"";
-        return String.join(" ", anchors.stream().limit(8).map(term -> "\"" + term + "\"").toList());
+        String subject = anchors.isEmpty() ? "\"" + scope.subject().replace("\"", "") + "\""
+                : String.join(" ", anchors.stream().limit(8).map(term -> "\"" + term + "\"").toList());
+        return (scope.prefix() + " " + subject).trim();
     }
 
     private static Set<String> anchors(String query) {
-        String normalized = query == null ? "" : query.toLowerCase(Locale.ROOT);
+        String normalized = WebSearchScope.parse(query).subject().toLowerCase(Locale.ROOT)
+                .replaceAll("(?<![a-z0-9])rfc[- ]?(\\d{3,})(?![0-9])", "rfc $1");
         LinkedHashSet<String> latin = new LinkedHashSet<>();
         var matcher = LATIN.matcher(normalized);
         while (matcher.find()) {
