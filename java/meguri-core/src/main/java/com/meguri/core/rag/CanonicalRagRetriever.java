@@ -67,7 +67,8 @@ public class CanonicalRagRetriever implements RagProvider {
 
     @Override
     public List<String> search(String query, RuntimeState state, int limit) {
-        if (limit <= 0 || rows.isEmpty() || state == null || query == null || query.isBlank()) {
+        if (limit <= 0 || rows.isEmpty() || state == null || query == null || query.isBlank()
+                || LoreQueryFocus.excluded(query)) {
             return List.of();
         }
         String relationship = state.getRelationshipProfile() == null
@@ -75,6 +76,17 @@ public class CanonicalRagRetriever implements RagProvider {
         if (relationship == null || relationship.isBlank()) return List.of();
 
         Language language = Language.detect(query);
+        List<String> full = searchProfile(query, relationship, language, limit);
+        if (!full.isEmpty()) return full;
+        for (String focus : LoreQueryFocus.candidates(query)) {
+            // Keep trusted state, original language and all scoring/coverage gates.
+            List<String> focused = searchProfile(focus, relationship, language, limit);
+            if (!focused.isEmpty()) return focused;
+        }
+        return List.of();
+    }
+
+    private List<String> searchProfile(String query, String relationship, Language language, int limit) {
         CorpusStats stats = language == Language.JA ? jaStats : zhStats;
         TokenProfile queryProfile = profile(query, language);
         if (queryProfile.frequencies().isEmpty()) return List.of();
