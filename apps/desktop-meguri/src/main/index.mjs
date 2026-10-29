@@ -1079,6 +1079,21 @@ function installIpc() {
       return shizukiFailure(error)
     }
   })
+  ipcMain.handle(channels.shizukiListRecurringRules, async event => {
+    if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    try { return { ok: true, rules: await shizukiTimePrism().listRecurringRules() } }
+    catch (error) { return shizukiFailure(error) }
+  })
+  ipcMain.handle(channels.shizukiSaveRecurringRule, async (event, input) => {
+    if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    if (!input?.requestId || !input?.expectedAccount) return { ok: false, error: '请先核对周期规则和账号后确认。' }
+    try {
+      const rule = await shizukiTimePrism().saveRecurringRule(input)
+      shizukiReminders().invalidate()
+      await shizukiReminders().sync()
+      return { ok: true, rule }
+    } catch (error) { shizukiReminders().invalidate(); return shizukiFailure(error) }
+  })
   ipcMain.handle(channels.shizukiCreateTodo, async (event, input) => {
     if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
     if (!input?.requestId || !input?.expectedAccount) return { ok: false, error: '请先核对提醒和账号后确认。' }

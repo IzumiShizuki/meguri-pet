@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import type { ShizukiConnectionStatus, ShizukiTodo } from '../../shared/desktop-contract'
+import type { ShizukiConnectionStatus, ShizukiTodo, ShizukiRecurringRule } from '../../shared/desktop-contract'
 import { REMINDER_ZONE_LABEL } from '../../shared/reminder-intent.mjs'
 import TodoCalendar from './TodoCalendar.vue'
+import RecurringTodoEditor from './RecurringTodoEditor.vue'
 
 const emit = defineEmits<{ close: [] }>()
 const props = defineProps<{ suggestedTitle?: string }>()
 const bridge = window.meguriDesktop?.shizuki
 const status = ref<ShizukiConnectionStatus>()
 const todos = ref<ShizukiTodo[]>([])
+const recurringRules = ref<ShizukiRecurringRule[]>([])
 const title = ref((props.suggestedTitle || '').trim().slice(0, 200))
 const dueAt = ref('')
 const busy = ref(false)
@@ -59,11 +61,13 @@ async function refresh() {
     if (disposed || sequence !== refreshSequence) return
     if (accountKey(status.value) !== accountKey(nextStatus)) {
       todos.value = []
+      recurringRules.value = []
       cancelReview()
     }
     status.value = nextStatus
     if (!nextStatus.connected) {
       todos.value = []
+      recurringRules.value = []
       return
     }
     const result = await bridge.listTodos()
@@ -71,6 +75,7 @@ async function refresh() {
     if (disposed || sequence !== refreshSequence) return
     if (accountKey(nextStatus) !== accountKey(confirmedStatus)) {
       todos.value = []
+      recurringRules.value = []
       status.value = confirmedStatus
       cancelReview()
       return
@@ -239,8 +244,9 @@ onBeforeUnmount(() => {
         <button type="button" :aria-pressed="view === 'list'" @click="view = 'list'">待办列表</button>
         <button type="button" :aria-pressed="view === 'calendar'" @click="view = 'calendar'">日历</button>
       </div>
-      <TodoCalendar v-show="view === 'calendar'" :key="accountKey(status)" :todos="todos" />
+      <TodoCalendar v-show="view === 'calendar'" :key="accountKey(status)" :todos="todos" :rules="recurringRules" />
       <div v-show="view === 'list'" class="todo-list-view">
+      <RecurringTodoEditor :key="accountKey(status)" :account="accountKey(status)" @changed="refresh" @rules="recurringRules = $event" />
       <form class="shizuki-todo-form" @submit.prevent="create">
         <label>待办内容<input v-model="title" maxlength="200" placeholder="例如：睡觉" :disabled="busy || !!creationInput || mutation === 'cancel'" /></label>
         <label>到点提醒 <small>{{ REMINDER_ZONE_LABEL }}</small><input v-model="dueAt" type="datetime-local" step="60" :disabled="busy || !!creationInput || mutation === 'cancel'" /></label>
@@ -255,9 +261,9 @@ onBeforeUnmount(() => {
         <p v-else-if="pending.length === 0">没有未完成的待办。</p>
         <div v-for="todo in pending" :key="todo.todoId" class="shizuki-todo-item">
           <button type="button" :disabled="busy || loading" :aria-label="`完成 ${todo.title}`" @click="complete(todo)">○</button>
-          <span><strong>{{ todo.title }}</strong><small v-if="todo.dueAt">{{ showTime(todo.dueAt) }}{{ todo.reminderEnabled ? ' · 已设提醒' : '' }}</small></span>
-          <button type="button" :disabled="busy || loading || !!creationInput" @click="selectMutation(todo, 'edit')">修改</button>
-          <button v-if="todo.reminderEnabled" type="button" :disabled="busy || loading || !!creationInput" @click="selectMutation(todo, 'cancel')">取消提醒</button>
+          <span><strong>{{ todo.title }}</strong><small v-if="todo.dueAt">{{ showTime(todo.dueAt) }} · {{ todo.timeZoneId || REMINDER_ZONE_LABEL }}{{ todo.reminderEnabled ? ' · 已设提醒' : '' }}</small><small v-if="todo.recurringRuleId">周期实例 · {{ todo.recurringInstanceAt?.slice(0, 10) }}<template v-if="todo.recurringRuleUnavailable"> · 规则暂不可用，提醒已暂停</template></small></span>
+          <button v-if="!todo.recurringRuleId" type="button" :disabled="busy || loading || !!creationInput" @click="selectMutation(todo, 'edit')">修改</button>
+          <button v-if="todo.reminderEnabled && !todo.recurringRuleId" type="button" :disabled="busy || loading || !!creationInput" @click="selectMutation(todo, 'cancel')">取消提醒</button>
         </div>
       </div>
       <small v-if="completedCount" class="shizuki-todo-completed">已完成 {{ completedCount }} 项</small>

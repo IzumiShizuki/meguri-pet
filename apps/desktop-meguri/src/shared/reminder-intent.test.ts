@@ -4,6 +4,10 @@ import { parseReminderIntent, parseShanghaiTime, shanghaiWallTime } from './remi
 const now = Date.parse('2026-10-04T12:00:00+08:00')
 
 describe('shared natural language reminder parsing', () => {
+  it.each(['每周一三五18点提醒我检查虚构项目', '周一、周三、周五18点提醒我检查虚构项目', '工作日18点提醒我检查虚构项目', '周一至周五18点提醒我检查虚构项目', '每日18点提醒我检查虚构项目'])('routes recurring input to explicit rule review: %s', (text) => {
+    expect(parseReminderIntent(text, now)).toMatchObject({ status: 'unsupported' })
+    expect(parseReminderIntent(text, now)).toMatchObject({ message: expect.stringContaining('周期待办') })
+  })
   it.each([
     ['明天上午 9 点提醒我开会。', '开会', '2026-10-05T09:00'],
     ['今晚 8 点提醒我给小王回电话。', '给小王回电话', '2026-10-04T20:00'],

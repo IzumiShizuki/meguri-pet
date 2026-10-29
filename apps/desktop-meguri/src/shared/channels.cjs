@@ -80,6 +80,8 @@ module.exports = Object.freeze({
   shizukiConnect: 'meguri:shizuki:connect',
   shizukiDisconnect: 'meguri:shizuki:disconnect',
   shizukiListTodos: 'meguri:shizuki:todos:list',
+  shizukiListRecurringRules: 'meguri:shizuki:rules:list',
+  shizukiSaveRecurringRule: 'meguri:shizuki:rules:save',
   shizukiCreateTodo: 'meguri:shizuki:todos:create',
   shizukiPendingCreates: 'meguri:shizuki:todos:pending-creates',
   shizukiUpdateTodo: 'meguri:shizuki:todos:update',

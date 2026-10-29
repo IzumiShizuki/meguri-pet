@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import type { ShizukiTodo } from '../../shared/desktop-contract'
+import type { ShizukiTodo, ShizukiRecurringRule } from '../../shared/desktop-contract'
 import {
   calendarMonthDays, shanghaiCalendarTime, shiftCalendarMonth, todoCalendarEntries,
-  todoCalendarStatus, todoCalendarTimeLabel, todosForCalendarDate,
+  todoCalendarStatus, todoCalendarTimeLabel, todosForCalendarDate, projectRecurringCalendar,
 } from '../utils/todo-calendar'
 
-const props = defineProps<{ todos: ShizukiTodo[] }>()
+const props = defineProps<{ todos: ShizukiTodo[], rules?: ShizukiRecurringRule[] }>()
 const now = ref(Date.now())
 const today = computed(() => shanghaiCalendarTime(now.value).slice(0, 10))
 let timer: ReturnType<typeof setInterval>
@@ -14,7 +14,7 @@ onMounted(() => { timer = setInterval(() => { now.value = Date.now() }, 60000) }
 onBeforeUnmount(() => clearInterval(timer))
 const month = ref(today.value.slice(0, 7))
 const selectedDate = ref(today.value)
-const entries = computed(() => todoCalendarEntries(props.todos))
+const entries = computed(() => todoCalendarEntries([...props.todos, ...projectRecurringCalendar(props.todos, props.rules || [], calendarMonthDays(month.value).map(day => day.date))]))
 const days = computed(() => calendarMonthDays(month.value).map(day => ({
   ...day, count: todosForCalendarDate(entries.value, day.date).length,
 })))
@@ -47,7 +47,7 @@ function goToday() {
       <header><strong>{{ selectedDate }}</strong><small>Asia/Shanghai · {{ selectedItems.length }} 项</small></header>
       <p v-if="!selectedItems.length">这一天没有日历待办。</p>
       <ol v-else>
-        <li v-for="item in selectedItems" :key="item.todo.todoId" :class="{ done: item.todo.done }">
+        <li v-for="item in selectedItems" :key="`${item.todo.recurringRuleId || ''}:${item.todo.todoId}`" :class="{ done: item.todo.done }">
           <div class="item-heading"><strong>{{ item.todo.title }}</strong><span :class="{ overdue: todoCalendarStatus(item, now) === '已逾期' }">{{ todoCalendarStatus(item, now) }}</span></div>
           <dl>
             <template v-if="item.todo.timingMode === 'RANGE'"><dt>开始</dt><dd>{{ todoCalendarTimeLabel(item.start, item.dayPrecision) }}</dd></template>

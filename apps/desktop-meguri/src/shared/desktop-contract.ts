@@ -366,7 +366,44 @@ export interface ShizukiConnectionStatus {
   reminderError?: string
 }
 
+export interface ShizukiRecurringRule {
+  ruleId: number
+  projectId: number | null
+  title: string
+  detail: string
+  priority: string
+  cronExpr: string
+  timeZoneId: string
+  startAt: string
+  endAt: string
+  enabled: boolean
+  sortNum: number
+  overduePolicy: string
+  reminderEnabled: boolean
+  deadlineRemindValue: number | null
+  deadlineRemindUnit: string | null
+}
+export interface ShizukiRecurringRuleInput {
+  ruleId?: number
+  title: string
+  weekdays?: number[]
+  time?: string
+  cronExpr?: string
+  timeZoneId: string
+  enabled: boolean
+  reminderEnabled: boolean
+  deadlineRemindValue: number
+  deadlineRemindUnit: string
+  requestId: string
+  expectedAccount: string
+}
 export interface ShizukiTodo {
+  forecast?: boolean
+  recurringRuleId?: number | null
+  recurringInstanceAt?: string
+  recurringRule?: ShizukiRecurringRule
+  recurringRuleUnavailable?: boolean
+  timeZoneId?: string
   todoId: number
   projectId: number | null
   title: string
@@ -475,6 +512,8 @@ export interface MeguriDesktopBridge {
     connect(input: { origin: string, email: string, password: string }): Promise<DesktopResult & { status?: ShizukiConnectionStatus }>
     disconnect(): Promise<DesktopResult & { status?: ShizukiConnectionStatus }>
     listTodos(): Promise<DesktopResult & { todos?: ShizukiTodo[] }>
+    listRecurringRules(): Promise<DesktopResult & { rules?: ShizukiRecurringRule[] }>
+    saveRecurringRule(input: ShizukiRecurringRuleInput): Promise<DesktopResult & { rule?: ShizukiRecurringRule }>
     createTodo(input: { title: string, dueAt?: string, requestId: string, expectedAccount: string, behavior?: 'reminder', timezone?: 'Asia/Shanghai' }): Promise<DesktopResult & { todo?: ShizukiTodo }>
     pendingCreates(): Promise<DesktopResult & { requests?: PendingTodoCreate[] }>
     updateTodo(id: number, input: { title?: string, dueAt?: string, cancel?: boolean, expectedAccount: string }): Promise<DesktopResult & { todo?: ShizukiTodo }>

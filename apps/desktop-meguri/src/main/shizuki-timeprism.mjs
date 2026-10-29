@@ -3,11 +3,13 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { parseShanghaiTime, REMINDER_TIMEZONE } from '../shared/reminder-intent.mjs'
 import { createWriteJournal, requestMarker } from './shizuki-write-journal.mjs'
+import { recurringStartOfDay, weeklyCron } from '../shared/recurring-todos.mjs'
 
 const DEFAULT_ORIGIN = 'https://site.shizuki.online'
 const AUTH_PATH = '/api/v1/auth/tokens'
 const LOGOUT_PATH = '/api/v1/auth/logout'
 const TODOS_PATH = '/api/v1/light-apps/todos'
+const RULES_PATH = '/api/v1/light-apps/todo-recurring-rules'
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const REQUEST_TIMEOUT_MS = 15_000
 
@@ -66,7 +68,30 @@ export function normalizeShizukiTodo(raw) {
     deadlineRemindUnit: String(valueOf(value, 'deadlineRemindUnit', 'deadline_remind_unit') || ''),
     sortNum: Number(valueOf(value, 'sortNum', 'sort_num') || 0),
     updatedAt: String(valueOf(value, 'updatedAt', 'updated_at') || ''),
+    recurringRuleId: positiveId(valueOf(value, 'recurringRuleId', 'recurring_rule_id')) || null,
+    recurringInstanceAt: String(valueOf(value, 'recurringInstanceAt', 'recurring_instance_at') || ''),
   }
+}
+
+export function normalizeRecurringRule(raw) {
+  const v = raw || {}
+  return {
+    ruleId: positiveId(valueOf(v, 'ruleId', 'rule_id')), projectId: positiveId(valueOf(v, 'projectId', 'project_id')) || null,
+    title: String(v.title || ''), detail: String(v.detail || ''), priority: String(v.priority || 'MEDIUM'),
+    cronExpr: String(valueOf(v, 'cronExpr', 'cron_expr') || ''), timeZoneId: String(valueOf(v, 'timeZoneId', 'time_zone_id') || 'Asia/Shanghai'),
+    startAt: String(valueOf(v, 'startAt', 'start_at') || ''), endAt: String(valueOf(v, 'endAt', 'end_at') || ''),
+    enabled: v.enabled !== false, sortNum: Number(valueOf(v, 'sortNum', 'sort_num') || 0),
+    overduePolicy: String(valueOf(v, 'overduePolicy', 'overdue_policy') || 'KEEP'),
+    reminderEnabled: valueOf(v, 'reminderEnabled', 'reminder_enabled') === true,
+    deadlineRemindValue: valueOf(v, 'deadlineRemindValue', 'deadline_remind_value') ?? null,
+    deadlineRemindUnit: valueOf(v, 'deadlineRemindUnit', 'deadline_remind_unit') == null
+      ? null : String(valueOf(v, 'deadlineRemindUnit', 'deadline_remind_unit')),
+  }
+}
+
+function rulePayload(rule) {
+  return Object.fromEntries(Object.entries(rule).filter(([key]) => key !== 'ruleId')
+    .map(([key, value]) => [key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`), value === '' && ['startAt', 'endAt'].includes(key) ? null : value]))
 }
 
 export function todoToShizukiPayload(todo, done = todo.done) {
@@ -160,6 +185,7 @@ export function createShizukiTimePrismClient({
   let refreshPromise
   let lastError = ''
   const journal = createWriteJournal(`${filePath}.requests.json`, (code, message) => new ShizukiTimePrismError(code, message))
+  const ruleJournal = createWriteJournal(`${filePath}.recurring-requests.json`, (code, message) => new ShizukiTimePrismError(code, message))
   let operationQueue = Promise.resolve()
   function serialized(operation) {
     return (...args) => {
@@ -362,7 +388,92 @@ export function createShizukiTimePrismClient({
     const data = await authorized(TODOS_PATH)
     if (!Array.isArray(data))
       throw new ShizukiTimePrismError('invalid_response', 'Shizuki 待办列表格式无效。')
-    return data.map(normalizeShizukiTodo).filter(todo => todo.todoId > 0)
+    const todos = data.map(normalizeShizukiTodo).filter(todo => todo.todoId > 0)
+    if (!todos.some(todo => todo.recurringRuleId)) return todos
+    // A recurring wall-clock deadline is meaningless without its authoritative timezone.
+    // Fail the snapshot if rule retrieval fails; never silently assume Shanghai.
+    const rules = await listRecurringRules()
+    return todos.map(todo => {
+      const rule = rules.find(item => item.ruleId === todo.recurringRuleId)
+      return rule ? { ...todo, recurringRule: rule, timeZoneId: rule.timeZoneId }
+        : todo.recurringRuleId ? { ...todo, reminderEnabled: false, recurringRuleUnavailable: true } : todo
+    })
+  }
+
+  async function listRecurringRules() {
+    const data = await authorized(RULES_PATH)
+    if (!Array.isArray(data)) throw new ShizukiTimePrismError('invalid_response', '周期规则列表格式无效。')
+    return data.map(normalizeRecurringRule).filter(rule => rule.ruleId > 0)
+  }
+
+  async function saveRecurringRule(input) {
+    if (!input?.expectedAccount || input.expectedAccount !== `${origin}:${userId}`)
+      throw new ShizukiTimePrismError('account_changed', '请重新核对当前账号及周期规则。')
+    const id = positiveId(input.ruleId)
+    if (input.ruleId !== undefined && !id) throw new ShizukiTimePrismError('invalid_id', '周期规则编号无效。')
+    const current = id ? (await listRecurringRules()).find(rule => rule.ruleId === id) : null
+    if (id && !current) throw new ShizukiTimePrismError('not_found', '周期规则不存在，请刷新。')
+    const title = String(input.title || '').trim()
+    if (!title || title.length > 200) throw new ShizukiTimePrismError('invalid_title', '待办标题需要 1 到 200 个字符。')
+    const zone = String(input.timeZoneId || current?.timeZoneId || 'Asia/Shanghai')
+    try { new Intl.DateTimeFormat('en', { timeZone: zone }).format() }
+    catch { throw new ShizukiTimePrismError('invalid_timezone', '请选择有效时区。') }
+    let cron
+    try { cron = input.weekdays ? weeklyCron(input.weekdays, input.time) : String(input.cronExpr || current?.cronExpr || '').trim() }
+    catch (error) { throw new ShizukiTimePrismError('invalid_schedule', error.message) }
+    if (!cron || cron.length > 64 || cron.split(/\s+/).length !== 6)
+      throw new ShizukiTimePrismError('invalid_schedule', '需要六段 Cron 表达式；已有高级规则可以保留原样。')
+    const amount = Number(input.deadlineRemindValue ?? current?.deadlineRemindValue ?? 0)
+    const unit = String(input.deadlineRemindUnit || current?.deadlineRemindUnit || 'MINUTE').toUpperCase()
+    if (input.reminderEnabled === true && (!Number.isSafeInteger(amount) || amount < 0 || !['MINUTE', 'DAY'].includes(unit) || (amount === 0 && unit === 'DAY')))
+      throw new ShizukiTimePrismError('invalid_reminder', '提前量需要为非负分钟或正整数天。')
+    const rule = normalizeRecurringRule({ ...current, title, cronExpr: cron, timeZoneId: zone,
+      enabled: input.enabled ?? current?.enabled ?? true, reminderEnabled: input.reminderEnabled === true,
+      deadlineRemindValue: input.reminderEnabled === true ? amount : null,
+      deadlineRemindUnit: input.reminderEnabled === true ? unit : null })
+    const signature = JSON.stringify([origin, userId, id, rule])
+    let requestId = input.requestId
+    // Reopening the UI after a timeout recovers the same pending create, never POSTs a twin.
+    if (!id) {
+      const pending = ruleJournal.pending(origin, userId).find(entry => ruleJournal.get(entry.requestId)?.signature === signature)
+      if (pending) requestId = pending.requestId
+    }
+    const previous = !id ? ruleJournal.get(requestId) : null
+    if (previous && previous.signature !== signature) throw new ShizukiTimePrismError('request_conflict', '请求已改变，请核对原规则。')
+    // Match the site's default explicitly, and retain it across midnight retries.
+    // The logical signature above excludes this generated default.
+    if (!rule.startAt) rule.startAt = previous?.startAt || recurringStartOfDay(clock(), zone)
+    if (!id) rule.detail = requestMarker(requestId)
+    const verify = saved => {
+      if (!saved?.ruleId || Object.entries(rule).some(([key, value]) => key !== 'ruleId' && saved[key] !== value))
+        throw new ShizukiTimePrismError('unconfirmed_rule', '服务器尚未确认完整周期规则，请刷新核对。')
+      return saved
+    }
+    if (previous && previous.state !== 'rejected') {
+      const matches = (await listRecurringRules()).filter(value => value.detail === rule.detail)
+      if (matches.length !== 1) throw new ShizukiTimePrismError('write_uncertain', '周期规则结果不确定；仅核对原请求，没有重复创建。')
+      const recovered = verify(matches[0])
+      ruleJournal.put(requestId, { ...previous, state: 'confirmed', ruleId: recovered.ruleId })
+      return recovered
+    }
+    if (!accessToken || clock() >= accessExpiresAt - 60_000) await renew()
+    const entry = { signature, origin, userId, title, dueAt: cron, startAt: rule.startAt, state: 'uncertain' }
+    if (!id) ruleJournal.put(requestId, entry)
+    try {
+      const response = normalizeRecurringRule(await authorized(id ? `${RULES_PATH}/${id}` : RULES_PATH,
+        { method: id ? 'PUT' : 'POST', body: rulePayload(rule) }))
+      if (id && response.ruleId !== id) throw new ShizukiTimePrismError('unconfirmed_rule', '服务器返回了不同规则，请刷新核对。')
+      verify(response)
+      const saved = verify((await listRecurringRules()).find(value => value.ruleId === response.ruleId))
+      if (!id) ruleJournal.put(requestId, { ...entry, state: 'confirmed', ruleId: saved.ruleId })
+      return saved
+    } catch (error) {
+      if ([400, 401, 403, 404, 405, 422, 429].includes(error.status)) {
+        if (!id) ruleJournal.put(requestId, { ...entry, state: 'rejected' })
+        throw new ShizukiTimePrismError('request_rejected', '服务器已拒绝本次周期规则写入，可以修改后重新确认。', error.status)
+      }
+      throw error
+    }
   }
 
   async function createTodo(input) {
@@ -453,6 +564,7 @@ export function createShizukiTimePrismClient({
     if (!todoId) throw new ShizukiTimePrismError('invalid_id', '待办编号无效。')
     const current = (await listTodos()).find(todo => todo.todoId === todoId)
     if (!current) throw new ShizukiTimePrismError('not_found', '找不到该待办，请刷新。')
+    if (current.recurringRuleId) throw new ShizukiTimePrismError('recurring_rule_required', '请在周期规则中修改提醒；此处只允许完成当前日期实例。')
     const cancellation = input?.cancel === true
     const title = cancellation ? current.title : String(input?.title || '').trim()
     if (!title || title.length > 200) throw new ShizukiTimePrismError('invalid_title', '待办标题需要 1 到 200 个字符。')
@@ -464,7 +576,7 @@ export function createShizukiTimePrismClient({
     if (saved.todoId !== todoId || saved.title !== title || saved.dueAt !== dueAt || saved.reminderEnabled !== next.reminderEnabled
       || (!cancellation && (saved.timePrecision !== 'MINUTE' || saved.timingMode !== 'DEADLINE' || saved.deadlineRemindValue !== 0 || saved.deadlineRemindUnit !== 'MINUTE')))
       throw new ShizukiTimePrismError('invalid_response', '服务器尚未确认修改。请刷新核对原记录后重试。')
-    return saved
+    return { ...saved, recurringRule: current.recurringRule, timeZoneId: current.timeZoneId }
   }
 
   async function completeTodo(id, expectedAccount) {
@@ -483,9 +595,10 @@ export function createShizukiTimePrismClient({
       body: todoToShizukiPayload(current, true),
     })
     const saved = normalizeShizukiTodo(data)
-    if (saved.todoId !== todoId || !saved.done)
+    if (saved.todoId !== todoId || !saved.done || (current.recurringRuleId && (saved.recurringRuleId !== current.recurringRuleId
+      || saved.recurringInstanceAt !== current.recurringInstanceAt || saved.dueAt !== current.dueAt)))
       throw new ShizukiTimePrismError('invalid_response', 'Shizuki 未确认待办已完成。')
-    return saved
+    return { ...saved, recurringRule: current.recurringRule, timeZoneId: current.timeZoneId }
   }
 
   async function disconnect() {
@@ -504,5 +617,6 @@ export function createShizukiTimePrismClient({
   }
 
   return { initialize, status, pendingCreates, connect: serialized(connect), disconnect: serialized(disconnect),
+    listRecurringRules: serialized(listRecurringRules), saveRecurringRule: serialized(saveRecurringRule),
     listTodos: serialized(listTodos), createTodo: serialized(createTodo), completeTodo: serialized(completeTodo), updateTodo: serialized(updateTodo) }
 }

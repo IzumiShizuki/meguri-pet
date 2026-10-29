@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { parseShanghaiTime } from '../shared/reminder-intent.mjs'
+import { recurringTime } from '../shared/recurring-todos.mjs'
 
 const SCAN_INTERVAL_MS = 30_000
 const SYNC_INTERVAL_MS = 75_000
@@ -33,12 +34,14 @@ export function dueTodoReminders(todos, userId, now = Date.now()) {
         ? [{ kind: 'start', anchor: todo.rangeStartAt, value: todo.startRemindValue, unit: todo.startRemindUnit }]
         : []),
     ]) {
-      const anchor = parseShizukiLocalTime(candidate.anchor)
+      const anchor = todo.recurringRuleId ? recurringTime(candidate.anchor, todo.timeZoneId || '') : parseShizukiLocalTime(candidate.anchor)
       const offset = reminderOffsetMs(candidate.value, candidate.unit)
       if (!Number.isFinite(anchor) || !Number.isFinite(offset)) continue
       const triggerAt = anchor - offset
       if (now < triggerAt || now - triggerAt > GRACE_MS) continue
-      const key = `${userId}:${todo.todoId}:${candidate.kind}:${triggerAt}`
+      const identity = todo.recurringRuleId && todo.recurringInstanceAt
+        ? `rule-${todo.recurringRuleId}:${todo.recurringInstanceAt}` : todo.todoId
+      const key = `${userId}:${identity}:${candidate.kind}:${triggerAt}`
       events.push({
         key,
         todoId: todo.todoId,
@@ -46,6 +49,7 @@ export function dueTodoReminders(todos, userId, now = Date.now()) {
         dueAt: String(candidate.anchor),
         triggerAt,
         kind: candidate.kind,
+        timeZoneId: todo.timeZoneId || 'Asia/Shanghai',
         late: now > triggerAt + SCAN_INTERVAL_MS,
       })
     }

@@ -1,4 +1,5 @@
-import type { ShizukiTodo } from '../../shared/desktop-contract'
+import type { ShizukiTodo, ShizukiRecurringRule } from '../../shared/desktop-contract'
+import { recurringTime, weeklyPreset } from '../../shared/recurring-todos.mjs'
 
 const zone = 'Asia/Shanghai'
 const formatter = new Intl.DateTimeFormat('sv-SE', {
@@ -23,7 +24,7 @@ export interface TodoCalendarEntry {
 
 export function todoCalendarEntries(todos: ShizukiTodo[]): TodoCalendarEntry[] {
   return todos.flatMap((todo) => {
-    const end = shanghaiCalendarTime(todo.dueAt)
+    const end = shanghaiCalendarTime(todo.recurringRuleId ? recurringTime(todo.dueAt, todo.timeZoneId || '') : todo.dueAt)
     if (todo.showOnCalendar === false || !todo.title.trim() || !end) return []
     const start = todo.timingMode === 'RANGE' ? shanghaiCalendarTime(todo.rangeStartAt) || end : end
     if (start > end) return []
@@ -41,9 +42,35 @@ export function todoCalendarTimeLabel(value: string, dayPrecision: boolean) {
 
 export function todoCalendarStatus(item: TodoCalendarEntry, now = Date.now()) {
   if (item.todo.done) return '已完成'
+  if (item.todo.forecast) return '预计 · 尚未生成'
   const current = shanghaiCalendarTime(now)
   const overdue = item.dayPrecision ? item.end.slice(0, 10) < current.slice(0, 10) : Date.parse(`${item.end}:00+08:00`) < now
   return overdue ? '已逾期' : '待完成'
+}
+
+export function projectRecurringCalendar(todos: ShizukiTodo[], rules: ShizukiRecurringRule[], dates: string[]): ShizukiTodo[] {
+  const known = new Set(todos.filter(todo => todo.recurringRuleId).flatMap(todo => [
+    `${todo.recurringRuleId}:${(todo.recurringInstanceAt || todo.dueAt).slice(0, 10)}`,
+    `${todo.recurringRuleId}:${todo.dueAt.slice(0, 10)}`,
+  ]))
+  return rules.flatMap(rule => {
+    const preset = weeklyPreset(rule.cronExpr)
+    if (!preset || !rule.enabled) return []
+    return dates.flatMap(date => {
+      const dueAt = `${date}T${preset.time}:00`
+      // Bounds are LocalDateTime in the rule timezone, including the time of day.
+      // Compare wall-clock values without applying the browser timezone.
+      const wallTime = Date.parse(`${dueAt}Z`)
+      if (!preset.weekdays.includes(new Date(`${date}T12:00:00Z`).getUTCDay())
+        || (rule.startAt && !(wallTime >= Date.parse(`${rule.startAt}Z`)))
+        || (rule.endAt && !(wallTime <= Date.parse(`${rule.endAt}Z`)))
+        || known.has(`${rule.ruleId}:${date}`)) return []
+      return [{ todoId: -Number(date.replaceAll('-', '')), projectId: rule.projectId, title: rule.title, detail: rule.detail,
+        priority: rule.priority, done: false, dueAt, showOnCalendar: true, timePrecision: 'MINUTE', timingMode: 'DEADLINE', rangeStartAt: '',
+        reminderEnabled: false, startRemindValue: null, startRemindUnit: '', deadlineRemindValue: null, deadlineRemindUnit: '',
+        sortNum: rule.sortNum, updatedAt: '', recurringRuleId: rule.ruleId, recurringInstanceAt: dueAt, timeZoneId: rule.timeZoneId, forecast: true }]
+    })
+  })
 }
 
 export function calendarMonthDays(month: string) {

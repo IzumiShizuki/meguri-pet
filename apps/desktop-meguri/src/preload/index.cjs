@@ -85,6 +85,8 @@ const channels = Object.freeze({
   shizukiConnect: 'meguri:shizuki:connect',
   shizukiDisconnect: 'meguri:shizuki:disconnect',
   shizukiListTodos: 'meguri:shizuki:todos:list',
+  shizukiListRecurringRules: 'meguri:shizuki:rules:list',
+  shizukiSaveRecurringRule: 'meguri:shizuki:rules:save',
   shizukiCreateTodo: 'meguri:shizuki:todos:create',
   shizukiPendingCreates: 'meguri:shizuki:todos:pending-creates',
   shizukiUpdateTodo: 'meguri:shizuki:todos:update',
@@ -229,6 +231,8 @@ const desktopBridge = {
         disconnect: () => ipcRenderer.invoke(channels.shizukiDisconnect),
       } : {
         listTodos: () => ipcRenderer.invoke(channels.shizukiListTodos),
+        listRecurringRules: () => ipcRenderer.invoke(channels.shizukiListRecurringRules),
+        saveRecurringRule: input => ipcRenderer.invoke(channels.shizukiSaveRecurringRule, input),
         createTodo: input => ipcRenderer.invoke(channels.shizukiCreateTodo, input),
         pendingCreates: () => ipcRenderer.invoke(channels.shizukiPendingCreates),
         updateTodo: (id, input) => ipcRenderer.invoke(channels.shizukiUpdateTodo, id, input),
