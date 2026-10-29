@@ -30,7 +30,7 @@ class ModelScopeNetworkAcceptanceTest {
         ModelScopeSkillSourcePlugin source = new ModelScopeSkillSourcePlugin(
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build(),
                 new ObjectMapper().findAndRegisterModules(), URI.create("https://modelscope.cn"),
-                URI.create(bridgeUrl), bridgeToken, Duration.ofSeconds(30));
+                URI.create(bridgeUrl), bridgeToken, Duration.ofSeconds(30), true);
         SkillManagementService management = new SkillManagementService(
                 new SkillSourceRegistry(List.of(source)), new InMemorySkillCatalogRepository(),
                 new SkillPackageValidator(Set.of(), name -> false),

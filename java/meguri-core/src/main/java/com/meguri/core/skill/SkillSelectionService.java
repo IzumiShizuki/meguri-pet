@@ -34,16 +34,26 @@ public final class SkillSelectionService {
     private static FrozenSkillSnapshot.Candidate candidate(SkillCatalogEntry entry, Set<String> queryTokens) {
         SkillRevision active = entry.activeRevision();
         SkillManifest manifest = active.manifest() == null ? entry.manifest() : active.manifest();
-        Set<String> title = tokens(manifest.name());
-        Set<String> description = tokens(manifest.description());
-        Set<String> tags = tokens(String.join(" ", manifest.tags()));
+        double score = relevance(queryTokens, manifest.name(), manifest.description(), manifest.tags());
+        return new FrozenSkillSnapshot.Candidate(manifest.id(), active.sourceRevision(), active.digest(),
+                manifest.name(), manifest.description(), manifest.tags(), score);
+    }
+
+    /** The disclosure query must use the same matching semantics as candidate selection. */
+    static double relevance(String query, FrozenSkillSnapshot.Candidate candidate) {
+        return relevance(tokens(query), candidate.name(), candidate.description(), candidate.tags());
+    }
+
+    private static double relevance(Set<String> queryTokens, String name, String summary, List<String> labels) {
+        Set<String> title = tokens(name);
+        Set<String> description = tokens(summary);
+        Set<String> tags = tokens(String.join(" ", labels));
         double score = overlap(queryTokens, description)
                 + 3.0 * overlap(queryTokens, title)
                 + 2.0 * overlap(queryTokens, tags);
         String normalizedQuery = String.join(" ", queryTokens);
-        if (!normalizedQuery.isBlank() && manifest.name().toLowerCase(Locale.ROOT).contains(normalizedQuery)) score += 5.0;
-        return new FrozenSkillSnapshot.Candidate(manifest.id(), active.sourceRevision(), active.digest(),
-                manifest.name(), manifest.description(), manifest.tags(), score);
+        if (!normalizedQuery.isBlank() && name.toLowerCase(Locale.ROOT).contains(normalizedQuery)) score += 5.0;
+        return score;
     }
 
     private static double overlap(Set<String> query, Set<String> value) {

@@ -35,6 +35,10 @@ function Main {
     $env:MEGURI_EXECUTION_MODE_ENABLED = 'true'
     $env:MEGURI_LIMITED_REACT_ENABLED = 'true'
     $env:MEGURI_SHIZUKI_ENABLED = 'true'
+    # Public community discovery is separate from downloading unfamiliar packages.
+    # Imports stay disabled until an operator explicitly approves that capability.
+    if (-not $env:MEGURI_MODELSCOPE_SKILLS_ENABLED) { $env:MEGURI_MODELSCOPE_SKILLS_ENABLED = 'true' }
+    if (-not $env:MEGURI_MODELSCOPE_SKILL_IMPORTS_ENABLED) { $env:MEGURI_MODELSCOPE_SKILL_IMPORTS_ENABLED = 'false' }
     # Enable bounded current-information lookup for the local desktop pet.
     # The Core still applies WebSearchPolicy and provider safety limits.
     $env:MEGURI_WEB_SEARCH_ENABLED = 'true'

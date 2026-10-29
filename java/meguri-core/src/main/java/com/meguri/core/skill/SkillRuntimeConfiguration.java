@@ -27,6 +27,7 @@ public class SkillRuntimeConfiguration {
             @Value("${meguri.skills.modelscope.bridge-url:http://127.0.0.1:8000}") String bridgeUrl,
             @Value("${meguri.skills.modelscope.bridge-token-file:}") String tokenFile,
             @Value("${meguri.skills.modelscope.bridge-token:}") String inlineToken,
+            @Value("${meguri.skills.modelscope.imports-enabled:false}") boolean importsEnabled,
             @Value("${meguri.skills.modelscope.timeout-ms:15000}") long timeoutMs) {
         if (timeoutMs <= 0) throw new IllegalArgumentException("ModelScope timeout must be positive");
         String bridgeToken = readToken(tokenFile, inlineToken);
@@ -38,7 +39,7 @@ public class SkillRuntimeConfiguration {
                 HttpClient.newBuilder().connectTimeout(Duration.ofMillis(timeoutMs))
                         .followRedirects(HttpClient.Redirect.NEVER).build(),
                 mapper, URI.create(baseUrl), URI.create(bridgeUrl),
-                bridgeToken, Duration.ofMillis(timeoutMs));
+                bridgeToken, Duration.ofMillis(timeoutMs), importsEnabled);
     }
 
     @Bean @ConditionalOnMissingBean

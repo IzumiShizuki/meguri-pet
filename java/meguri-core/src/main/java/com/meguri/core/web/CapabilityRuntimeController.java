@@ -44,15 +44,43 @@ public final class CapabilityRuntimeController {
     private final McpSourceManager sources;
     private final byte[] managementToken;
 
+    public CapabilityRuntimeController(
+            CapabilityRuntimeFacade runtime,
+            McpSourceManager sources,
+            String managementToken) {
+        this(runtime, sources, managementToken, "");
+    }
+
     @Autowired
     public CapabilityRuntimeController(
             CapabilityRuntimeFacade runtime,
             McpSourceManager sources,
-            @Value("${meguri.capability.admin.token:}") String managementToken) {
+            @Value("${meguri.capability.admin.token:}") String managementToken,
+            @Value("${meguri.capability.admin.token-file:}") String tokenFile) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.sources = Objects.requireNonNull(sources, "sources");
-        this.managementToken = managementToken == null
-                ? new byte[0] : managementToken.getBytes(StandardCharsets.UTF_8);
+        this.managementToken = readManagementToken(managementToken, tokenFile);
+    }
+
+    private static byte[] readManagementToken(String inline, String tokenFile) {
+        if (tokenFile == null || tokenFile.isBlank()) {
+            return inline == null ? new byte[0] : inline.getBytes(StandardCharsets.UTF_8);
+        }
+        try {
+            java.nio.file.Path path = java.nio.file.Path.of(tokenFile);
+            if (!path.isAbsolute() || !java.nio.file.Files.isRegularFile(path,
+                    java.nio.file.LinkOption.NOFOLLOW_LINKS) || java.nio.file.Files.size(path) > 8192) {
+                throw new IllegalStateException();
+            }
+            String token = java.nio.file.Files.readString(path, StandardCharsets.UTF_8);
+            if (token.startsWith("\uFEFF")) token = token.substring(1);
+            byte[] bytes = token.trim().getBytes(StandardCharsets.UTF_8);
+            if (bytes.length < 16 || bytes.length > 4096) throw new IllegalStateException();
+            return bytes;
+        } catch (Exception failure) {
+            // No credential, supplied path or underlying I/O details reach startup logs.
+            throw new IllegalStateException("Capability admin token file is unavailable or invalid");
+        }
     }
 
     @GetMapping

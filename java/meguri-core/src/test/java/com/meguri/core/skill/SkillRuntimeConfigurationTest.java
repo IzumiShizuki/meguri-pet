@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("External Skill runtime configuration")
 class SkillRuntimeConfigurationTest {
@@ -40,7 +41,23 @@ class SkillRuntimeConfigurationTest {
                             .hasSingleBean(ModelScopeSkillSourcePlugin.class);
                     assertThat(context.getBean(SkillSourceRegistry.class).ids())
                             .containsExactly("modelscope");
+                    assertThatThrownBy(() -> context.getBean(ModelScopeSkillSourcePlugin.class).fetch("owner/guide"))
+                            .isInstanceOf(SkillSourcePlugin.SourceException.class)
+                            .extracting(error -> ((SkillSourcePlugin.SourceException) error).code())
+                            .isEqualTo("MODELSCOPE_IMPORTS_DISABLED");
                 });
+    }
+
+    @Test
+    void should_pass_explicit_import_opt_in_without_bypassing_skill_id_validation() {
+        runner.withPropertyValues("meguri.skills.modelscope.enabled=true",
+                        "meguri.skills.modelscope.bridge-token=fixture-token",
+                        "meguri.skills.modelscope.imports-enabled=true")
+                .run(context -> assertThatThrownBy(() ->
+                        context.getBean(ModelScopeSkillSourcePlugin.class).fetch("../invalid"))
+                        .isInstanceOf(SkillSourcePlugin.SourceException.class)
+                        .extracting(error -> ((SkillSourcePlugin.SourceException) error).code())
+                        .isEqualTo("MODELSCOPE_SKILL_ID_INVALID"));
     }
 
     @Test

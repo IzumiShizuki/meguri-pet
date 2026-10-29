@@ -30,26 +30,40 @@ public final class ModelScopeSkillSourcePlugin implements SkillSourcePlugin {
     private final URI bridgeUri;
     private final String bridgeToken;
     private final Duration timeout;
+    private final boolean importsEnabled;
 
     public ModelScopeSkillSourcePlugin(
             HttpClient client, ObjectMapper mapper, URI baseUri, URI bridgeUri,
             String bridgeToken, Duration timeout) {
+        this(client, mapper, baseUri, bridgeUri, bridgeToken, timeout, false);
+    }
+
+    public ModelScopeSkillSourcePlugin(
+            HttpClient client, ObjectMapper mapper, URI baseUri, URI bridgeUri,
+            String bridgeToken, Duration timeout, boolean importsEnabled) {
         this(request -> {
             HttpResponse<String> response = Objects.requireNonNull(client, "client").send(
                     request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             return new TransportResponse(response.statusCode(), response.body());
-        }, mapper, baseUri, bridgeUri, bridgeToken, timeout);
+        }, mapper, baseUri, bridgeUri, bridgeToken, timeout, importsEnabled);
     }
 
     ModelScopeSkillSourcePlugin(
             Transport transport, ObjectMapper mapper, URI baseUri, URI bridgeUri,
             String bridgeToken, Duration timeout) {
+        this(transport, mapper, baseUri, bridgeUri, bridgeToken, timeout, false);
+    }
+
+    ModelScopeSkillSourcePlugin(
+            Transport transport, ObjectMapper mapper, URI baseUri, URI bridgeUri,
+            String bridgeToken, Duration timeout, boolean importsEnabled) {
         this.transport = Objects.requireNonNull(transport, "transport");
         this.mapper = Objects.requireNonNull(mapper, "mapper");
         this.baseUri = exactModelScope(baseUri);
         this.bridgeUri = loopbackBridge(bridgeUri);
         this.bridgeToken = bridgeToken == null ? "" : bridgeToken;
         this.timeout = timeout == null ? Duration.ofSeconds(15) : timeout;
+        this.importsEnabled = importsEnabled;
     }
 
     @Override public String id() { return SOURCE_ID; }
@@ -79,6 +93,7 @@ public final class ModelScopeSkillSourcePlugin implements SkillSourcePlugin {
     }
 
     @Override public FetchResult fetch(String externalId) {
+        if (!importsEnabled) throw failure("MODELSCOPE_IMPORTS_DISABLED", false);
         try {
             String safeExternalId = validExternalId(externalId);
             String body = mapper.writeValueAsString(Map.of("skill_id", safeExternalId));

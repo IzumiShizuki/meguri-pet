@@ -28,10 +28,9 @@ public final class SkillDisclosureService {
 
     public Map<String, Object> search(String turnId, String query) {
         Ledger ledger = require(turnId);
-        String normalized = query == null ? "" : query.toLowerCase(java.util.Locale.ROOT);
         List<Map<String, Object>> items = ledger.snapshot.candidates().stream()
-                .filter(value -> normalized.isBlank() || (value.name() + " " + value.description()
-                        + " " + String.join(" ", value.tags())).toLowerCase(java.util.Locale.ROOT).contains(normalized))
+                .filter(value -> query == null || query.isBlank()
+                        || SkillSelectionService.relevance(query, value) > 0)
                 .map(value -> Map.<String, Object>of(
                         "skill_id", value.skillId(), "name", value.name(), "description", value.description(),
                         "revision", value.revision(), "digest", value.digest(), "score", value.score()))
@@ -42,6 +41,38 @@ public final class SkillDisclosureService {
     public Map<String, Object> view(String turnId, String skillId, String relativePath) {
         Ledger ledger = require(turnId);
         return ledger.view(skillId, relativePath == null || relativePath.isBlank() ? "SKILL.md" : relativePath);
+    }
+
+    /** Public metadata only: discovery never fetches, imports, activates or executes a package. */
+    public Map<String, Object> discover(String turnId, String query) {
+        require(turnId);
+        String bounded = query == null ? "" : query.trim();
+        if (bounded.length() > 512) throw new IllegalArgumentException("Skill discovery query is too long");
+        var page = management.search("modelscope", bounded, 1, 5);
+        return Map.of("items", page.items().stream().limit(5).map(SkillDisclosureService::publicSummary).toList(),
+                "trust", "UNTRUSTED_EXTERNAL", "installed", false,
+                "instruction", "Public metadata only; installation requires separate review and approval.");
+    }
+
+    public Map<String, Object> inspect(String turnId, String externalId) {
+        require(turnId);
+        var detail = management.detail("modelscope", externalId);
+        return Map.of("skill", publicSummary(detail.summary()), "trust", "UNTRUSTED_EXTERNAL",
+                "installed", false, "executable", false,
+                "required_tools", detail.requirements().tools().stream().limit(16).toList(),
+                "required_environment_names", detail.requirements().env().stream().limit(16).toList());
+    }
+
+    private static Map<String, Object> publicSummary(SkillSourcePlugin.Summary value) {
+        return Map.of("external_id", boundedMetadata(value.externalId()), "name", boundedMetadata(value.name()),
+                "description", boundedMetadata(value.description()), "license", boundedMetadata(value.license()));
+    }
+
+    private static String boundedMetadata(String value) {
+        if (value == null) return "";
+        int end = Math.min(value.length(), 512);
+        if (end > 0 && Character.isHighSurrogate(value.charAt(end - 1))) end--;
+        return value.substring(0, end);
     }
 
     private Ledger require(String turnId) {

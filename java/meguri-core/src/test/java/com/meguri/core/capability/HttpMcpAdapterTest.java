@@ -27,6 +27,117 @@ class HttpMcpAdapterTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
+    void executesStructuredToolThroughFrozenCapabilityApprovalAndRecoversAfterFailure() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        try (TestServer server = server(exchange -> {
+            if (!"POST".equals(exchange.getRequestMethod())) {
+                respond(exchange, 405, "application/json", "");
+                return;
+            }
+            JsonNode request = mapper.readTree(exchange.getRequestBody());
+            switch (request.path("method").asText()) {
+                case "initialize" -> json(exchange, request, Map.of(
+                        "protocolVersion", "2025-11-25", "capabilities", Map.of("tools", Map.of())));
+                case "notifications/initialized" -> respond(exchange, 202, "application/json", "");
+                case "tools/list" -> json(exchange, request, Map.of("tools", List.of(Map.of(
+                        "name", "lookup", "annotations", Map.of("readOnlyHint", true),
+                        "inputSchema", Map.of("type", "object", "properties",
+                                Map.of("query", Map.of("type", "string")), "required", List.of("query")),
+                        "outputSchema", Map.of("type", "object", "properties",
+                                Map.of("value", Map.of("type", "string")), "required", List.of("value"))))));
+                case "tools/call" -> {
+                    calls.incrementAndGet();
+                    String query = request.path("params").path("arguments").path("query").asText();
+                    assertThat(request.path("params").path("name").asText()).isEqualTo("lookup");
+                    assertThat(request.path("params").path("_meta").path("operationId").asText()).isNotBlank();
+                    json(exchange, request, query.equals("fail")
+                            ? Map.of("isError", true, "content", List.of(Map.of("type", "text", "text", "fixture failure")))
+                            : query.equals("invalid")
+                            ? Map.of("structuredContent", Map.of("value", 42))
+                            : Map.of("structuredContent", Map.of("value", query),
+                                    "content", List.of(Map.of("type", "text", "text", query))));
+                }
+                default -> respond(exchange, 400, "application/json", "{}");
+            }
+        }); CapabilityRuntimeFacade runtime = new CapabilityRuntimeFacade(8);
+             McpSourceManager manager = new McpSourceManager(runtime, mapper, "")) {
+            manager.register(new McpSourceManager.SourceConfiguration(
+                    "fixture", server.uri(), 4, null, Map.of(), true));
+            var frozen = runtime.freeze(new ExposurePlanner.ExposureContext(
+                    "turn-http", "tenant", "user", "client", Set.of("mcp:fixture"),
+                    CapabilityDescriptor.Mode.BALANCED, Set.of("mcp.fixture.lookup"), 4,
+                    true, CapabilityDescriptor.DataClassification.RESTRICTED));
+            ToolProposal proposal = toolProposal("ok", null);
+            assertThat(runtime.execute(frozen, proposal).errorCode()).isEqualTo("APPROVAL_REQUIRED");
+            assertThat(calls).hasValue(0);
+            var denied = runtime.requestApproval(frozen, proposal);
+            runtime.resolveApproval(denied.approvalId(), ApprovalService.Decision.DECLINE, "user");
+            assertThat(runtime.execute(frozen, toolProposal("ok", denied.approvalId())).errorCode())
+                    .isEqualTo("APPROVAL_DECLINED");
+            assertThat(calls).hasValue(0);
+
+            var approved = runtime.requestApproval(frozen, toolProposal("accepted", null));
+            runtime.resolveApproval(approved.approvalId(), ApprovalService.Decision.ACCEPT, "user");
+            CapabilityResult result = runtime.execute(frozen, toolProposal("accepted", approved.approvalId()));
+            assertThat(result.status()).as("MCP fixture result: %s", result).isEqualTo(CapabilityResult.Status.SUCCESS);
+            assertThat(result.data()).containsExactlyEntriesOf(Map.of("value", "accepted"));
+            assertThat(result.source().trust()).isEqualTo(CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL);
+            assertThat(calls).hasValue(1);
+
+            for (String query : List.of("invalid", "fail", "recovered")) {
+                var approval = runtime.requestApproval(frozen, toolProposal(query, null));
+                runtime.resolveApproval(approval.approvalId(), ApprovalService.Decision.ACCEPT, "user");
+                CapabilityResult next = runtime.execute(frozen, toolProposal(query, approval.approvalId()));
+                if (query.equals("invalid")) assertThat(next.errorCode()).isEqualTo("OUTPUT_SCHEMA_INVALID");
+                else if (query.equals("fail")) assertThat(next.status()).isEqualTo(CapabilityResult.Status.FAILED);
+                else assertThat(next.data()).containsEntry("value", "recovered");
+            }
+            assertThat(runtime.auditEvents()).anySatisfy(event -> {
+                assertThat(event.capabilityId()).isEqualTo("mcp.fixture.lookup");
+                assertThat(event.status()).isEqualTo("SUCCESS");
+                assertThat(event.operationId()).isNotBlank();
+                assertThat(event.approvalDecision()).isEqualTo(ApprovalService.Decision.ACCEPT);
+            });
+        }
+    }
+
+    private static ToolProposal toolProposal(String query, String approvalId) {
+        return new ToolProposal("turn-http", "trace-http", "tenant", "user", "client",
+                "mcp.fixture.lookup", Map.of("query", query), Set.of("mcp:fixture"),
+                "operation-" + query, null, approvalId, true, 100);
+    }
+
+    @Test
+    void rejectsMalformedStructuredContentAndKeepsTextOnlyToolsUsable() throws Exception {
+        try (TestServer server = server(exchange -> {
+            JsonNode request = mapper.readTree(exchange.getRequestBody());
+            String method = request.path("method").asText();
+            if (method.equals("initialize")) {
+                json(exchange, request, Map.of("protocolVersion", "2025-11-25",
+                        "capabilities", Map.of("tools", Map.of())));
+            } else if (method.equals("notifications/initialized")) {
+                respond(exchange, 202, "application/json", "");
+            } else {
+                boolean malformed = request.path("params").path("arguments").path("bad").asBoolean();
+                json(exchange, request, malformed ? Map.of("structuredContent", List.of("invalid"))
+                        : Map.of("content", List.of(Map.of("type", "text", "text", "safe fixture result"))));
+            }
+        })) {
+            HttpMcpAdapter adapter = adapter(server.uri(), 10);
+            adapter.negotiate(4, Set.of("tools"));
+            var context = new CapabilityImplementation.ExecutionContext("turn", "trace", "operation", 1);
+            assertThatThrownBy(() -> adapter.invoke("lookup", Map.of("bad", true), context))
+                    .isInstanceOf(HttpMcpAdapter.McpTransportException.class)
+                    .hasMessageContaining("structuredContent must be an object");
+            assertThat(adapter.invoke("lookup", Map.of(), context)).containsKey("content");
+            assertThat(adapter.invoke("lookup", Map.of(),
+                    new CapabilityImplementation.ExecutionContext("turn", "trace", null, 1)))
+                    .containsKey("content");
+            adapter.close();
+        }
+    }
+
+    @Test
     void usesDateProtocolSessionPaginationJsonAndEventStream() throws Exception {
         AtomicInteger notifications = new AtomicInteger();
         AtomicBoolean deleted = new AtomicBoolean();

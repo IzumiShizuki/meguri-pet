@@ -2556,6 +2556,16 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
 
     private void registerSkillCapabilities() {
         capabilityRuntime.register(skillDescriptor(
+                "meguri.skill.discover",
+                objectSchema(Map.of("query", CapabilityDescriptor.ValueType.STRING), Set.of("query"))),
+                (input, context) -> requireSkillDisclosure().discover(
+                        context.turnId(), String.valueOf(input.get("query"))));
+        capabilityRuntime.register(skillDescriptor(
+                "meguri.skill.inspect",
+                objectSchema(Map.of("external_id", CapabilityDescriptor.ValueType.STRING), Set.of("external_id"))),
+                (input, context) -> requireSkillDisclosure().inspect(
+                        context.turnId(), String.valueOf(input.get("external_id"))));
+        capabilityRuntime.register(skillDescriptor(
                 "meguri.skill.search",
                 objectSchema(Map.of("query", CapabilityDescriptor.ValueType.STRING), Set.of())),
                 (input, context) -> requireSkillDisclosure().search(
@@ -2599,12 +2609,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 id, "1", CapabilityDescriptor.Kind.READ_TOOL, "meguri-core",
                 inputSchema, new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of()),
                 Set.of("skill:read"), CapabilityDescriptor.SideEffect.READ,
-                CapabilityDescriptor.ApprovalRequirement.NONE, Duration.ofSeconds(2),
+                CapabilityDescriptor.ApprovalRequirement.NONE,
+                Duration.ofSeconds(id.equals("meguri.skill.discover") || id.equals("meguri.skill.inspect") ? 15 : 2),
                 CapabilityDescriptor.RetryPolicy.none(), new CapabilityDescriptor.ConcurrencyPolicy(4),
                 Set.of(CapabilityDescriptor.Mode.DEEP), CapabilityDescriptor.DataClassification.INTERNAL,
                 CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL,
                 "turn-operation://" + id, CapabilityDescriptor.Health.HEALTHY,
-                false, 1, CapabilityDescriptor.NetworkPolicy.denied(), Set.of(),
+                false, 1, id.equals("meguri.skill.discover") || id.equals("meguri.skill.inspect")
+                        ? new CapabilityDescriptor.NetworkPolicy(true, Set.of("modelscope.cn"))
+                        : CapabilityDescriptor.NetworkPolicy.denied(), Set.of(),
                 CapabilityDescriptor.CostPolicy.free(), CapabilityDescriptor.CachePolicy.disabled(),
                 CapabilityDescriptor.IdempotencyPolicy.none());
     }

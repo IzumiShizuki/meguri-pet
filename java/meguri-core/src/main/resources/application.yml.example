@@ -24,12 +24,17 @@ meguri:
     manifest-path: ${MEGURI_SHIZUKI_MANIFEST_PATH:}
     connect-timeout-ms: ${MEGURI_SHIZUKI_CONNECT_TIMEOUT_MS:750}
     request-timeout-ms: ${MEGURI_SHIZUKI_REQUEST_TIMEOUT_MS:2000}
+  capability:
+    admin:
+      enabled: ${MEGURI_CAPABILITY_ADMIN_ENABLED:false}
+      token-file: ${MEGURI_CAPABILITY_ADMIN_TOKEN_FILE:}
   skills:
     # External Skills are opt-in and remain untrusted even after activation.
     store-mode: ${MEGURI_SKILL_STORE_MODE:memory}
     data-root: ${MEGURI_SKILL_DATA_ROOT:${user.home}/.meguri}
     modelscope:
       enabled: ${MEGURI_MODELSCOPE_SKILLS_ENABLED:false}
+      imports-enabled: ${MEGURI_MODELSCOPE_SKILL_IMPORTS_ENABLED:false}
       base-url: https://modelscope.cn
       bridge-url: ${MEGURI_MODELSCOPE_SKILL_BRIDGE_URL:http://127.0.0.1:8000}
       bridge-token-file: ${MEGURI_INTERNAL_BRIDGE_TOKEN_FILE:}

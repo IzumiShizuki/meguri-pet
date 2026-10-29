@@ -9,6 +9,9 @@ import com.meguri.core.capability.ToolProposal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import java.nio.file.Path;
+import java.nio.file.Files;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.test.web.reactive.server.WebTestClient;
 
@@ -16,8 +19,10 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class CapabilityRuntimeControllerTest {
+    @TempDir Path temporary;
     private static final String TOKEN = "test-admin-token-123456789";
 
     private CapabilityRuntimeFacade runtime;
@@ -35,6 +40,35 @@ class CapabilityRuntimeControllerTest {
     @AfterEach
     void tearDown() {
         runtime.close();
+    }
+
+    @Test
+    void tokenFileOverridesInlineCredentialAndStillRequiresAuthentication() throws Exception {
+        Path file = temporary.resolve("admin-fixture.txt");
+        Files.writeString(file, "\uFEFFfile-fixture-admin-token-1234\n");
+        var controller = new CapabilityRuntimeController(runtime,
+                new McpSourceManager(runtime, new ObjectMapper(), ""), TOKEN, file.toString());
+        WebTestClient fileClient = WebTestClient.bindToController(controller).build();
+        fileClient.get().uri("/internal/v1/capabilities").exchange().expectStatus().isNotFound();
+        fileClient.get().uri("/internal/v1/capabilities")
+                .header(CapabilityRuntimeController.ADMIN_HEADER, TOKEN).exchange().expectStatus().isNotFound();
+        fileClient.get().uri("/internal/v1/capabilities")
+                .header(CapabilityRuntimeController.ADMIN_HEADER, "file-fixture-admin-token-1234")
+                .exchange().expectStatus().isOk();
+    }
+
+    @Test
+    void invalidTokenFileFailsClosedWithoutEchoingPathOrSecretOrFallingBack() throws Exception {
+        Path shortFile = temporary.resolve("private-file-name.txt");
+        Files.writeString(shortFile, "tiny-secret");
+        for (String path : java.util.List.of(shortFile.toString(),
+                temporary.resolve("absent-private-name.txt").toString(), "relative-token.txt")) {
+            assertThatThrownBy(() -> new CapabilityRuntimeController(runtime,
+                    new McpSourceManager(runtime, new ObjectMapper(), ""), TOKEN, path))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("Capability admin token file is unavailable or invalid")
+                    .hasNoCause();
+        }
     }
 
     @Test

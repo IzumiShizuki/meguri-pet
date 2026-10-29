@@ -20,6 +20,26 @@ class ModelScopeSkillSourcePluginTest {
     @TempDir Path temporary;
 
     @Test
+    void should_allow_public_discovery_but_block_import_before_bridge_transport_by_default() {
+        RecordingTransport transport = new RecordingTransport(request -> response(200, """
+                {"data":{"skills":[],"id":"owner/guide","display_name":"Guide"}}
+                """));
+        ModelScopeSkillSourcePlugin plugin = new ModelScopeSkillSourcePlugin(
+                transport, new ObjectMapper(), URI.create("https://modelscope.cn"),
+                URI.create("http://127.0.0.1:8000"), "fixture-token", Duration.ofSeconds(2));
+        assertThat(plugin.search("guide", 1, 2).items()).isEmpty();
+        assertThat(plugin.detail("owner/guide").summary().externalId()).isEqualTo("owner/guide");
+        assertThatThrownBy(() -> plugin.fetch("owner/guide"))
+                .isInstanceOf(SkillSourcePlugin.SourceException.class)
+                .extracting(error -> ((SkillSourcePlugin.SourceException) error).code())
+                .isEqualTo("MODELSCOPE_IMPORTS_DISABLED");
+        assertThat(transport.requests).hasSize(2).allSatisfy(request -> {
+            assertThat(request.method()).isEqualTo("GET");
+            assertThat(request.uri().getHost()).isEqualTo("modelscope.cn");
+        });
+    }
+
+    @Test
     void should_normalize_paginated_public_search_and_filter_private_items() {
         RecordingTransport transport = new RecordingTransport(request -> response(200, """
                 {"success":true,"data":{"skills":[
@@ -147,7 +167,7 @@ class ModelScopeSkillSourcePluginTest {
         return new ModelScopeSkillSourcePlugin(
                 transport, new ObjectMapper().findAndRegisterModules(),
                 URI.create("https://modelscope.cn"), URI.create("http://127.0.0.1:8000"),
-                "bridge-token", Duration.ofSeconds(2));
+                "bridge-token", Duration.ofSeconds(2), true);
     }
 
     private static void assertSourceError(

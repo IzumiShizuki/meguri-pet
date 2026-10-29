@@ -31,6 +31,40 @@ class SkillDisclosureServiceTest {
     }
 
     @Test
+    void should_discover_and_inspect_public_metadata_without_installing_or_activating() {
+        List<java.net.http.HttpRequest> requests = new ArrayList<>();
+        ModelScopeSkillSourcePlugin source = new ModelScopeSkillSourcePlugin(request -> {
+            requests.add(request);
+            String item = """
+                    {"id":"owner/meeting-notes","display_name":"Meeting notes",
+                     "description":"Extract action items","license":"MIT","requires":{"tools":["notes.read"]}}
+                    """;
+            return new ModelScopeSkillSourcePlugin.TransportResponse(200,
+                    request.uri().getPath().endsWith("/skills")
+                            ? "{\"data\":{\"skills\":[" + item + "]}}"
+                            : "{\"data\":{\"skill\":" + item + "}}");
+        }, new ObjectMapper(), java.net.URI.create("https://modelscope.cn"),
+                java.net.URI.create("http://127.0.0.1:8000"), "fixture-token", java.time.Duration.ofSeconds(2));
+        SkillManagementService isolated = new SkillManagementService(new SkillSourceRegistry(List.of(source)),
+                repository, new SkillPackageValidator(Set.of(), name -> false),
+                new SkillPackageStore(temporary.resolve("discovery-data")));
+        SkillDisclosureService service = new SkillDisclosureService(isolated);
+        service.freeze(new SkillSelectionService(repository).freeze("turn-discover", "cap", "meeting notes", true));
+
+        Map<String, Object> found = service.discover("turn-discover", "meeting notes");
+        assertThat(found).containsEntry("installed", false).containsEntry("trust", "UNTRUSTED_EXTERNAL");
+        assertThat(found.get("items").toString()).contains("owner/meeting-notes", "Extract action items");
+        Map<String, Object> details = service.inspect("turn-discover", "owner/meeting-notes");
+        assertThat(details).containsEntry("executable", false).containsEntry("required_tools", List.of("notes.read"));
+        assertThat(requests).hasSize(2).allSatisfy(request -> assertThat(request.method()).isEqualTo("GET"));
+        assertThat(repository.list()).isEmpty();
+        assertThat(isolated.audit()).isEmpty();
+        assertThatThrownBy(() -> service.discover("unknown-turn", "meeting notes"))
+                .isInstanceOf(SkillManagementService.SkillException.class);
+        assertThat(requests).hasSize(2);
+    }
+
+    @Test
     void should_select_only_relevant_enabled_skills_for_agent_turns() throws Exception {
         install("pdf", "PDF reader", "Extract tables from PDF documents", List.of("pdf", "document"));
         install("weather", "Weather guide", "Choose clothing for rain", List.of("forecast"));
@@ -44,6 +78,39 @@ class SkillDisclosureServiceTest {
                 .containsExactly("PDF reader");
         assertThat(think.candidates()).isEmpty();
         assertThat(unrelated.candidates()).isEmpty();
+    }
+
+    @Test
+    void should_disclose_natural_language_queries_using_the_frozen_selection_semantics() throws Exception {
+        SkillCatalogEntry pdf = install("pdf-query", "PDF reader",
+                "Extract tables from PDF documents", List.of("pdf", "document"));
+        SkillCatalogEntry notes = install("notes-query", "会议纪要",
+                "整理会议记录并提取行动事项", List.of("会议", "纪要"));
+        createRuntime();
+        disclosure.freeze(selection.freeze("turn-en", "cap-v1", "please extract this PDF", true));
+        disclosure.freeze(selection.freeze("turn-zh", "cap-v1", "请整理这份会议记录", true));
+
+        assertThat(((List<?>) disclosure.search("turn-en", "extract pdf tables").get("items")).stream()
+                .map(item -> String.valueOf(((Map<?, ?>) item).get("skill_id"))).toList())
+                .containsExactly(pdf.manifest().id());
+        assertThat(((List<?>) disclosure.search("turn-zh", "帮我整理会议纪要").get("items")).stream()
+                .map(item -> String.valueOf(((Map<?, ?>) item).get("skill_id"))).toList())
+                .containsExactly(notes.manifest().id());
+        assertThat(disclosure.view("turn-en", pdf.manifest().id(), "SKILL.md"))
+                .containsEntry("executable", false)
+                .containsEntry("trust", "USER_DATA/EXTERNAL_SKILL");
+    }
+
+    @Test
+    void should_not_expand_frozen_candidates_or_retrieve_unrelated_skills_during_search() throws Exception {
+        install("frozen-pdf", "PDF reader", "Extract PDF tables", List.of("pdf"));
+        install("outside", "Weather guide", "Forecast rain", List.of("weather"));
+        createRuntime();
+        disclosure.freeze(selection.freeze("turn-scope", "cap-v1", "extract pdf", true));
+        assertThat((List<?>) disclosure.search("turn-scope", "weather forecast").get("items")).isEmpty();
+        assertThat((List<?>) disclosure.search("turn-scope", "   ").get("items")).hasSize(1);
+        assertThat(disclosure.snapshot("turn-scope").viewedSkillIds()).isEmpty();
+        assertThat(disclosure.snapshot("turn-scope").remainingTokens()).isEqualTo(4096);
     }
 
     @Test

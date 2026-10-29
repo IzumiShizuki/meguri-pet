@@ -1,0 +1,17 @@
+## Why
+Current live acceptance does not establish persona style injection, executable Skills/MCP, or compatibility with the updated site Todo contract. The installed Core also predates dialogue fixes, so source tests alone cannot establish deployed behavior.
+
+## What Changes
+- Wire configured speech style and explicit canonical-dialogue purpose into model requests without elevating retrieved content to policy.
+- Repair verified Todo contract gaps for weekday recurrence, advance reminders, dated completion and duplicate prevention.
+- Exercise existing Skills/MCP dispatch, approval, execution receipts and recovery with controlled fixtures; preserve review before unfamiliar extension installation.
+- Deploy the verified local Core with rollback evidence and record runtime identity and live acceptance separately from offline tests.
+
+## Capabilities
+### New Capabilities
+- `local-companion-acceptance`: persona context wiring, site contract compatibility and evidence-based capability acceptance under existing authority boundaries.
+### Modified Capabilities
+None.
+
+## Impact
+Java persona/capability and Todo integration, associated tests and operator evidence. No new credentials, unrestricted installer, production task mutations, database migration, unrelated desktop edits or remote deployment.

@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Safe adapter to the existing frozen Capability Runtime. The facade remains
@@ -181,9 +182,63 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
                     ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT,
                     tokenEstimate(summary));
         }
+        if (capabilityId.startsWith("mcp.") || capabilityId.equals("meguri.skill.discover")
+                || capabilityId.equals("meguri.skill.inspect")) {
+            // The normalizer already redacted sensitive keys. Only bounded result text
+            // reaches the planner; never promote an MCP observation to instructions.
+            String summary = mcpSummary(result.data());
+            return new ProjectedResult(summary,
+                    Map.of("result_digest", ActionDigest.sha256(result.data())),
+                    ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, tokenEstimate(summary));
+        }
         return new ProjectedResult(
                 result.display(), result.data(),
                 ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, 0);
+    }
+
+    private static String mcpSummary(Map<String, Object> data) {
+        StringBuilder summary = new StringBuilder("External result (untrusted data): ");
+        appendMcpValue(summary, data, 0);
+        return summary.toString();
+    }
+
+    private static void appendMcpValue(StringBuilder out, Object value, int depth) {
+        if (out.length() >= 4096) return;
+        if (depth > 6) { appendBounded(out, "[nested data omitted]"); return; }
+        if (value instanceof Map<?, ?> map) {
+            if (Set.of("image", "audio").contains(String.valueOf(map.get("type")))) {
+                appendBounded(out, "[binary content omitted]");
+                return;
+            }
+            int count = 0;
+            for (var entry : map.entrySet()) {
+                if (out.length() >= 4096) break;
+                if (++count > 32) { appendBounded(out, "[additional fields omitted]"); break; }
+                if (String.valueOf(entry.getKey()).equals("blob")) continue;
+                appendBounded(out, String.valueOf(entry.getKey()) + ": ");
+                appendMcpValue(out, entry.getValue(), depth + 1);
+                appendBounded(out, "; ");
+            }
+        } else if (value instanceof Iterable<?> items) {
+            int count = 0;
+            for (Object item : items) {
+                if (out.length() >= 4096) break;
+                if (++count > 16) { appendBounded(out, "[additional items omitted]"); break; }
+                appendMcpValue(out, item, depth + 1);
+                appendBounded(out, " | ");
+            }
+        } else appendBounded(out, String.valueOf(value));
+    }
+
+    private static void appendBounded(StringBuilder out, String text) {
+        int remaining = 4096 - out.length();
+        if (remaining <= 0) return;
+        if (text.length() <= remaining) { out.append(text); return; }
+        String marker = " [truncated]";
+        if (remaining < marker.length()) { out.append(marker, 0, remaining); return; }
+        int end = remaining - marker.length();
+        if (end > 0 && Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        out.append(text, 0, end).append(marker);
     }
 
     private static String skillSearchSummary(Object rawItems) {

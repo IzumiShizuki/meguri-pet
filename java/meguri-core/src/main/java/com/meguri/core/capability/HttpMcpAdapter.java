@@ -192,12 +192,24 @@ public final class HttpMcpAdapter implements McpAdapter {
             String toolName,
             Map<String, Object> input,
             CapabilityImplementation.ExecutionContext context) {
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+        metadata.put("attempt", context.attempt());
+        if (context.operationId() != null) metadata.put("operationId", context.operationId());
         JsonNode result = call("tools/call", Map.of(
                 "name", CapabilityDescriptor.required(toolName, "toolName"),
                 "arguments", input == null ? Map.of() : input,
-                "_meta", Map.of("operationId", context.operationId(), "attempt", context.attempt())));
+                "_meta", metadata));
         if (result.path("isError").asBoolean(false)) {
             throw new McpTransportException("MCP tool returned an error");
+        }
+        // MCP outputSchema describes structuredContent, not the transport envelope.
+        // Keep legacy unstructured tools usable; never reinterpret text as trusted JSON.
+        if (result.has("structuredContent")) {
+            JsonNode structured = result.get("structuredContent");
+            if (!structured.isObject()) {
+                throw new McpTransportException("MCP structuredContent must be an object");
+            }
+            return objectMapper.convertValue(structured, new TypeReference<>() { });
         }
         return objectMapper.convertValue(result, new TypeReference<>() { });
     }

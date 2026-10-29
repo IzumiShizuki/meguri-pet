@@ -10,10 +10,18 @@ The source is disabled by default. Run the existing Python Core bridge on loopba
 & 'D:\environment\anaconda3\envs\py314\python.exe' -m pip install -e .
 $env:MEGURI_INTERNAL_BRIDGE_TOKEN_FILE = 'D:\environment\secrets\meguri\internal-bridge-token.txt'
 $env:MEGURI_MODELSCOPE_SKILLS_ENABLED = 'true'
+$env:MEGURI_MODELSCOPE_SKILL_IMPORTS_ENABLED = 'false'
 & 'D:\environment\anaconda3\envs\py314\python.exe' -m uvicorn services.meguri_core.app:app --host 127.0.0.1 --port 8000
 ```
 
 Java Core fails startup when the source is explicitly enabled without a non-empty bridge token. Keeping the feature flag false does not require the bridge or its token, and installed local revisions remain available.
+
+Public discovery and imports have separate gates. `MEGURI_MODELSCOPE_SKILL_IMPORTS_ENABLED`
+defaults to `false`: search, detail and update checks can run, but a fetch/import
+fails with `MODELSCOPE_IMPORTS_DISABLED` before calling the download bridge.
+Set it to `true` only after approval for the specific unfamiliar package; this
+does not bypass quarantine, validation, license checks or digest activation.
+Listing a community package never authorizes executing its code.
 
 Use a separate terminal for `ops/scripts/start-meguri-core.ps1` and launch the native desktop with `ops/scripts/start-meguri-desktop.ps1`. Both explicit local launchers grant the local Core identity `skill:read` and `skill:manage`, so either startup order works. Hosted deployments must grant those scopes explicitly.
 
@@ -34,6 +42,13 @@ The immutable package store defaults to `%USERPROFILE%\.meguri\skills\packages`.
 ## Runtime limits
 
 Only server-authorized AGENT Turns can freeze external candidates. Each Turn freezes at most eight candidate digests and can view at most three Skill roots, six reference files, and 4096 estimated tokens through `meguri.skill.search` and `meguri.skill.view`. Returned text is labeled `USER_DATA/EXTERNAL_SKILL` and is never executable.
+
+`meguri.skill.discover` and `meguri.skill.inspect` are separate read-only community
+metadata tools for authorized AGENT turns with `skill:read` and network access.
+They can propose a relevant public package (up to five search results), explain
+its declared requirements, and return bounded untrusted observations. They do
+not fetch, import or activate it. The original `meguri.skill.search` still only
+searches the installed candidates frozen for the current turn.
 
 ## Rollback and failure isolation
 
