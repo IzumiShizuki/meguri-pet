@@ -860,11 +860,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     private boolean sessionIsActive(String sessionId, String userId, String clientId) {
-        return journal.turns().values().stream().anyMatch(record ->
-                sessionId.equals(record.getRequest().getSessionId())
-                        && (userId == null || userId.equals(record.getRequest().getUserId()))
-                        && (clientId == null || clientId.equals(record.getRequest().getClientId()))
-                        && !record.isTerminal());
+        return journal.sessionTurnStatuses(sessionId, userId, clientId).values().stream()
+                .anyMatch(status -> !isTerminalStatus(status));
+    }
+
+    private static boolean isTerminalStatus(TurnStatus status) {
+        return status == TurnStatus.COMPLETED || status == TurnStatus.FAILED || status == TurnStatus.CANCELLED;
     }
 
     @Override
@@ -975,14 +976,19 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         return Flux.defer(() -> Flux.<EventEnvelope>create(sink -> {
             final AtomicLong current = new AtomicLong(cursor);
             final AtomicLong lastEmissionNanos = new AtomicLong(System.nanoTime());
-            Disposable ticker = Flux.interval(Duration.ofMillis(20))
-                    .subscribeOn(Schedulers.boundedElastic())
+            Disposable ticker = Flux.interval(Duration.ofMillis(20), Schedulers.boundedElastic())
                     .subscribe(ignored -> {
                         if (sink.isCancelled()) return;
                         // Observe inactivity before reading the journal, then drain its terminal publication.
                         boolean inactive = !sessionIsActive(sessionId, userId, clientId);
-                        List<EventEnvelope> available = eventsFor(sessionId).stream()
-                                .filter(event -> eventBelongsTo(event, userId, clientId))
+                        List<EventEnvelope> recorded = eventsFor(sessionId);
+                        // Identity membership must follow the event read. Otherwise
+                        // a newly accepted turn's event could be skipped while a later
+                        // event of an older turn advances the subscriber's cursor.
+                        Map<String, TurnStatus> statuses = journal.sessionTurnStatuses(sessionId, userId, clientId);
+                        List<EventEnvelope> available = recorded.stream()
+                                .filter(event -> (userId == null && clientId == null)
+                                        || statuses.containsKey(event.getTurnId()))
                                 .sorted(java.util.Comparator.comparingLong(EventEnvelope::getSequence))
                                 .toList();
                         boolean emitted = false;
@@ -993,7 +999,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                             emitted = true;
                             lastEmissionNanos.set(System.nanoTime());
                         }
-                        if (inactive && terminalEventsPublished(sessionId, userId, clientId, available)) {
+                        if (inactive && terminalEventsPublished(statuses, available)) {
                             sink.complete();
                             return;
                         }
@@ -1011,16 +1017,14 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 BufferOverflowStrategy.ERROR));
     }
 
-    private boolean terminalEventsPublished(String sessionId, String userId, String clientId,
-                                            List<EventEnvelope> available) {
+    private boolean terminalEventsPublished(Map<String, TurnStatus> statuses, List<EventEnvelope> available) {
         Set<String> published = available.stream()
                 .filter(event -> Set.of("turn.completed", "turn.failed", "turn.cancelled").contains(event.type()))
                 .map(EventEnvelope::getTurnId).collect(java.util.stream.Collectors.toSet());
-        return journal.turns().values().stream()
-                .filter(record -> sessionId.equals(record.getRequest().getSessionId()))
-                .filter(record -> userId == null || userId.equals(record.getRequest().getUserId()))
-                .filter(record -> clientId == null || clientId.equals(record.getRequest().getClientId()))
-                .allMatch(record -> record.isTerminal() && published.contains(record.getTurnId()));
+        // State was re-read after the events, so a newly accepted turn also
+        // prevents completion until its terminal publication has been drained.
+        return statuses.entrySet().stream()
+                .allMatch(entry -> isTerminalStatus(entry.getValue()) && published.contains(entry.getKey()));
     }
 
     private boolean eventBelongsTo(EventEnvelope event, String userId, String clientId) {
@@ -1243,12 +1247,12 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         var previous = conversationTails.put(scope, next);
         var ready = previous == null ? java.util.concurrent.CompletableFuture.<Void>completedFuture(null) : previous;
         return Mono.fromFuture(ready, true)
+                // This timer bounds only queue admission. Once admitted, deadline
+                // handling must stay inside the execution lease through persistence.
+                .timeout(record.remaining())
+                .onErrorResume(TimeoutException.class, error -> Mono.empty())
                 .then(Mono.defer(() -> record.isTerminal() ? Mono.empty()
                         : runWithDeadline(record)))
-                .timeout(record.remaining())
-                .onErrorResume(TimeoutException.class,
-                        error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"))
-                .onErrorResume(error -> fail(record, error))
                 .doFinally(ignored -> ready.whenComplete((value, error) -> {
                     next.complete(null);
                     conversationTails.remove(scope, next);
@@ -1259,11 +1263,15 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (!journal.claimExecution(record, executionOwnerId, EXECUTION_LEASE)) {
             return Mono.error(new IllegalStateException("turn execution lease is owned by another runtime"));
         }
-        Mono<Void> execution = Mono.defer(() -> record.isCancelRequested()
-                        ? cancelRecord(record, "client_requested") : runRecord(record))
-                .timeout(record.remaining())
-                .onErrorResume(TimeoutException.class,
-                        error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"));
+        Mono<Void> execution = Mono.defer(() -> {
+            if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
+            // A turn may expire in the queue (or while claiming ownership). It
+            // still needs its own lease for the terminal write, but no provider work.
+            if (!record.getDeadlineAt().isAfter(Instant.now())) {
+                return fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded");
+            }
+            return Mono.defer(() -> runRecord(record)).timeout(record.remaining());
+        });
         Mono<Void> cancellation = Flux.interval(Duration.ofMillis(250))
                 .filter(ignored -> journal.refreshCancellation(record))
                 .next()
@@ -1277,6 +1285,9 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                         ? cancelRecord(record, "client_requested")
                         : Mono.error(new IllegalStateException("turn execution lease was lost")));
         return Mono.firstWithSignal(execution, cancellation, leaseGuard)
+                .onErrorResume(TimeoutException.class,
+                        error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"))
+                .onErrorResume(error -> fail(record, error))
                 .doFinally(ignored -> {
                     journal.releaseExecution(record, executionOwnerId);
                 });

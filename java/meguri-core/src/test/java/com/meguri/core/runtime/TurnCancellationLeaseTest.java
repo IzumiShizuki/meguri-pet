@@ -6,6 +6,7 @@ import com.meguri.core.dto.EventEnvelope;
 import com.meguri.core.dto.EventMetadata;
 import com.meguri.core.dto.LlmResponse;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.harness.TurnCommand;
 import com.meguri.core.llm.LlmProvider;
 import com.meguri.core.memory.NoopMemoryGateway;
 import com.meguri.core.training.TrainingFeedbackService;
@@ -20,6 +21,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -29,6 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class TurnCancellationLeaseTest {
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
@@ -143,6 +146,105 @@ class TurnCancellationLeaseTest {
         }
     }
 
+    @Test
+    void activeDeadlinePersistsBeforeLeaseReleaseAndNextTurnIgnoresLateProviderReply() throws Exception {
+        LeaseJournal journal = new LeaseJournal(false);
+        CountDownLatch subscribed = new CountDownLatch(1);
+        CountDownLatch disposed = new CountDownLatch(1);
+        AtomicReference<MonoSink<LlmResponse>> pending = new AtomicReference<>();
+        LlmProvider provider = (request, state, canon, memories, recent) -> {
+            if (!request.getMessage().equals("never-finishes")) {
+                return Mono.just(new LlmResponse("answer:" + request.getMessage()));
+            }
+            return Mono.<LlmResponse>create(sink -> {
+                pending.set(sink);
+                sink.onCancel(disposed::countDown);
+                subscribed.countDown();
+            });
+        };
+        TurnOrchestrator runtime = runtime(provider, journal);
+        try {
+            var snapshot = runtime.submit(new TurnCommand.Start(
+                    request("active-deadline", "never-finishes"), "deadline",
+                    Instant.now().plusMillis(500))).block(Duration.ofSeconds(3));
+            TurnRecord expired = journal.turn(snapshot.turnId());
+            await(subscribed, "provider did not subscribe before the deadline");
+            expired.getDone().get(3, TimeUnit.SECONDS);
+            await(disposed, "deadline did not cancel provider work");
+            assertDeadlineOnce(journal, expired);
+            pending.get().success(new LlmResponse("stale expired reply"));
+
+            TurnRecord next = runtime.start(request("active-deadline", "fresh-after-deadline"));
+            next.getDone().get(3, TimeUnit.SECONDS);
+            assertThat(next.getStatus()).isEqualTo(TurnStatus.COMPLETED);
+            assertThat(next.getResult().response().reply()).isEqualTo("answer:fresh-after-deadline");
+            assertThat(journal.events("active-deadline"))
+                    .filteredOn(event -> event.getTurnId().equals(expired.getTurnId()))
+                    .extracting(EventEnvelope::getType)
+                    .doesNotContain("text.completed", "turn.completed");
+            assertThat(journal.unownedWrites.get()).isZero();
+        } finally {
+            runtime.reset();
+        }
+    }
+
+    @Test
+    void queuedDeadlineClaimsBeforeFailureAndDoesNotAdmitNextTurnAheadOfPredecessor() throws Exception {
+        LeaseJournal journal = new LeaseJournal(false);
+        CountDownLatch firstSubscribed = new CountDownLatch(1);
+        AtomicReference<MonoSink<LlmResponse>> pending = new AtomicReference<>();
+        List<String> inputs = new CopyOnWriteArrayList<>();
+        LlmProvider provider = (request, state, canon, memories, recent) -> {
+            inputs.add(request.getMessage());
+            if (!request.getMessage().equals("first")) {
+                return Mono.just(new LlmResponse("answer:" + request.getMessage()));
+            }
+            return Mono.create(sink -> {
+                pending.set(sink);
+                firstSubscribed.countDown();
+            });
+        };
+        TurnOrchestrator runtime = runtime(provider, journal);
+        try {
+            TurnRecord first = runtime.start(request("queued-deadline", "first"));
+            await(firstSubscribed, "first provider did not subscribe");
+            journal.gateFirstFailure.set(true);
+            var snapshot = runtime.submit(new TurnCommand.Start(
+                    request("queued-deadline", "must-not-run"), "queued-deadline",
+                    Instant.now().plusMillis(250))).block(Duration.ofSeconds(3));
+            TurnRecord expired = journal.turn(snapshot.turnId());
+            await(journal.failureEntered, "expired turn did not begin terminal persistence");
+            // The deadline is already past. Persistence may still be in flight;
+            // its lease must not be released by a second, 1 ms deadline timer.
+            assertThatThrownBy(() -> journal.released
+                    .computeIfAbsent(expired.getTurnId(), ignored -> new CompletableFuture<>())
+                    .get(100, TimeUnit.MILLISECONDS))
+                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+            assertThat(expired.getDone().isDone()).isFalse();
+            journal.allowFailure.countDown();
+            expired.getDone().get(3, TimeUnit.SECONDS);
+            assertDeadlineOnce(journal, expired);
+            assertThat(first.isTerminal()).isFalse();
+            assertThat(inputs).containsExactly("first");
+
+            TurnRecord next = runtime.start(request("queued-deadline", "next"));
+            assertThat(journal.claimed).doesNotContain(next.getTurnId());
+            pending.get().success(new LlmResponse("first-done"));
+            first.getDone().get(3, TimeUnit.SECONDS);
+            next.getDone().get(3, TimeUnit.SECONDS);
+            assertThat(next.getResult().response().reply()).isEqualTo("answer:next");
+            assertThat(inputs).containsExactly("first", "next");
+            assertThat(journal.events("queued-deadline"))
+                    .filteredOn(event -> event.getType().equals("turn.completed"))
+                    .extracting(EventEnvelope::getTurnId)
+                    .containsExactly(first.getTurnId(), next.getTurnId());
+            assertThat(journal.unownedWrites.get()).isZero();
+        } finally {
+            journal.allowFailure.countDown();
+            runtime.reset();
+        }
+    }
+
     private static TurnRequest request(String session, String message) {
         return new TurnRequest("fictional", "website", session, message,
                 List.of(), new ClientCapabilities(), null, null, false);
@@ -167,6 +269,17 @@ class TurnCancellationLeaseTest {
         assertThat(terminalEvents(journal, record)).containsExactly("turn.cancelled");
     }
 
+    private static void assertDeadlineOnce(LeaseJournal journal, TurnRecord record) throws Exception {
+        journal.released.computeIfAbsent(record.getTurnId(), ignored -> new CompletableFuture<>())
+                .get(3, TimeUnit.SECONDS);
+        assertThat(record.getStatus()).isEqualTo(TurnStatus.FAILED);
+        assertThat(record.getFailureCode()).isEqualTo("TURN_DEADLINE_EXCEEDED");
+        assertThat(terminalEvents(journal, record)).containsExactly("turn.failed");
+        assertThat(journal.lifecycle).containsSubsequence(
+                "claim:" + record.getTurnId(), "turn.failed:" + record.getTurnId(),
+                "release:" + record.getTurnId());
+    }
+
     private static void await(CountDownLatch latch, String message) throws InterruptedException {
         assertThat(latch.await(3, TimeUnit.SECONDS)).as(message).isTrue();
     }
@@ -176,10 +289,15 @@ class TurnCancellationLeaseTest {
         private final InMemoryTurnJournal delegate = new InMemoryTurnJournal(MAPPER);
         private final Map<String, String> owners = new ConcurrentHashMap<>();
         private final List<String> claimed = new CopyOnWriteArrayList<>();
+        private final List<String> lifecycle = new CopyOnWriteArrayList<>();
+        private final Map<String, CompletableFuture<Void>> released = new ConcurrentHashMap<>();
         private final AtomicInteger unownedWrites = new AtomicInteger();
         private final AtomicBoolean gateFirstClaim;
+        private final AtomicBoolean gateFirstFailure = new AtomicBoolean();
         private final CountDownLatch claimEntered = new CountDownLatch(1);
         private final CountDownLatch allowClaim = new CountDownLatch(1);
+        private final CountDownLatch failureEntered = new CountDownLatch(1);
+        private final CountDownLatch allowFailure = new CountDownLatch(1);
 
         private LeaseJournal(boolean gateFirstClaim) { this.gateFirstClaim = new AtomicBoolean(gateFirstClaim); }
         @Override public Acceptance accept(TurnRequest request, String key, Instant deadline) { return delegate.accept(request, key, deadline); }
@@ -199,16 +317,28 @@ class TurnCancellationLeaseTest {
                 catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new AssertionError(error); }
             }
             claimed.add(record.getTurnId());
+            lifecycle.add("claim:" + record.getTurnId());
             return owners.putIfAbsent(record.getTurnId(), owner) == null;
         }
         @Override public boolean heartbeatExecution(TurnRecord record, String owner, Duration lease) {
             return owner.equals(owners.get(record.getTurnId()));
         }
-        @Override public void releaseExecution(TurnRecord record, String owner) { owners.remove(record.getTurnId(), owner); }
+        @Override public void releaseExecution(TurnRecord record, String owner) {
+            owners.remove(record.getTurnId(), owner);
+            lifecycle.add("release:" + record.getTurnId());
+            released.computeIfAbsent(record.getTurnId(), ignored -> new CompletableFuture<>()).complete(null);
+        }
         @Override public void persistExecution(TurnRecord record, String owner) { requireOwner(record, owner); }
         @Override public EventEnvelope appendExecution(TurnRecord record, String owner, String type,
                                                        Map<String, Object> data, EventMetadata metadata) {
             requireOwner(record, owner);
+            if (type.equals("turn.failed") && gateFirstFailure.compareAndSet(true, false)) {
+                failureEntered.countDown();
+                try { await(allowFailure, "test did not release terminal persistence"); }
+                catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new AssertionError(error); }
+                requireOwner(record, owner);
+            }
+            lifecycle.add(type + ":" + record.getTurnId());
             return delegate.append(record, type, data, metadata);
         }
         private void requireOwner(TurnRecord record, String owner) {

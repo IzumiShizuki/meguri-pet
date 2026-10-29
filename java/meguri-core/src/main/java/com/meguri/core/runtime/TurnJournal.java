@@ -29,6 +29,17 @@ public interface TurnJournal {
 
     Map<String, TurnRecord> turns();
 
+    /** Lightweight state for one event-stream scope; durable stores avoid loading turn payloads. */
+    default Map<String, TurnStatus> sessionTurnStatuses(String sessionId, String userId, String clientId) {
+        Map<String, TurnStatus> statuses = new java.util.LinkedHashMap<>();
+        turns().values().stream()
+                .filter(record -> sessionId.equals(record.getRequest().getSessionId()))
+                .filter(record -> userId == null || userId.equals(record.getRequest().getUserId()))
+                .filter(record -> clientId == null || clientId.equals(record.getRequest().getClientId()))
+                .forEach(record -> statuses.put(record.getTurnId(), record.getStatus()));
+        return Map.copyOf(statuses);
+    }
+
     List<EventEnvelope> events(String sessionId);
 
     default long firstSequence(String sessionId) {

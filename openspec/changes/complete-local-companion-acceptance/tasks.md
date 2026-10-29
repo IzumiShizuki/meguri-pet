@@ -17,3 +17,5 @@
 - [ ] 4.1 Fix request-path cancellation lease violation; cover cancellation before claim, queued cancellation, duplicate cancellation and subsequent-turn recovery.
 - [ ] 4.2 Preserve server-frozen network authority in ReAct and prove explicit offline requests make zero public discovery calls.
 - [ ] 4.3 Route explicit public Skill read requests from ordinary chat into the authorized tool path; keep quoted, explanatory, offline and unauthorized requests out.
+- [ ] 4.4 Keep deadline terminal writes within execution ownership; cover active provider timeout, queued expiry, unique terminal events and following-turn recovery without bypassing the owner fence.
+- [ ] 4.5 Scope SSE polling to lightweight session lifecycle state; preserve identity filtering and terminal publication ordering without full-turn scans or per-event owner reads.

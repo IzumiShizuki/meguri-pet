@@ -68,3 +68,25 @@ A direct ordinary-chat request to search or inspect public ModelScope Skill meta
 #### Scenario: Non-action mentions remain non-action
 - **WHEN** the text is quoted, explanatory, asks how to implement the feature, explicitly forbids network access, or lacks authorized skill:read
 - **THEN** it does not trigger public metadata HTTP calls merely from those keywords
+
+### Requirement: Deadline terminal persistence retains execution ownership
+A turn that exceeds its deadline SHALL persist exactly one deadline terminal event while holding its execution lease. Deadline cancellation SHALL NOT release ownership before terminal persistence, and a queued turn SHALL claim ownership before recording expiration without invoking its provider.
+
+#### Scenario: Active provider exceeds the deadline
+- **WHEN** an active provider never finishes before the turn deadline
+- **THEN** the provider is cancelled, one TURN_DEADLINE_EXCEEDED terminal event is persisted before lease release, late output is ignored and a subsequent turn can complete
+
+#### Scenario: Queued turn expires behind its predecessor
+- **WHEN** a queued turn reaches its deadline while an earlier turn is still executing
+- **THEN** the queued turn claims its own lease and records one deadline terminal event without provider execution, while later turns continue to wait for the earlier turn
+
+### Requirement: Session event polling stays scoped
+Session event polling SHALL inspect lightweight lifecycle state only for the requested session and identity, without reloading unrelated turn payloads or querying one owner per event. It SHALL observe inactivity before reading events and verify all visible terminal events before completing the stream.
+
+#### Scenario: Shared session identifier across identities
+- **WHEN** different users or clients have turns sharing a session identifier
+- **THEN** a scoped event stream emits only that identity's events and unrelated active turns do not keep it open
+
+#### Scenario: Turn arrives while terminal events are being read
+- **WHEN** another visible turn arrives after the polling state snapshot
+- **THEN** completion rechecks session state and drains the new turn's terminal event before closing

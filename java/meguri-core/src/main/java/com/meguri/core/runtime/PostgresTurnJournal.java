@@ -176,6 +176,27 @@ public final class PostgresTurnJournal implements TurnJournal {
     }
 
     @Override
+    public Map<String, TurnStatus> sessionTurnStatuses(String sessionId, String userId, String clientId) {
+        StringBuilder sql = new StringBuilder("SELECT turn_id, status FROM turn_runtime WHERE session_id = ?");
+        java.util.ArrayList<Object> parameters = new java.util.ArrayList<>();
+        parameters.add(sessionId);
+        if (userId != null) {
+            sql.append(" AND user_id = ?");
+            parameters.add(userId);
+        }
+        if (clientId != null) {
+            sql.append(" AND client_id = ?");
+            parameters.add(clientId);
+        }
+        List<Map.Entry<String, TurnStatus>> rows = jdbc.query(sql.toString(),
+                (rs, rowNum) -> Map.entry(rs.getString("turn_id"),
+                        TurnStatus.fromWireValue(rs.getString("status"))), parameters.toArray());
+        LinkedHashMap<String, TurnStatus> statuses = new LinkedHashMap<>();
+        rows.forEach(row -> statuses.put(row.getKey(), row.getValue()));
+        return Collections.unmodifiableMap(statuses);
+    }
+
+    @Override
     public List<EventEnvelope> events(String sessionId) {
         return jdbc.query("""
                         SELECT event_id, protocol_version, required, required_extension,

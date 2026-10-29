@@ -5,6 +5,7 @@ import com.meguri.core.dto.ClientCapabilities;
 import com.meguri.core.dto.EventEnvelope;
 import com.meguri.core.dto.EventMetadata;
 import com.meguri.core.dto.TurnRequest;
+import com.meguri.core.harness.EventCursor;
 import com.meguri.core.memory.NoopMemoryGateway;
 import com.meguri.core.training.TrainingFeedbackService;
 import com.meguri.core.weather.WeatherConversationService;
@@ -23,6 +24,108 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TurnJournalPersistenceContractTest {
+    @Test
+    void scopedPollingFiltersOtherIdentitiesWithoutFullTurnOrPerEventOwnerReads() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        ScopedPollingJournal journal = new ScopedPollingJournal(mapper);
+        TurnRecord visible = journal.create(new TurnRequest("alice", "website", "shared", "visible"),
+                Instant.now().plusSeconds(10));
+        visible.tryFail("fixture");
+        journal.append(visible, "turn.failed", Map.of(), null);
+        for (TurnRequest hidden : List.of(
+                new TurnRequest("bob", "website", "shared", "other user"),
+                new TurnRequest("alice", "desktop_pet", "shared", "other client"),
+                new TurnRequest("alice", "website", "another-session", "other session"))) {
+            TurnRecord active = journal.create(hidden, Instant.now().plusSeconds(10));
+            journal.append(active, "turn.started", Map.of(), null);
+        }
+        var runtime = pollingRuntime(mapper, journal);
+        try {
+            var events = runtime.events(new EventCursor("shared", 0, null, "alice", "website"))
+                    .collectList().block(Duration.ofSeconds(3));
+            assertThat(events).extracting(EventEnvelope::getTurnId).containsExactly(visible.getTurnId());
+            assertThat(events).extracting(EventEnvelope::getType).containsExactly("turn.failed");
+        } finally {
+            journal.forbidPayloadReads = false;
+            runtime.reset();
+        }
+    }
+
+    @Test
+    void pollingRechecksNewTurnAfterInactiveSnapshotBeforeClosing() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        ScopedPollingJournal journal = new ScopedPollingJournal(mapper) {
+            @Override public List<EventEnvelope> events(String sessionId) {
+                var snapshot = super.events(sessionId);
+                if (reads.getAndIncrement() == 0) {
+                    var next = create(new TurnRequest("alice", "website", sessionId, "arrived during read"),
+                            Instant.now().plusSeconds(10));
+                    next.tryFail("fixture");
+                    append(next, "turn.failed", Map.of(), null);
+                }
+                return snapshot;
+            }
+        };
+        var first = journal.create(new TurnRequest("alice", "website", "arrival-race", "first"),
+                Instant.now().plusSeconds(10));
+        first.tryFail("fixture");
+        journal.append(first, "turn.failed", Map.of(), null);
+        var runtime = pollingRuntime(mapper, journal);
+        try {
+            var events = runtime.events(new EventCursor("arrival-race", 0, null, "alice", "website"))
+                    .collectList().block(Duration.ofSeconds(3));
+            assertThat(events).extracting(EventEnvelope::getType).containsExactly("turn.failed", "turn.failed");
+            assertThat(events).extracting(EventEnvelope::getTurnId).doesNotHaveDuplicates();
+            assertThat(events.getFirst().getTurnId()).isEqualTo(first.getTurnId());
+            assertThat(events).extracting(EventEnvelope::getSequence).containsExactly(1L, 2L);
+        } finally {
+            journal.forbidPayloadReads = false;
+            runtime.reset();
+        }
+    }
+
+    @Test
+    void newlyAcceptedTurnEventIsNotSkippedByLaterSequenceFromAnExistingTurn() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        var first = new java.util.concurrent.atomic.AtomicReference<TurnRecord>();
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        ScopedPollingJournal journal = new ScopedPollingJournal(mapper) {
+            @Override public List<EventEnvelope> events(String sessionId) {
+                if (reads.getAndIncrement() == 0) {
+                    var next = create(new TurnRequest("alice", "website", sessionId, "new turn"),
+                            Instant.now().plusSeconds(10));
+                    append(next, "turn.started", Map.of(), null);
+                    next.tryFail("fixture");
+                    append(next, "turn.failed", Map.of(), null);
+                    first.get().tryFail("fixture");
+                    append(first.get(), "turn.failed", Map.of(), null);
+                }
+                return super.events(sessionId);
+            }
+        };
+        first.set(journal.create(new TurnRequest("alice", "website", "cursor-race", "first"),
+                Instant.now().plusSeconds(10)));
+        journal.append(first.get(), "turn.started", Map.of(), null);
+        var runtime = pollingRuntime(mapper, journal);
+        try {
+            var events = runtime.events(new EventCursor("cursor-race", 0, null, "alice", "website"))
+                    .collectList().block(Duration.ofSeconds(3));
+            assertThat(events).extracting(EventEnvelope::getSequence).containsExactly(1L, 2L, 3L, 4L);
+            assertThat(events.get(1).getTurnId()).isNotEqualTo(first.get().getTurnId());
+            assertThat(events.getLast().getTurnId()).isEqualTo(first.get().getTurnId());
+        } finally {
+            journal.forbidPayloadReads = false;
+            runtime.reset();
+        }
+    }
+
+    private static TurnOrchestrator pollingRuntime(ObjectMapper mapper, TurnJournal journal) {
+        return new TurnOrchestrator(null, null, new RuntimeStateMachine(), new ExpressionResolver(),
+                Duration.ZERO, mapper, new NoopMemoryGateway(), new NoopWebSearchGateway(),
+                TrainingFeedbackService.disabled(mapper), WeatherConversationService.disabled(), journal);
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
     void replayDrainsTerminalEventPublishedAfterItsFirstSnapshot(boolean terminalBeforeRead) {
@@ -184,6 +287,11 @@ class TurnJournalPersistenceContractTest {
         }
 
         @Override
+        public Map<String, TurnStatus> sessionTurnStatuses(String sessionId, String userId, String clientId) {
+            return delegate.sessionTurnStatuses(sessionId, userId, clientId);
+        }
+
+        @Override
         public List<EventEnvelope> events(String sessionId) {
             return delegate.events(sessionId);
         }
@@ -212,6 +320,22 @@ class TurnJournalPersistenceContractTest {
         @Override
         public void clear() {
             delegate.clear();
+        }
+    }
+
+    private static class ScopedPollingJournal extends RecordingJournal {
+        private boolean forbidPayloadReads = true;
+
+        private ScopedPollingJournal(ObjectMapper mapper) { super(mapper); }
+
+        @Override public Map<String, TurnRecord> turns() {
+            if (forbidPayloadReads) throw new AssertionError("SSE must not reload every turn payload");
+            return super.turns();
+        }
+
+        @Override public TurnRecord turn(String turnId) {
+            if (forbidPayloadReads) throw new AssertionError("SSE must not query one owner per event");
+            return super.turn(turnId);
         }
     }
 
