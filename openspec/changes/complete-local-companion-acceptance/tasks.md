@@ -12,3 +12,6 @@
 - [ ] 3.2 Confirm idle service and normal host consent, deploy Core and verify process/build/health evidence.
 - [ ] 3.3 Run bounded isolated live persona, search, SSE and capability probes; separate UI and credential blockers.
 - [ ] 3.4 Produce reproducible evidence, remaining limitations and scope-only local commit.
+
+## 4. Cancellation acceptance follow-up
+- [ ] 4.1 Fix request-path cancellation lease violation; cover cancellation before claim, queued cancellation, duplicate cancellation and subsequent-turn recovery.

@@ -70,6 +70,45 @@ class CapabilityRuntimeReactActionExecutorTest {
     }
 
     @Test
+    void emptyInstalledSkillSearchDoesNotClaimCommunityWasSearched() {
+        try (CapabilityRuntimeFacade facade = new CapabilityRuntimeFacade(8);
+             StepDispatcher dispatcher = new StepDispatcher(1, 1, 1, 1)) {
+            CapabilityDescriptor descriptor = new CapabilityDescriptor(
+                    "meguri.skill.search", "1", CapabilityDescriptor.Kind.READ_TOOL, "tests",
+                    CapabilityDescriptor.Schema.empty(),
+                    new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of()),
+                    Set.of("skill:read"), CapabilityDescriptor.SideEffect.READ,
+                    CapabilityDescriptor.ApprovalRequirement.NONE, Duration.ofSeconds(2),
+                    CapabilityDescriptor.RetryPolicy.none(), new CapabilityDescriptor.ConcurrencyPolicy(1),
+                    Set.of(CapabilityDescriptor.Mode.DEEP), CapabilityDescriptor.DataClassification.INTERNAL,
+                    CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL, "test://meguri.skill.search",
+                    CapabilityDescriptor.Health.HEALTHY, false, 1, CapabilityDescriptor.NetworkPolicy.denied(),
+                    Set.of(), CapabilityDescriptor.CostPolicy.free(), CapabilityDescriptor.CachePolicy.disabled(),
+                    CapabilityDescriptor.IdempotencyPolicy.none());
+            AtomicInteger calls = new AtomicInteger();
+            facade.register(descriptor, (input, execution) -> {
+                calls.incrementAndGet();
+                return Map.of("items", List.of());
+            });
+            var frozen = facade.freeze(new ExposurePlanner.ExposureContext(
+                    "turn", "tenant", "user", "website", Set.of("skill:read"),
+                    CapabilityDescriptor.Mode.DEEP, Set.of(descriptor.id()), 1, false,
+                    CapabilityDescriptor.DataClassification.INTERNAL));
+            var executor = new CapabilityRuntimeReactActionExecutor(facade, frozen, dispatcher, Clock.systemUTC());
+
+            RawReactObservation result = executor.execute(
+                    validated(facade, frozen, new ReactAction(descriptor.id(), Map.of())),
+                    context(frozen.snapshotId(), Set.of("skill:read"))).block();
+
+            assertThat(result.status()).isEqualTo(RawReactObservation.Status.SUCCESS);
+            assertThat(result.summary()).contains("No installed frozen Skill candidates", "Local inventory only",
+                    "public community was not searched");
+            assertThat(result.trustLabel()).isEqualTo(ObservationTrustLabel.UNTRUSTED_EXTERNAL_SKILL);
+            assertThat(calls).hasValue(1);
+        }
+    }
+
+    @Test
     void delegatesThroughFrozenFacadeAndRejectsSnapshotMismatch() {
         AtomicInteger calls = new AtomicInteger();
         try (CapabilityRuntimeFacade facade = new CapabilityRuntimeFacade(8);

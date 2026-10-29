@@ -134,3 +134,24 @@ checks; passing the isolated API tests must not be substituted for either.
 Additional targeted regression: `CapabilityRuntimeReactActionExecutorTest`
 checks that MCP values reach normalized planner observations while secret keys,
 image/audio bytes and over-budget trailing text do not.
+
+## Live selection follow-up
+
+The isolated `DISCOVER` turn in `reports/companion-acceptance-20261029/capability-live.jsonl`
+(`turn_48255b4d3f2f428d`, tested source `6a9a91109516b064fc18e8948e36f66437436476`)
+exposed all four Skill capabilities, but selected `meguri.skill.search` twice.
+The empty installed catalog was then incorrectly described as a community search.
+This is a planner selection/reporting failure, not evidence that public discovery
+was absent or that its API failed. No discovery call occurred in that turn.
+
+The planner's capability projection contained IDs and input schemas but no
+purpose descriptions. The follow-up adds usage descriptions only for actually
+exposed Skill capabilities, separating public discovery/detail from frozen
+installed search/view. Policy retains untrusted metadata and the prohibition on
+inferring installation/execution authority; empty local results now explicitly
+say that no public community search occurred. There is no automatic installation
+fallback or hard-coded query. `LangChain4jLlmProviderTest` captures the actual
+planner request to verify these scopes and that unexposed tools are not advertised;
+`CapabilityRuntimeReactActionExecutorTest` executes an empty inventory callback
+and verifies the observation's scope. These offline checks establish prompt and
+receipt wiring; a new isolated live turn must establish improved model selection.

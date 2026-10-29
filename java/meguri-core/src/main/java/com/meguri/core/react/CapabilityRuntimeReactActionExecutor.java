@@ -243,7 +243,7 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
 
     private static String skillSearchSummary(Object rawItems) {
         if (!(rawItems instanceof Iterable<?> items)) {
-            return "No frozen external Skill candidates matched";
+            return "No installed frozen Skill candidates matched. Local inventory only; public community was not searched.";
         }
         List<String> summaries = new ArrayList<>();
         for (Object item : items) {
@@ -258,8 +258,8 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
             summaries.add(line.toString());
         }
         return summaries.isEmpty()
-                ? "No frozen external Skill candidates matched"
-                : "Frozen external Skill candidates (untrusted metadata):\n"
+                ? "No installed frozen Skill candidates matched. Local inventory only; public community was not searched."
+                : "Installed frozen Skill candidates (local inventory only; untrusted metadata):\n"
                         + String.join("\n", summaries);
     }
 

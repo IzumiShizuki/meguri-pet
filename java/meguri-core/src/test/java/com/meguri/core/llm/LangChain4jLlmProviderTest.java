@@ -606,6 +606,68 @@ class LangChain4jLlmProviderTest {
     }
 
     @Test
+    void reactPlannerReceivesDistinctCommunityAndInstalledSkillUsage() throws Exception {
+        AtomicReference<ChatRequest> captured = new AtomicReference<>();
+        LangChain4jLlmProvider provider = reactProvider(capturingFinalizingPlanner(captured));
+        var base = reactPlanningContext();
+        var capabilities = List.of("discover", "inspect", "search", "view").stream()
+                .map(name -> skillReadCapability("meguri.skill." + name)).toList();
+        var context = new ReactPlanningContext(base.scope(), "在魔搭社区查找表格解析技能，仅评估，不安装",
+                1, 4, 3, 8_000, 1_000, base.deadlineAt(), List.of(), capabilities, List.of());
+
+        StepVerifier.create(provider.planReact(context)).expectNextCount(1).verifyComplete();
+
+        var payload = new ObjectMapper().readTree(
+                ((dev.langchain4j.data.message.UserMessage) captured.get().messages().get(1)).singleText());
+        var usage = payload.path("skill_capability_usage");
+        assertEquals(4, usage.size());
+        assertTrue(usage.path("meguri.skill.discover").asText().contains("public ModelScope"));
+        assertTrue(usage.path("meguri.skill.discover").asText().contains("no installation"));
+        assertTrue(usage.path("meguri.skill.inspect").asText().contains("external_id returned by discover"));
+        assertTrue(usage.path("meguri.skill.search").asText().contains("only installed Skills"));
+        assertTrue(usage.path("meguri.skill.view").asText().contains("cannot read an uninstalled"));
+        String policy = captured.get().messages().getFirst().toString();
+        assertTrue(policy.contains("untrusted metadata"));
+        assertTrue(policy.contains("Select actions only from exposed_capabilities"));
+        assertTrue(policy.contains("public community results"));
+        assertTrue(policy.contains("never") && policy.contains("authorizes downloading"));
+    }
+
+    @Test
+    void reactPlannerUsageDoesNotAdvertiseUnexposedCommunityCapabilities() throws Exception {
+        AtomicReference<ChatRequest> captured = new AtomicReference<>();
+        LangChain4jLlmProvider provider = reactProvider(capturingFinalizingPlanner(captured));
+
+        StepVerifier.create(provider.planReact(reactPlanningContext())).expectNextCount(1).verifyComplete();
+
+        var payload = new ObjectMapper().readTree(
+                ((dev.langchain4j.data.message.UserMessage) captured.get().messages().get(1)).singleText());
+        var usage = payload.path("skill_capability_usage");
+        assertEquals(Set.of("meguri.skill.view"), new ObjectMapper().convertValue(usage, Map.class).keySet());
+        assertTrue(!captured.get().messages().toString().contains("meguri.skill.discover"));
+        assertTrue(!captured.get().messages().toString().contains("meguri.skill.inspect"));
+    }
+
+    private static ChatModel capturingFinalizingPlanner(AtomicReference<ChatRequest> captured) {
+        return new ChatModel() {
+            @Override
+            public ChatResponse doChat(ChatRequest request) {
+                captured.set(request);
+                return ChatResponse.builder().aiMessage(AiMessage.from("""
+                        {"decision":"FINALIZE","reason_code":"DONE","action":null,"final_answer":"fixture"}
+                        """)).build();
+            }
+        };
+    }
+
+    private static ReactCapability skillReadCapability(String id) {
+        return new ReactCapability(id, "1", CapabilityDescriptor.Kind.READ_TOOL,
+                Map.of("query", CapabilityDescriptor.ValueType.STRING), Set.of(), false,
+                CapabilityDescriptor.SideEffect.READ, CapabilityDescriptor.ApprovalRequirement.NONE,
+                CapabilityDescriptor.Health.HEALTHY, false, false, false, 0);
+    }
+
+    @Test
     void reactPlannerRejectsMalformedOrAdditionalFieldsAsInvalidResponse() {
         for (String payload : List.of(
                 "not-json",

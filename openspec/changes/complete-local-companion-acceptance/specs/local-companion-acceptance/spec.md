@@ -37,3 +37,12 @@ Duplicate requests SHALL return the same turn identity while that turn is execut
 #### Scenario: Replay races with persistence
 - **WHEN** a duplicate idempotency request overlaps execution persistence for the same turn
 - **THEN** both operations finish within their bounds and expose the same durable turn without lock inversion
+
+### Requirement: Cancellation respects execution ownership
+A cancellation request SHALL persist cancellation intent without writing execution terminal events outside the owning lease. The execution chain SHALL emit one cancelled terminal event, dispose unfinished provider work and allow the next turn to complete with its own response.
+#### Scenario: Cancel before execution claim
+- **WHEN** cancellation arrives before a new or queued turn has claimed its execution lease
+- **THEN** the request succeeds without a terminal write from the request path, and the scheduled execution claims ownership before persisting cancellation
+#### Scenario: Repeated cancellation during provider work
+- **WHEN** the same active turn is cancelled repeatedly while its provider has not completed
+- **THEN** one cancellation terminal event is persisted, late provider output is ignored and a following turn can complete

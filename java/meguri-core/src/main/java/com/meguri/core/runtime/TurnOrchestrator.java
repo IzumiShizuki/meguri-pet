@@ -843,12 +843,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         TurnRecord record = journal.turn(turnId);
         if (record == null) return null;
         if (!record.isTerminal()) {
+            // The request path owns cancellation intent, not the execution lease.
+            // Let the execution chain persist its terminal event before it disposes
+            // provider work and releases that lease (including queued turns).
             journal.requestCancellation(record);
-            Disposable active = running.remove(turnId);
-            if (active != null) {
-                cancelRecord(record, "client_requested");
-                active.dispose();
-            }
         }
         return record;
     }
@@ -1244,7 +1242,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         var ready = previous == null ? java.util.concurrent.CompletableFuture.<Void>completedFuture(null) : previous;
         return Mono.fromFuture(ready, true)
                 .then(Mono.defer(() -> record.isTerminal() ? Mono.empty()
-                        : record.isCancelRequested() ? cancelRecord(record, "client_requested") : runWithDeadline(record)))
+                        : runWithDeadline(record)))
                 .timeout(record.remaining())
                 .onErrorResume(TimeoutException.class,
                         error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"))
@@ -1259,7 +1257,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         if (!journal.claimExecution(record, executionOwnerId, EXECUTION_LEASE)) {
             return Mono.error(new IllegalStateException("turn execution lease is owned by another runtime"));
         }
-        Mono<Void> execution = runRecord(record)
+        Mono<Void> execution = Mono.defer(() -> record.isCancelRequested()
+                        ? cancelRecord(record, "client_requested") : runRecord(record))
                 .timeout(record.remaining())
                 .onErrorResume(TimeoutException.class,
                         error -> fail(record, "TURN_DEADLINE_EXCEEDED", "turn deadline exceeded"));
