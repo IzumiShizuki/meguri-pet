@@ -90,3 +90,10 @@ Session event polling SHALL inspect lightweight lifecycle state only for the req
 #### Scenario: Turn arrives while terminal events are being read
 - **WHEN** another visible turn arrives after the polling state snapshot
 - **THEN** completion rechecks session state and drains the new turn's terminal event before closing
+
+### Requirement: Lifecycle persistence is atomic between execution paths
+Lifecycle transition, durable event append and rollback SHALL be serialized for each turn. A competing cancellation path SHALL NOT signal completion from an uncommitted in-memory terminal state, release the execution lease prematurely, or roll back another path's durable terminal event. Unhandled execution errors SHALL report only the turn identifier and exception category without exception messages, stack traces or request contents.
+
+#### Scenario: Provider cancellation races the cancellation observer
+- **WHEN** the provider error path is persisting cancellation while the polling observer also sees cancellation intent
+- **THEN** the observer waits for the same turn's terminal persistence, exactly one cancellation event commits before lease release, and a following turn completes normally

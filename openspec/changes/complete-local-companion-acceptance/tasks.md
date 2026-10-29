@@ -19,3 +19,4 @@
 - [ ] 4.3 Route explicit public Skill read requests from ordinary chat into the authorized tool path; keep quoted, explanatory, offline and unauthorized requests out.
 - [ ] 4.4 Keep deadline terminal writes within execution ownership; cover active provider timeout, queued expiry, unique terminal events and following-turn recovery without bypassing the owner fence.
 - [ ] 4.5 Scope SSE polling to lightweight session lifecycle state; preserve identity filtering and terminal publication ordering without full-turn scans or per-event owner reads.
+- [ ] 4.6 Serialize lifecycle transition/persistence/rollback across competing cancellation paths; prove no premature lease release with a latch fixture and log only turn ID plus error category for unhandled execution errors.

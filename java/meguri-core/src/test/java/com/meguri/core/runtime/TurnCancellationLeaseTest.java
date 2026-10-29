@@ -24,6 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -108,6 +109,61 @@ class TurnCancellationLeaseTest {
             assertThat(journal.unownedWrites.get()).isZero();
         } finally {
             runtime.reset();
+        }
+    }
+
+    @Test
+    void providerCancellationAndObserverCannotReleaseLeaseBeforeTerminalCommit() throws Exception {
+        LeaseJournal journal = new LeaseJournal(false);
+        journal.coordinateCancellationRace = true;
+        CountDownLatch subscribed = new CountDownLatch(1);
+        AtomicReference<MonoSink<LlmResponse>> pending = new AtomicReference<>();
+        LlmProvider provider = (request, state, canon, memories, recent) -> {
+            if (!request.getMessage().equals("cancel-race")) {
+                return Mono.just(new LlmResponse("answer:" + request.getMessage()));
+            }
+            return Mono.create(sink -> {
+                pending.set(sink);
+                subscribed.countDown();
+            });
+        };
+        TurnOrchestrator runtime = runtime(provider, journal);
+        try (var providerSignals = Executors.newSingleThreadExecutor()) {
+            try {
+                TurnRecord cancelled = runtime.start(request("dual-cancel", "cancel-race"));
+                await(subscribed, "provider did not subscribe");
+                runtime.cancel(cancelled.getTurnId());
+                var providerError = providerSignals.submit(() -> pending.get().error(
+                        new java.util.concurrent.CancellationException("fixture provider observed cancellation")));
+                await(journal.cancelAppendEntered, "provider error did not begin terminal append");
+                await(journal.cancelObserverArrived, "polling observer did not observe cancellation intent");
+
+                // Both paths have now observed the same cancellation. The first
+                // terminal append is paused before the journal acquires its lock.
+                // The second must not win on an uncommitted in-memory terminal.
+                assertThatThrownBy(() -> journal.released
+                        .computeIfAbsent(cancelled.getTurnId(), ignored -> new CompletableFuture<>())
+                        .get(100, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                assertThat(cancelled.getDone().isDone()).isFalse();
+                assertThat(terminalEvents(journal, cancelled)).isEmpty();
+                journal.allowCancelAppend.countDown();
+                providerError.get(3, TimeUnit.SECONDS);
+                cancelled.getDone().get(3, TimeUnit.SECONDS);
+                journal.released.get(cancelled.getTurnId()).get(3, TimeUnit.SECONDS);
+                assertCancelledOnce(journal, cancelled);
+                assertThat(journal.lifecycle).containsSubsequence(
+                        "claim:" + cancelled.getTurnId(), "turn.cancelled:" + cancelled.getTurnId(),
+                        "release:" + cancelled.getTurnId());
+
+                TurnRecord next = runtime.start(request("dual-cancel", "fresh"));
+                next.getDone().get(3, TimeUnit.SECONDS);
+                assertThat(next.getResult().response().reply()).isEqualTo("answer:fresh");
+                assertThat(journal.unownedWrites.get()).isZero();
+            } finally {
+                journal.allowCancelAppend.countDown();
+                runtime.reset();
+            }
         }
     }
 
@@ -298,6 +354,11 @@ class TurnCancellationLeaseTest {
         private final CountDownLatch allowClaim = new CountDownLatch(1);
         private final CountDownLatch failureEntered = new CountDownLatch(1);
         private final CountDownLatch allowFailure = new CountDownLatch(1);
+        private volatile boolean coordinateCancellationRace;
+        private final AtomicBoolean gateCancelAppend = new AtomicBoolean(true);
+        private final CountDownLatch cancelAppendEntered = new CountDownLatch(1);
+        private final CountDownLatch allowCancelAppend = new CountDownLatch(1);
+        private final CountDownLatch cancelObserverArrived = new CountDownLatch(1);
 
         private LeaseJournal(boolean gateFirstClaim) { this.gateFirstClaim = new AtomicBoolean(gateFirstClaim); }
         @Override public Acceptance accept(TurnRequest request, String key, Instant deadline) { return delegate.accept(request, key, deadline); }
@@ -323,23 +384,42 @@ class TurnCancellationLeaseTest {
         @Override public boolean heartbeatExecution(TurnRecord record, String owner, Duration lease) {
             return owner.equals(owners.get(record.getTurnId()));
         }
+        @Override public boolean refreshCancellation(TurnRecord record) {
+            if (!record.isCancelRequested()) return false;
+            if (coordinateCancellationRace) {
+                try { await(cancelAppendEntered, "provider path did not reach terminal append"); }
+                catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new AssertionError(error); }
+                cancelObserverArrived.countDown();
+            }
+            synchronized (record) { return record.isCancelRequested(); }
+        }
         @Override public void releaseExecution(TurnRecord record, String owner) {
-            owners.remove(record.getTurnId(), owner);
-            lifecycle.add("release:" + record.getTurnId());
-            released.computeIfAbsent(record.getTurnId(), ignored -> new CompletableFuture<>()).complete(null);
+            synchronized (record) {
+                owners.remove(record.getTurnId(), owner);
+                lifecycle.add("release:" + record.getTurnId());
+                released.computeIfAbsent(record.getTurnId(), ignored -> new CompletableFuture<>()).complete(null);
+            }
         }
         @Override public void persistExecution(TurnRecord record, String owner) { requireOwner(record, owner); }
         @Override public EventEnvelope appendExecution(TurnRecord record, String owner, String type,
                                                        Map<String, Object> data, EventMetadata metadata) {
-            requireOwner(record, owner);
-            if (type.equals("turn.failed") && gateFirstFailure.compareAndSet(true, false)) {
-                failureEntered.countDown();
-                try { await(allowFailure, "test did not release terminal persistence"); }
+            if (coordinateCancellationRace && type.equals("turn.cancelled")
+                    && gateCancelAppend.compareAndSet(true, false)) {
+                cancelAppendEntered.countDown();
+                try { await(allowCancelAppend, "test did not release cancellation append"); }
                 catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new AssertionError(error); }
-                requireOwner(record, owner);
             }
-            lifecycle.add(type + ":" + record.getTurnId());
-            return delegate.append(record, type, data, metadata);
+            synchronized (record) {
+                requireOwner(record, owner);
+                if (type.equals("turn.failed") && gateFirstFailure.compareAndSet(true, false)) {
+                    failureEntered.countDown();
+                    try { await(allowFailure, "test did not release terminal persistence"); }
+                    catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new AssertionError(error); }
+                    requireOwner(record, owner);
+                }
+                lifecycle.add(type + ":" + record.getTurnId());
+                return delegate.append(record, type, data, metadata);
+            }
         }
         private void requireOwner(TurnRecord record, String owner) {
             if (!owner.equals(owners.get(record.getTurnId()))) {

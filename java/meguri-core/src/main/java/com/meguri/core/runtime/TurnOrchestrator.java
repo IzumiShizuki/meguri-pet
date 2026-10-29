@@ -107,6 +107,8 @@ import com.meguri.core.skill.SkillSelectionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.Disposable;
 import reactor.core.publisher.BufferOverflowStrategy;
 import reactor.core.publisher.Flux;
@@ -142,6 +144,7 @@ import java.util.function.Supplier;
  */
 @Service
 public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TurnOrchestrator.class);
     private static final int SUBSCRIBER_EVENT_BUFFER = 256;
     private record ConversationScope(String user, String client, String session) { }
     private final Map<ConversationScope, java.util.concurrent.CompletableFuture<Void>> conversationTails =
@@ -1234,7 +1237,8 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 .doFinally(ignored -> running.remove(record.getTurnId()))
                 .subscribe(
                         ignored -> { },
-                        ignored -> { /* runRecord records the failure */ });
+                        error -> LOGGER.warn("turn execution error turn_id={} error_type={}",
+                                record.getTurnId(), error.getClass().getName()));
         running.put(record.getTurnId(), disposable);
         if (disposable.isDisposed()) running.remove(record.getTurnId(), disposable);
     }
@@ -1811,13 +1815,16 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     }
 
     private void transition(TurnRecord record, TurnStage stage) {
-        LifecycleState before = LifecycleState.capture(record);
-        record.transitionTo(stage);
-        try {
-            emit(record, "turn.stage.changed", Map.of("stage", stage.wireValue()));
-        } catch (Throwable persistenceError) {
-            before.restore(record);
-            throw persistenceError;
+        synchronized (record) {
+            if (record.isTerminal()) return;
+            LifecycleState before = LifecycleState.capture(record);
+            record.transitionTo(stage);
+            try {
+                emit(record, "turn.stage.changed", Map.of("stage", stage.wireValue()));
+            } catch (Throwable persistenceError) {
+                before.restore(record);
+                throw persistenceError;
+            }
         }
     }
 
@@ -2142,27 +2149,33 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
 
     private boolean appendTerminal(TurnRecord record, BooleanSupplier transition,
                                    String eventType, Map<String, Object> data) {
-        LifecycleState before = LifecycleState.capture(record);
-        if (!transition.getAsBoolean()) return false;
-        try {
-            LinkedHashMap<String, Object> terminalData = new LinkedHashMap<>(
-                    data == null ? Map.of() : data);
-            TurnLatencyTraceRecorder latency = record.getLatencyTraceRecorder();
-            if (latency != null) {
-                latency.markMissing(TurnLatencyPoint.FIRST_DELTA_SSE_FLUSHED,
-                        TurnLatencyMissingReason.NOT_RECORDED);
-                latency.markMissing(TurnLatencyPoint.CLIENT_FIRST_DELTA_RECEIVED,
-                        TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
-                latency.markMissing(TurnLatencyPoint.CLIENT_FIRST_RENDER,
-                        TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
-                terminalData.put("latency_trace", beanMap(latency.snapshot()));
+        synchronized (record) {
+            // Competing execution/cancellation paths must not observe a terminal
+            // transition until its append has committed or its rollback finished.
+            // Otherwise an empty losing path can win firstWithSignal and release
+            // the lease while the actual terminal writer is still in flight.
+            LifecycleState before = LifecycleState.capture(record);
+            if (!transition.getAsBoolean()) return false;
+            try {
+                LinkedHashMap<String, Object> terminalData = new LinkedHashMap<>(
+                        data == null ? Map.of() : data);
+                TurnLatencyTraceRecorder latency = record.getLatencyTraceRecorder();
+                if (latency != null) {
+                    latency.markMissing(TurnLatencyPoint.FIRST_DELTA_SSE_FLUSHED,
+                            TurnLatencyMissingReason.NOT_RECORDED);
+                    latency.markMissing(TurnLatencyPoint.CLIENT_FIRST_DELTA_RECEIVED,
+                            TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
+                    latency.markMissing(TurnLatencyPoint.CLIENT_FIRST_RENDER,
+                            TurnLatencyMissingReason.CLIENT_UNSUPPORTED);
+                    terminalData.put("latency_trace", beanMap(latency.snapshot()));
+                }
+                emit(record, eventType, Map.copyOf(terminalData));
+            } catch (Throwable persistenceError) {
+                before.restore(record);
+                throw persistenceError;
             }
-            emit(record, eventType, Map.copyOf(terminalData));
-        } catch (Throwable persistenceError) {
-            before.restore(record);
-            throw persistenceError;
+            record.completeDone();
         }
-        record.completeDone();
         capabilityRuntime.release(record.getRuntimeCapabilities());
         if (skillDisclosure != null) skillDisclosure.release(record.getTurnId());
         return true;
