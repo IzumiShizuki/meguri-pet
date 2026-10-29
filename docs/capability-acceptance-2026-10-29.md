@@ -155,3 +155,22 @@ planner request to verify these scopes and that unexposed tools are not advertis
 `CapabilityRuntimeReactActionExecutorTest` executes an empty inventory callback
 and verifies the observation's scope. These offline checks establish prompt and
 receipt wiring; a new isolated live turn must establish improved model selection.
+
+The next deployed probe (`d21d125bedf51a545522b2bfe6006792b38a3149`) selected
+`discover`, but the capability audit recorded three `NETWORK_DENIED` rejections
+before any callback execution. The exposure policy had authorized the network
+capabilities; `limitedReactContext` incorrectly created every invocation scope
+with `networkAllowed=false`. The repair retains the server's network decision
+inside the authenticated frozen capability state and passes that decision into
+ReAct execution. Empty/default freezes remain denied, descriptor host constraints
+remain unchanged, and explicit offline requests deny network exposure. Neither
+model arguments nor a visible tool ID can grant network authority.
+
+`ModelScopeCapabilityTurnIntegrationTest` covers the actual orchestrator,
+frozen facade, disclosure callback, production ModelScope request/parser and a
+loopback HTTP transport fixture. It checks discover plus detail metadata in the
+planner and final provider context, receipts, offline/missing-scope zero requests,
+transport failure followed by a successful independent turn, and rejection of
+forged/released freeze tokens. No packages are installed and no external HTTP or
+model calls occur in these tests. Test results and a renewed live probe are still
+required before claiming deployment acceptance.

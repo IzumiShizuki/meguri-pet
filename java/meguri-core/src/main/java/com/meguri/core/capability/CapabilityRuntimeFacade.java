@@ -300,7 +300,7 @@ public final class CapabilityRuntimeFacade implements AutoCloseable {
     public TurnCapabilities freeze(ExposurePlanner.ExposureContext context) {
         CapabilityRegistry.CapabilitySnapshot snapshot = registry.snapshot();
         ExposurePlanner.ExposurePlan plan = planner.plan(snapshot, context);
-        return freeze(context.turnId(), snapshot, plan);
+        return freeze(context.turnId(), snapshot, plan, context.networkAllowed());
     }
 
     /**
@@ -312,13 +312,14 @@ public final class CapabilityRuntimeFacade implements AutoCloseable {
         CapabilityRegistry.CapabilitySnapshot snapshot = registry.snapshot();
         ExposurePlanner.ExposurePlan plan = new ExposurePlanner.ExposurePlan(
                 snapshot.snapshotId(), requiredTurnId, List.of());
-        return freeze(requiredTurnId, snapshot, plan);
+        return freeze(requiredTurnId, snapshot, plan, false);
     }
 
     private TurnCapabilities freeze(
             String turnId,
             CapabilityRegistry.CapabilitySnapshot snapshot,
-            ExposurePlanner.ExposurePlan plan) {
+            ExposurePlanner.ExposurePlan plan,
+            boolean networkAllowed) {
         String freezeId = UUID.randomUUID().toString();
         TurnCapabilities token = new TurnCapabilities(
                 freezeId,
@@ -328,8 +329,13 @@ public final class CapabilityRuntimeFacade implements AutoCloseable {
                 plan.descriptors().stream()
                         .map(descriptor -> new CapabilityRef(descriptor.id(), descriptor.version()))
                         .toList());
-        frozenTurns.put(freezeId, new FrozenState(token, snapshot, plan));
+        frozenTurns.put(freezeId, new FrozenState(token, snapshot, plan, networkAllowed));
         return token;
+    }
+
+    /** Server-authorized network decision retained with the frozen exposure plan. */
+    public boolean networkAllowed(TurnCapabilities turn) {
+        return requireFrozen(turn).networkAllowed();
     }
 
     /**
@@ -704,5 +710,6 @@ public final class CapabilityRuntimeFacade implements AutoCloseable {
     private record FrozenState(
             TurnCapabilities token,
             CapabilityRegistry.CapabilitySnapshot snapshot,
-            ExposurePlanner.ExposurePlan plan) { }
+            ExposurePlanner.ExposurePlan plan,
+            boolean networkAllowed) { }
 }

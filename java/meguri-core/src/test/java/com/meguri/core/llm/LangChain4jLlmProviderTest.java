@@ -623,7 +623,9 @@ class LangChain4jLlmProviderTest {
         assertEquals(4, usage.size());
         assertTrue(usage.path("meguri.skill.discover").asText().contains("public ModelScope"));
         assertTrue(usage.path("meguri.skill.discover").asText().contains("no installation"));
-        assertTrue(usage.path("meguri.skill.inspect").asText().contains("external_id returned by discover"));
+        assertTrue(usage.path("meguri.skill.inspect").asText().contains("external_id supplied by the user or returned by discover"));
+        assertTrue(usage.path("meguri.skill.inspect").asText().contains("inspect directly without discovery first"));
+        assertTrue(usage.path("meguri.skill.inspect").asText().contains("not URLs"));
         assertTrue(usage.path("meguri.skill.search").asText().contains("only installed Skills"));
         assertTrue(usage.path("meguri.skill.view").asText().contains("cannot read an uninstalled"));
         String policy = captured.get().messages().getFirst().toString();

@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Turn-scoped progressive disclosure ledger. No live catalog lookup occurs after freeze. */
+/** Installed Skill disclosure uses a frozen turn ledger; explicit public metadata reads require separate capability authorization. */
 public final class SkillDisclosureService {
     private final SkillManagementService management;
     private final Map<String, Ledger> ledgers = new ConcurrentHashMap<>();

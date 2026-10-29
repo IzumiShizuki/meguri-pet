@@ -46,3 +46,14 @@ A cancellation request SHALL persist cancellation intent without writing executi
 #### Scenario: Repeated cancellation during provider work
 - **WHEN** the same active turn is cancelled repeatedly while its provider has not completed
 - **THEN** one cancellation terminal event is persisted, late provider output is ignored and a following turn can complete
+
+### Requirement: Frozen network authority
+Limited ReAct execution SHALL inherit network authority only from its server-created frozen capability exposure. It SHALL NOT grant authority from model arguments, supplied capability identifiers or public metadata. Explicit user instructions prohibiting network access SHALL exclude network tools and produce no external call.
+
+#### Scenario: Public discovery uses existing authorized scope
+- **WHEN** the server freezes an authorized public metadata capability with network access
+- **THEN** its ReAct invocation retains that frozen permission, executes the bounded read, and exposes an untrusted result without granting installation or administration rights
+
+#### Scenario: Explicit offline request
+- **WHEN** the user forbids network access for an otherwise eligible AGENT turn
+- **THEN** public discovery remains unavailable and its HTTP fixture receives zero calls

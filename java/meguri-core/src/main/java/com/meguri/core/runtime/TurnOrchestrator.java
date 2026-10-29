@@ -1490,7 +1490,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 record.getRequest().tenantId(), record.getRequest().getUserId(),
                 record.getRequest().getClientId(),
                 record.getRequest().authorizedCapabilityScopes(),
-                frozen.snapshotId(), false);
+                frozen.snapshotId(), capabilityRuntime.networkAllowed(frozen));
         List<ReactSkillCandidate> skillCandidates = frozen.exposes("meguri.skill.view")
                 && record.getSkillSnapshot() != null
                 ? record.getSkillSnapshot().candidates().stream()
@@ -2487,9 +2487,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                 mode,
                 explicitWeather ? Set.of("weather.read") : Set.of(),
                 1,
-                executionDecision == null
+                !com.meguri.core.websearch.WebSearchPolicy.isOffline(request.getMessage())
+                        && (executionDecision == null
                         ? request.retrievalMode() == RetrievalMode.SLOW || explicitAgent || explicitWeather
-                        : executionDecision.mode() == TurnExecutionMode.AGENT || explicitWeather,
+                        : executionDecision.mode() == TurnExecutionMode.AGENT || explicitWeather),
                 request.formalMemoryAllowed()
                         ? CapabilityDescriptor.DataClassification.CONFIDENTIAL
                         : CapabilityDescriptor.DataClassification.INTERNAL);

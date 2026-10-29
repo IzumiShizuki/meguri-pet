@@ -15,3 +15,4 @@
 
 ## 4. Cancellation acceptance follow-up
 - [ ] 4.1 Fix request-path cancellation lease violation; cover cancellation before claim, queued cancellation, duplicate cancellation and subsequent-turn recovery.
+- [ ] 4.2 Preserve server-frozen network authority in ReAct and prove explicit offline requests make zero public discovery calls.

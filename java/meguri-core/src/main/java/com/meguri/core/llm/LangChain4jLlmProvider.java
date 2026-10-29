@@ -725,8 +725,10 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                 case "meguri.skill.discover" -> "Search the public ModelScope / 魔搭社区 Skill catalog "
                         + "with concise topic keywords in query. Returns real "
                         + "candidate external_id, name, description and license; read-only, no installation.";
-                case "meguri.skill.inspect" -> "Read public ModelScope candidate details using the "
-                        + "external_id returned by discover; no installed skill_id is needed, no download or execution.";
+                case "meguri.skill.inspect" -> "Read public ModelScope candidate details using a concrete "
+                        + "external_id supplied by the user or returned by discover. For an explicit Skill ID, "
+                        + "inspect directly without discovery first. Accept only owner/name or @owner/name, not URLs; "
+                        + "no installed skill_id is needed, no download or execution.";
                 case "meguri.skill.search" -> "Search only installed Skills in this turn's frozen local "
                         + "inventory. Does not query ModelScope or any public community. Empty results "
                         + "do not establish that community search is unavailable.";
