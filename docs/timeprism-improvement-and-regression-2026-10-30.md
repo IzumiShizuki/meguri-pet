@@ -1,6 +1,10 @@
 # Meguri 改进顺序与 TimePrism 修复验收
 
-日期：2026-10-30 UTC。主树起点 `1d5b00dc`；站点只读核对版本 `ec29b37c`。本轮无生产 Todo 请求、无外发提醒、无服务重启、无 UAC 重试、无新凭据、无 GitHub 推送。
+日期：2026-10-30 UTC。
+
+更新：下文的候选未导入状态属于TimePrism阶段检查点；随后已获批整合MCP/web_fetch，最终Java组合回归983通过/5跳过，见[整合记录](capability-integration-and-timeprism-2026-10-30.md)。运行服务仍未更新。
+
+主树起点 `1d5b00dc`；站点只读核对版本 `ec29b37c`。本轮无生产 Todo 请求、无外发提醒、无服务重启、无 UAC 重试、无新凭据、无 GitHub 推送。
 
 ## 按执行顺序落实六项改进
 
