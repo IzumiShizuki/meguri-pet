@@ -89,7 +89,13 @@ class HttpMcpAdapterTest {
                 runtime.resolveApproval(approval.approvalId(), ApprovalService.Decision.ACCEPT, "user");
                 CapabilityResult next = runtime.execute(frozen, toolProposal(query, approval.approvalId()));
                 if (query.equals("invalid")) assertThat(next.errorCode()).isEqualTo("OUTPUT_SCHEMA_INVALID");
-                else if (query.equals("fail")) assertThat(next.status()).isEqualTo(CapabilityResult.Status.FAILED);
+                else if (query.equals("fail")) {
+                    assertThat(next.status()).isEqualTo(CapabilityResult.Status.FAILED);
+                    assertThat(next.errorCode()).isEqualTo("MCP_TOOL_FAILED");
+                    assertThat(next.retryable()).isFalse();
+                    assertThat(next.data()).isEmpty();
+                    assertThat(next.toString()).doesNotContain("fixture failure");
+                }
                 else assertThat(next.data()).containsEntry("value", "recovered");
             }
             assertThat(runtime.auditEvents()).anySatisfy(event -> {

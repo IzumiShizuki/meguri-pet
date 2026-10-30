@@ -11,32 +11,58 @@ import java.util.Set;
 
 public final class SkillSelectionService {
     private static final int MAX_CANDIDATES = 8;
-    private final SkillCatalogRepository repository;
+    private final java.util.function.Supplier<List<SkillCatalogEntry>> inventory;
 
-    public SkillSelectionService(SkillCatalogRepository repository) { this.repository = repository; }
+    public SkillSelectionService(SkillCatalogRepository repository) { this.inventory = repository::list; }
+    public SkillSelectionService(SkillManagementService management) { this.inventory = management::list; }
 
     public FrozenSkillSnapshot freeze(String turnId, String capabilitySnapshotId, String query, boolean agentMode) {
+        return freeze(turnId, capabilitySnapshotId, query, agentMode, null);
+    }
+
+    public FrozenSkillSnapshot freeze(String turnId, String capabilitySnapshotId, String query, boolean agentMode,
+                                      Set<String> exposedCapabilities) {
         if (!agentMode) return new FrozenSkillSnapshot(turnId, capabilitySnapshotId,
                 List.of(), Set.of(), Set.of(), 4096, 3, 6, Instant.now());
         Set<String> queryTokens = tokens(query);
-        List<FrozenSkillSnapshot.Candidate> candidates = repository.list().stream()
+        List<FrozenSkillSnapshot.Candidate> candidates = inventory.get().stream()
                 .filter(entry -> entry.binding().state() == SkillBinding.ActivationState.ENABLED)
-                .filter(entry -> entry.activeRevision() != null && entry.activeRevision().report().validAndCompatible())
-                .map(entry -> candidate(entry, queryTokens))
+                .filter(entry -> entry.activeRevision() != null
+                        && entry.activeRevision().report().state() == SkillValidationReport.ValidationState.VALID)
+                .map(entry -> candidate(entry, queryTokens, exposedCapabilities))
                 .filter(candidate -> candidate.score() > 0)
-                .sorted(Comparator.comparingDouble(FrozenSkillSnapshot.Candidate::score).reversed()
+                .sorted(Comparator.comparing(FrozenSkillSnapshot.Candidate::dependenciesBlocked)
+                        .thenComparing(Comparator.comparingDouble(FrozenSkillSnapshot.Candidate::score).reversed())
                         .thenComparing(FrozenSkillSnapshot.Candidate::skillId))
                 .limit(MAX_CANDIDATES).toList();
         return new FrozenSkillSnapshot(turnId, capabilitySnapshotId,
                 candidates, Set.of(), Set.of(), 4096, 3, 6, Instant.now());
     }
 
-    private static FrozenSkillSnapshot.Candidate candidate(SkillCatalogEntry entry, Set<String> queryTokens) {
+    private static FrozenSkillSnapshot.Candidate candidate(SkillCatalogEntry entry, Set<String> queryTokens,
+                                                           Set<String> exposedCapabilities) {
         SkillRevision active = entry.activeRevision();
         SkillManifest manifest = active.manifest() == null ? entry.manifest() : active.manifest();
         double score = relevance(queryTokens, manifest.name(), manifest.description(), manifest.tags());
+        List<String> reasons = active.report().issues().stream()
+                .filter(issue -> issue.code().startsWith("SKILL_REQUIREMENT_")).limit(16)
+                .map(issue -> boundedReason(issue.code() + ": " + issue.message())).distinct().toList();
+        FrozenSkillSnapshot.Readiness readiness = FrozenSkillSnapshot.Readiness.NOT_ASSESSED;
+        if (!active.report().compatible()) readiness = FrozenSkillSnapshot.Readiness.MISSING_DEPENDENCIES;
+        else if (exposedCapabilities != null) {
+            reasons = manifest.requires().tools().stream().map(SkillPackageValidator::capabilityId)
+                    .filter(id -> !exposedCapabilities.contains(id)).map(SkillSelectionService::boundedReason).distinct().limit(16).toList();
+            readiness = reasons.isEmpty() ? FrozenSkillSnapshot.Readiness.DEPENDENCIES_EXPOSED
+                    : FrozenSkillSnapshot.Readiness.NOT_EXPOSED_THIS_TURN;
+        }
         return new FrozenSkillSnapshot.Candidate(manifest.id(), active.sourceRevision(), active.digest(),
-                manifest.name(), manifest.description(), manifest.tags(), score);
+                manifest.name(), manifest.description(), manifest.tags(), score, readiness, reasons);
+    }
+
+    private static String boundedReason(String value) {
+        int end = Math.min(value.length(), 256);
+        if (end > 0 && Character.isHighSurrogate(value.charAt(end - 1))) end--;
+        return value.substring(0, end);
     }
 
     /** The disclosure query must use the same matching semantics as candidate selection. */

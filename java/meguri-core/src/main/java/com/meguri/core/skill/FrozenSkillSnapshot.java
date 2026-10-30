@@ -26,8 +26,22 @@ public record FrozenSkillSnapshot(
         frozenAt = frozenAt == null ? Instant.now() : frozenAt;
     }
 
+    public enum Readiness { NOT_ASSESSED, MISSING_DEPENDENCIES, NOT_EXPOSED_THIS_TURN, DEPENDENCIES_EXPOSED }
+
     public record Candidate(String skillId, String revision, String digest, String name,
-                            String description, List<String> tags, double score) {
-        public Candidate { tags = tags == null ? List.of() : List.copyOf(tags); }
+                            String description, List<String> tags, double score,
+                            Readiness readiness, List<String> readinessReasons) {
+        public Candidate {
+            tags = tags == null ? List.of() : List.copyOf(tags);
+            readiness = readiness == null ? Readiness.NOT_ASSESSED : readiness;
+            readinessReasons = readinessReasons == null ? List.of() : List.copyOf(readinessReasons);
+        }
+        public Candidate(String skillId, String revision, String digest, String name,
+                         String description, List<String> tags, double score) {
+            this(skillId, revision, digest, name, description, tags, score, Readiness.NOT_ASSESSED, List.of());
+        }
+        public boolean dependenciesBlocked() {
+            return readiness == Readiness.MISSING_DEPENDENCIES || readiness == Readiness.NOT_EXPOSED_THIS_TURN;
+        }
     }
 }

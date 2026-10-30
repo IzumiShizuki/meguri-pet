@@ -71,6 +71,18 @@ class McpExecutionMetadataCompatibilityTest {
         assertNotNull(normalizer.normalize("fixture",tool(),3));
     }
 
+    @Test void absentOutputSchemaAllowsResultDataButExplicitSchemaAndMalformedSchemaRemainStrict() {
+        var raw = tool();
+        var absent = normalizer.normalize("fixture", raw, 4);
+        assertDoesNotThrow(() -> absent.outputSchema().validate(Map.of("content", java.util.List.of(Map.of("type", "text", "text", "public"))), "result"));
+        assertEquals(CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL, absent.resultTrust());
+        raw.put("outputSchema", Map.of("type", "object", "properties", Map.of("value", Map.of("type", "string")), "required", java.util.List.of("value")));
+        var explicit = normalizer.normalize("fixture", raw, 4);
+        assertThrows(CapabilityDescriptor.SchemaViolation.class, () -> explicit.outputSchema().validate(Map.of("value", 42), "result"));
+        raw.put("outputSchema", null);
+        assertThrows(IllegalArgumentException.class, () -> normalizer.normalize("fixture", raw, 4));
+    }
+
     private Map<String,Object> tool() {
         return new LinkedHashMap<>(Map.of("name","lookup",
                 "inputSchema",Map.of("type","object","properties",Map.of())));

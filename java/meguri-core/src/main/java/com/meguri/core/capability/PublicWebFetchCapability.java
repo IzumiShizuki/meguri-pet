@@ -40,6 +40,7 @@ public final class PublicWebFetchCapability implements CapabilityImplementation 
         Object rawMode = input.getOrDefault("extractMode", "text");
         if (!(rawMode instanceof String mode) || !(input.get("url") instanceof String url))
             throw new IllegalArgumentException("WEB_FETCH_ARGUMENT_INVALID");
-        return fetcher.fetch(url, mode, number.intValue()).block();
+        return fetcher.fetch(url, mode, number.intValue())
+                .onErrorMap(CapabilityFailureException::webFetch).block();
     }
 }

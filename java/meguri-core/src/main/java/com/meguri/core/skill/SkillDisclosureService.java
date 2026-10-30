@@ -33,7 +33,8 @@ public final class SkillDisclosureService {
                         || SkillSelectionService.relevance(query, value) > 0)
                 .map(value -> Map.<String, Object>of(
                         "skill_id", value.skillId(), "name", value.name(), "description", value.description(),
-                        "revision", value.revision(), "digest", value.digest(), "score", value.score()))
+                        "revision", value.revision(), "digest", value.digest(), "score", value.score(),
+                        "readiness", value.readiness().name(), "readiness_reasons", value.readinessReasons(), "executable", false))
                 .toList();
         return Map.of("items", items, "frozen", true, "trust", "UNTRUSTED_EXTERNAL");
     }
@@ -49,8 +50,8 @@ public final class SkillDisclosureService {
         String bounded = query == null ? "" : query.trim();
         if (bounded.length() > 512) throw new IllegalArgumentException("Skill discovery query is too long");
         var page = management.search("modelscope", bounded, 1, 5);
-        return Map.of("items", page.items().stream().limit(5).map(SkillDisclosureService::publicSummary).toList(),
-                "trust", "UNTRUSTED_EXTERNAL", "installed", false,
+        return Map.of("items", page.items().stream().limit(5).map(this::publicSummary).toList(),
+                "trust", "UNTRUSTED_EXTERNAL", "installation_performed", false,
                 "instruction", "Public metadata only; installation requires separate review and approval.");
     }
 
@@ -58,14 +59,17 @@ public final class SkillDisclosureService {
         require(turnId);
         var detail = management.detail("modelscope", externalId);
         return Map.of("skill", publicSummary(detail.summary()), "trust", "UNTRUSTED_EXTERNAL",
-                "installed", false, "executable", false,
+                "installation_performed", false, "executable", false,
                 "required_tools", detail.requirements().tools().stream().limit(16).toList(),
                 "required_environment_names", detail.requirements().env().stream().limit(16).toList());
     }
 
-    private static Map<String, Object> publicSummary(SkillSourcePlugin.Summary value) {
+    private Map<String, Object> publicSummary(SkillSourcePlugin.Summary value) {
         return Map.of("external_id", boundedMetadata(value.externalId()), "name", boundedMetadata(value.name()),
-                "description", boundedMetadata(value.description()), "license", boundedMetadata(value.license()));
+                "description", boundedMetadata(value.description()), "license", boundedMetadata(value.license()),
+                "state", "DISCOVERED_METADATA", "installed", management.list().stream().anyMatch(entry ->
+                        entry.manifest().sourceId().equals("modelscope") && entry.manifest().externalId().equals(value.externalId())),
+                "callability", "NOT_ASSESSED");
     }
 
     private static String boundedMetadata(String value) {
@@ -91,6 +95,8 @@ public final class SkillDisclosureService {
                     .filter(v -> v.skillId().equals(skillId)).findFirst()
                     .orElseThrow(() -> new SkillManagementService.SkillException(
                             "SKILL_NOT_IN_FROZEN_SNAPSHOT", "Skill is not a frozen candidate"));
+            if (candidate.dependenciesBlocked()) throw new SkillManagementService.SkillException(
+                    "SKILL_DEPENDENCIES_UNAVAILABLE", "Skill dependencies are unavailable in this frozen turn");
             String path = normalizeRelative(relativePath);
             boolean root = "SKILL.md".equals(path);
             LinkedHashSet<String> viewedSkills = new LinkedHashSet<>(snapshot.viewedSkillIds());

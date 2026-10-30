@@ -28,6 +28,13 @@ public final class ActionProposalValidator {
         boolean writeCapability = descriptor.kind() == CapabilityDescriptor.Kind.WRITE_TOOL;
         boolean localControl = descriptor.kind()
                 == CapabilityDescriptor.Kind.LOCAL_CONTROL_TOOL;
+        // Only the existing scoped MCP read contract may carry external-read approval.
+        // This validates shape; the frozen executor still verifies the exact approved proposal.
+        boolean mcpRead = descriptor.kind() == CapabilityDescriptor.Kind.READ_TOOL
+                && descriptor.id().startsWith("mcp.") && descriptor.owner().startsWith("mcp:")
+                && descriptor.scopes().contains(descriptor.owner()) && descriptor.network().allowed()
+                && descriptor.sideEffect() == CapabilityDescriptor.SideEffect.EXTERNAL
+                && descriptor.approval() != CapabilityDescriptor.ApprovalRequirement.NONE;
         if (!readCapability && !promptSkill && !writeCapability && !localControl) {
             return ValidationResult.rejected("READ_ONLY_MVP_KIND_REJECTED");
         }
@@ -35,7 +42,7 @@ public final class ActionProposalValidator {
             return ValidationResult.rejected("PROMPT_SKILL_SIDE_EFFECT_REJECTED");
         }
         if (readCapability && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.NONE
-                && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.READ) {
+                && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.READ && !mcpRead) {
             return ValidationResult.rejected("READ_ONLY_MVP_SIDE_EFFECT_REJECTED");
         }
         if (localControl && (descriptor.sideEffect()
@@ -62,6 +69,9 @@ public final class ActionProposalValidator {
                     || action.idempotencyKey() == null) {
                 return ValidationResult.rejected("WRITE_TOOL_IDEMPOTENCY_REQUIRED");
             }
+        } else if (mcpRead) {
+            if (action.approvalId() == null || action.operationId() == null)
+                return ValidationResult.rejected("MCP_READ_APPROVAL_REQUIRED");
         } else if (descriptor.approval() != CapabilityDescriptor.ApprovalRequirement.NONE) {
             return ValidationResult.rejected(promptSkill
                     ? "PROMPT_SKILL_APPROVAL_REJECTED"

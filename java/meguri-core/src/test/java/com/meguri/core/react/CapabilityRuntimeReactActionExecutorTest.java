@@ -196,6 +196,7 @@ class CapabilityRuntimeReactActionExecutorTest {
             assertThat(accepted.status()).isEqualTo(RawReactObservation.Status.SUCCESS);
             assertThat(rejected.status()).isEqualTo(RawReactObservation.Status.FAILED);
             assertThat(rejected.errorCode()).isEqualTo("APPROVAL_REQUIRED");
+            assertThat(rejected.summary()).contains("APPROVAL_REQUIRED");
             assertThat(calls).hasValue(1);
         }
     }

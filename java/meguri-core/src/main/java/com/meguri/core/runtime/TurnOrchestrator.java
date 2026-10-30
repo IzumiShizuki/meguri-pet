@@ -1106,7 +1106,9 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
                     && runtimeCapabilities.exposes("meguri.skill.view");
             FrozenSkillSnapshot skills = skillSelection.freeze(
                     record.getTurnId(), runtimeCapabilities.snapshotId(), request.getMessage(),
-                    executionDecision.mode() == TurnExecutionMode.AGENT && skillCapabilitiesExposed);
+                    executionDecision.mode() == TurnExecutionMode.AGENT && skillCapabilitiesExposed,
+                    runtimeCapabilities.exposed().stream().map(CapabilityRuntimeFacade.CapabilityRef::id)
+                            .collect(java.util.stream.Collectors.toSet()));
             record.freezeSkillSnapshot(skills);
             skillDisclosure.freeze(skills);
         }
@@ -1511,6 +1513,7 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
         List<ReactSkillCandidate> skillCandidates = frozen.exposes("meguri.skill.view")
                 && record.getSkillSnapshot() != null
                 ? record.getSkillSnapshot().candidates().stream()
+                        .filter(candidate -> !candidate.dependenciesBlocked())
                         .map(candidate -> new ReactSkillCandidate(
                                 candidate.skillId(), candidate.name(),
                                 candidate.description(), candidate.tags()))

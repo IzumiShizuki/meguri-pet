@@ -138,10 +138,11 @@ public final class SkillManagementController {
 
     private static SkillCatalogView view(SkillCatalogEntry entry) {
         String activeDigest = entry.binding().activeDigest();
+        boolean enabled = entry.binding().state() == SkillBinding.ActivationState.ENABLED;
         return new SkillCatalogView(
                 ManifestView.from(entry.manifest()),
                 entry.revisions().stream().map(revision -> RevisionView.from(
-                        revision, Objects.equals(activeDigest, revision.digest()))).toList(),
+                        revision, enabled && Objects.equals(activeDigest, revision.digest()))).toList(),
                 BindingView.from(entry.binding()));
     }
 

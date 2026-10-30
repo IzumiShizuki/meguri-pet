@@ -200,14 +200,14 @@ public final class HttpMcpAdapter implements McpAdapter {
                 "arguments", input == null ? Map.of() : input,
                 "_meta", metadata));
         if (result.path("isError").asBoolean(false)) {
-            throw new McpTransportException("MCP tool returned an error");
+            throw new McpTransportException("MCP tool returned an error", "MCP_TOOL_FAILED", false);
         }
         // MCP outputSchema describes structuredContent, not the transport envelope.
         // Keep legacy unstructured tools usable; never reinterpret text as trusted JSON.
         if (result.has("structuredContent")) {
             JsonNode structured = result.get("structuredContent");
             if (!structured.isObject()) {
-                throw new McpTransportException("MCP structuredContent must be an object");
+                throw new McpTransportException("MCP structuredContent must be an object", "MCP_RESPONSE_INVALID", false);
             }
             return objectMapper.convertValue(structured, new TypeReference<>() { });
         }
@@ -311,7 +311,7 @@ public final class HttpMcpAdapter implements McpAdapter {
             throw new McpTransportException("MCP response id mismatch");
         }
         if (response.has("error")) {
-            throw new McpTransportException("MCP remote returned an error");
+            throw new McpTransportException("MCP remote returned an error", "MCP_REMOTE_ERROR", false);
         }
         JsonNode result = response.get("result");
         if (result == null || !result.isObject()) {
@@ -326,7 +326,13 @@ public final class HttpMcpAdapter implements McpAdapter {
 
     private JsonNode exchange(Map<String, Object> payload) {
         try {
-            endpointPolicy.validate(endpoint, allowInsecureLocalhost);
+            try {
+                endpointPolicy.validate(endpoint, allowInsecureLocalhost);
+            } catch (IllegalArgumentException rejected) {
+                boolean dnsFailure = rejected.getCause() instanceof java.net.UnknownHostException;
+                throw new McpTransportException("MCP endpoint validation failed closed",
+                        dnsFailure ? "MCP_DNS_FAILED" : "MCP_ENDPOINT_REJECTED", dnsFailure);
+            }
             HttpRequest.Builder request = requestBuilder();
             String currentSession = sessionId;
             HttpResponse<InputStream> response = client.send(
@@ -335,7 +341,8 @@ public final class HttpMcpAdapter implements McpAdapter {
                     HttpResponse.BodyHandlers.ofInputStream());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 if (response.statusCode() == 404) sessionId = null;
-                throw new McpTransportException("MCP HTTP status " + response.statusCode());
+                throw new McpTransportException("MCP HTTP status " + response.statusCode(), "MCP_TRANSPORT_FAILED",
+                        response.statusCode() >= 500 || response.statusCode() == 429 || response.statusCode() == 408);
             }
             String responseSession = response.headers()
                     .firstValue("Mcp-Session-Id").orElse(null);
@@ -536,13 +543,17 @@ public final class HttpMcpAdapter implements McpAdapter {
         }
     }
 
-    public static final class McpTransportException extends RuntimeException {
+    public static final class McpTransportException extends CapabilityFailureException {
         McpTransportException(String message) {
-            super(message);
+            this(message, "MCP_RESPONSE_INVALID", false);
         }
 
         McpTransportException(String message, Throwable cause) {
-            super(message, cause);
+            super(message, cause, "MCP_TRANSPORT_FAILED", true);
+        }
+
+        McpTransportException(String message, String code, boolean retryable) {
+            super(message, null, code, retryable);
         }
     }
 }

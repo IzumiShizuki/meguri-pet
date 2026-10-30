@@ -28,9 +28,19 @@ public final class SkillManagementService {
     public SkillSourcePlugin.Detail detail(String sourceId, String externalId) {
         return sources.require(sourceId).detail(externalId);
     }
-    public List<SkillCatalogEntry> list() { return repository.list(); }
-    public SkillCatalogEntry get(String id) { return repository.find(id).orElseThrow(() -> new SkillException("SKILL_NOT_FOUND", "Skill does not exist")); }
+    public List<SkillCatalogEntry> list() { return repository.list().stream().map(this::currentCompatibility).toList(); }
+    public SkillCatalogEntry get(String id) { return currentCompatibility(repository.find(id).orElseThrow(() -> new SkillException("SKILL_NOT_FOUND", "Skill does not exist"))); }
     public List<SkillAuditEvent> audit() { return repository.audit(); }
+
+    // A read projection only: immutable import reports remain in the repository.
+    private SkillCatalogEntry currentCompatibility(SkillCatalogEntry entry) {
+        return new SkillCatalogEntry(entry.manifest(), entry.revisions().stream().map(revision -> {
+            SkillManifest manifest = revision.manifest() == null ? entry.manifest() : revision.manifest();
+            return new SkillRevision(revision.skillId(), revision.digest(), revision.packagePath(),
+                    revision.sourceRevision(), revision.manifest(),
+                    validator.currentCompatibility(revision.report(), manifest.requires()), revision.importedAt());
+        }).toList(), entry.binding());
+    }
 
     public SkillCatalogEntry importSkill(String sourceId, String externalId, String actor) {
         SkillSourcePlugin source = sources.require(sourceId);
@@ -156,9 +166,12 @@ public final class SkillManagementService {
         catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 
-    public static final class SkillException extends RuntimeException {
+    public static final class SkillException extends com.meguri.core.capability.CapabilityFailureException {
         private final String code;
-        public SkillException(String code, String message) { super(message); this.code = code; }
+        public SkillException(String code, String message) {
+            super(message, null, com.meguri.core.capability.CapabilityFailureException.skillCode(code), false);
+            this.code = code;
+        }
         public String code() { return code; }
     }
 }

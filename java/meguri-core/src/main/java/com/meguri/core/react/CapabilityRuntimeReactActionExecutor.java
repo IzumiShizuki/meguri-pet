@@ -142,9 +142,8 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
         return new RawReactObservation(
                 RawReactObservation.Status.FAILED,
                 Map.of(),
-                result.display().isBlank()
-                        ? "Capability action failed"
-                        : result.display(),
+                "Capability action failed: " + (result.errorCode() == null ? result.status().name() : result.errorCode())
+                        + "; retryable=" + result.retryable(),
                 result.errorCode() == null ? result.status().name() : result.errorCode(),
                 ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT,
                 result.retryable(),
@@ -316,13 +315,15 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
             String description = string(value.get("description"));
             if (id.isBlank()) continue;
             StringBuilder line = new StringBuilder("- skill_id=").append(id);
+            if (value.containsKey("readiness")) line.append("; readiness=").append(string(value.get("readiness")))
+                    .append("; reasons=").append(string(value.get("readiness_reasons")));
             if (!name.isBlank()) line.append("; name=").append(name);
             if (!description.isBlank()) line.append("; description=").append(description);
             summaries.add(line.toString());
         }
         return summaries.isEmpty()
                 ? "No installed frozen Skill candidates matched. Local inventory only; public community was not searched."
-                : "Installed frozen Skill candidates (local inventory only; untrusted metadata):\n"
+                : "Installed frozen Skill candidates (local inventory only; untrusted metadata; dependency exposure is not execution success and invocation policy/approval still applies):\n"
                         + String.join("\n", summaries);
     }
 

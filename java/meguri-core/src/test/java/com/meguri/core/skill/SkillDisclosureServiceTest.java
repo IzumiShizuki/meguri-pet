@@ -52,7 +52,10 @@ class SkillDisclosureServiceTest {
         service.freeze(new SkillSelectionService(repository).freeze("turn-discover", "cap", "meeting notes", true));
 
         Map<String, Object> found = service.discover("turn-discover", "meeting notes");
-        assertThat(found).containsEntry("installed", false).containsEntry("trust", "UNTRUSTED_EXTERNAL");
+        assertThat(found).containsEntry("installation_performed", false).containsEntry("trust", "UNTRUSTED_EXTERNAL");
+        assertThat((Map<?,?>)((List<?>)found.get("items")).getFirst()).isEqualTo(Map.of(
+                "external_id", "owner/meeting-notes", "name", "Meeting notes", "description", "Extract action items",
+                "license", "MIT", "state", "DISCOVERED_METADATA", "installed", false, "callability", "NOT_ASSESSED"));
         assertThat(found.get("items").toString()).contains("owner/meeting-notes", "Extract action items");
         Map<String, Object> details = service.inspect("turn-discover", "owner/meeting-notes");
         assertThat(details).containsEntry("executable", false).containsEntry("required_tools", List.of("notes.read"));

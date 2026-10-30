@@ -107,21 +107,41 @@ public final class SkillPackageValidator {
     private void checkCompatibility(Frontmatter value, List<SkillValidationReport.Issue> issues) {
         if (value.license() == null) warning(issues, "SKILL_LICENSE_MISSING", "license is missing; redistribution is prohibited", "SKILL.md");
         if (value.always()) warning(issues, "SKILL_ALWAYS_IGNORED", "always is ignored; selection remains query-driven", "SKILL.md");
-        for (String tool : value.requires().tools()) {
-            String mapped = "web_search".equals(tool) ? "legacy.web.search" : tool;
+        issues.addAll(requirementIssues(value.requires()));
+    }
+
+    /** Presence checks only; never reads values or executes/installs a dependency. */
+    public List<SkillValidationReport.Issue> requirementIssues(SkillRequirement requirements) {
+        List<SkillValidationReport.Issue> issues = new ArrayList<>();
+        for (String tool : requirements.tools()) {
+            String mapped = capabilityId(tool);
             if (Set.of("terminal", "shell", "code_executor").contains(tool)) {
                 warning(issues, "SKILL_REQUIREMENT_TOOL_UNSUPPORTED", "unsupported tool: " + tool, "SKILL.md");
             } else if (!capabilityAvailable.test(mapped)) {
                 warning(issues, "SKILL_REQUIREMENT_TOOL_MISSING", "missing capability: " + mapped, "SKILL.md");
             }
         }
-        for (String name : value.requires().env()) {
+        for (String name : requirements.env()) {
             if (!name.matches("[A-Za-z_][A-Za-z0-9_]{0,127}")) {
                 warning(issues, "SKILL_REQUIREMENT_ENV_INVALID", "invalid environment name", "SKILL.md");
             } else if (!environmentConfigured.test(name)) {
                 warning(issues, "SKILL_REQUIREMENT_ENV_MISSING", "environment is not configured: " + name, "SKILL.md");
             }
         }
+        return List.copyOf(issues);
+    }
+
+    static String capabilityId(String tool) { return "web_search".equals(tool) ? "legacy.web.search" : tool; }
+
+    public SkillValidationReport currentCompatibility(SkillValidationReport original, SkillRequirement requirements) {
+        if (original.state() != SkillValidationReport.ValidationState.VALID) return original;
+        List<SkillValidationReport.Issue> issues = new ArrayList<>(original.issues().stream()
+                .filter(issue -> !issue.code().startsWith("SKILL_REQUIREMENT_")).toList());
+        List<SkillValidationReport.Issue> current = requirementIssues(requirements);
+        issues.addAll(current);
+        return new SkillValidationReport(original.state(), current.isEmpty()
+                && issues.stream().noneMatch(i -> i.severity() == SkillValidationReport.Severity.ERROR),
+                original.redistributable(), issues, Instant.now());
     }
 
     @SuppressWarnings("unchecked")

@@ -135,6 +135,11 @@ public final class LimitedReActRuntime {
                 decision.action(), request.exposedCapabilities(),
                 remaining(request.budget().maxCostUnits(), state.costUnitsUsed));
         if (!validation.accepted()) {
+            NormalizedReactObservation rejection = normalizer.normalize(new RawReactObservation(
+                    RawReactObservation.Status.FAILED, Map.of(),
+                    "Capability action was not executed: " + validation.reasonCode(), validation.reasonCode(),
+                    ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, false, false, 0, 0));
+            state.observations.add(rejection);
             ReactPlannerDecision rejected = new ReactPlannerDecision(
                     ReactDecision.CONTINUE, decision.goal(),
                     validation.reasonCode(), decision.action(), null,
@@ -142,7 +147,7 @@ public final class LimitedReActRuntime {
             return appendAndFinish(
                     request, state,
                     trace(request, rejected, roundIndex, startedAt,
-                            null, validation.action(), ReactTerminationReason.ACTION_REJECTED),
+                            rejection, validation.action(), ReactTerminationReason.ACTION_REJECTED),
                     ReactTerminationReason.ACTION_REJECTED,
                     ReactDecision.FAIL,
                     null);

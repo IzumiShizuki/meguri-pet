@@ -140,13 +140,15 @@ public final class CapabilityExecutor implements AutoCloseable {
                             elapsedMillis(started));
                     return result;
                 } catch (Exception failure) {
-                    boolean retry = attempt < attempts;
+                    CapabilityFailureException known = failure instanceof CapabilityFailureException value ? value : null;
+                    boolean retryable = known == null || known.retryable();
+                    boolean retry = retryable && attempt < attempts;
                     if (retry) sleep(descriptor.retry().backoff());
                     else {
                         CapabilityResult result = tracksExternalEffect(descriptor, proposal)
                                 ? unknownOutcome()
-                                : CapabilityResult.failure("IMPLEMENTATION_FAILED",
-                                        descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE);
+                                : CapabilityResult.failure(known == null ? "IMPLEMENTATION_FAILED" : known.safeCode(),
+                                        retryable && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE);
                         record(plan, proposal, descriptor, approval, "COMPLETED", attempt, result,
                                 elapsedMillis(started));
                         return result;

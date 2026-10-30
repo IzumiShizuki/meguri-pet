@@ -45,11 +45,12 @@ public interface SkillSourcePlugin {
     @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy.class)
     record UpdateStatus(boolean updateAvailable, String currentRevision, String latestRevision) { }
 
-    final class SourceException extends RuntimeException {
+    final class SourceException extends com.meguri.core.capability.CapabilityFailureException {
         private final String code;
         private final boolean retryable;
         public SourceException(String code, String message, boolean retryable) {
-            super(message); this.code = code; this.retryable = retryable;
+            super(message, null, com.meguri.core.capability.CapabilityFailureException.sourceCode(code), retryable);
+            this.code = code; this.retryable = retryable;
         }
         public String code() { return code; }
         public boolean retryable() { return retryable; }

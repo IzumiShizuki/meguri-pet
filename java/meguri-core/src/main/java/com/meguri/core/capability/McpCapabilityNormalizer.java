@@ -50,7 +50,8 @@ public final class McpCapabilityNormalizer {
                 kind,
                 "mcp:" + serverId,
                 schema(tool.get("inputSchema"), "inputSchema"),
-                schema(tool.get("outputSchema"), "outputSchema"),
+                tool.containsKey("outputSchema") ? schema(tool.get("outputSchema"), "outputSchema")
+                        : new CapabilityDescriptor.Schema(Map.of(), Set.of(), true, Set.of()),
                 Set.of("mcp:" + serverId),
                 effect,
                 approval,
@@ -77,7 +78,6 @@ public final class McpCapabilityNormalizer {
     }
 
     private static CapabilityDescriptor.Schema schema(Object raw, String field) {
-        if (raw == null && field.equals("outputSchema")) return CapabilityDescriptor.Schema.empty();
         Map<String, Object> schema = object(raw, field, false);
         if (!"object".equals(schema.get("type"))) throw new IllegalArgumentException(field + " must be object schema");
         Map<String, Object> rawProperties = object(schema.get("properties"), field + ".properties", true);

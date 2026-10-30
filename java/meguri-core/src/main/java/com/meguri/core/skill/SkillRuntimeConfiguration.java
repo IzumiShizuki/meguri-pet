@@ -79,8 +79,8 @@ public class SkillRuntimeConfiguration {
     }
 
     @Bean @ConditionalOnMissingBean
-    SkillSelectionService skillSelectionService(SkillCatalogRepository repository) {
-        return new SkillSelectionService(repository);
+    SkillSelectionService skillSelectionService(SkillManagementService management) {
+        return new SkillSelectionService(management);
     }
 
     @Bean @ConditionalOnMissingBean

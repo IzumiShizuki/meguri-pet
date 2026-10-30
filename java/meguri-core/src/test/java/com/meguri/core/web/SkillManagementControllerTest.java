@@ -129,6 +129,39 @@ class SkillManagementControllerTest {
         verify(skills).importUpdate(skillId, "local-user");
     }
 
+    @Test
+    void should_clear_active_projection_when_disabled_and_restore_it_on_same_digest_activation() {
+        SkillManagementService skills = mock(SkillManagementService.class);
+        SkillCatalogEntry enabled = entry();
+        String skillId = enabled.manifest().id();
+        String digest = enabled.binding().activeDigest();
+        SkillCatalogEntry disabled = new SkillCatalogEntry(enabled.manifest(), enabled.revisions(),
+                new SkillBinding(skillId, digest, SkillBinding.ActivationState.DISABLED, NOW));
+        when(skills.disable(skillId, "local-user")).thenReturn(disabled);
+        when(skills.list()).thenReturn(List.of(disabled));
+        when(skills.activate(skillId, digest, false, "local-user")).thenReturn(enabled);
+        WebTestClient client = WebTestClient.bindToController(new SkillManagementController(
+                skills, new CoreIdentityVerifier(false, "tenant", "", ""))).build();
+
+        client.post().uri("/internal/v1/skills/{id}:disable", skillId)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.binding.state").isEqualTo("DISABLED")
+                .jsonPath("$.binding.active_digest").isEqualTo(digest)
+                .jsonPath("$.revisions[0].active").isEqualTo(false);
+        client.get().uri("/internal/v1/skills")
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$[0].binding.active_digest").isEqualTo(digest)
+                .jsonPath("$[0].revisions[0].active").isEqualTo(false);
+        client.post().uri("/internal/v1/skills/{id}/revisions/{digest}:activate", skillId, digest)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.binding.state").isEqualTo("ENABLED")
+                .jsonPath("$.binding.active_digest").isEqualTo(digest)
+                .jsonPath("$.revisions[0].active").isEqualTo(true);
+
+        verify(skills).disable(skillId, "local-user");
+        verify(skills).activate(skillId, digest, false, "local-user");
+    }
+
     private static SkillCatalogEntry entry() {
         String skillId = "skill_1234567890abcdef12345678";
         String digest = "a".repeat(64);

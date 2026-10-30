@@ -146,10 +146,16 @@ class ModelScopeCapabilityTurnIntegrationTest {
     void publicTransportFailureDoesNotPreventNextIndependentTurnFromReturningMetadata() throws Exception {
         try (Fixture fixture = new Fixture(temporary, false)) {
             fixture.failTransport.set(true);
-            fixture.run("failure", "请查询魔搭社区技能", Set.of("skill:read"));
+            TurnRecord failed = fixture.run("failure", "请查询魔搭社区技能", Set.of("skill:read"));
             assertThat(fixture.httpCalls).hasValue(1);
             assertThat(fixture.lastObservations()).singleElement()
-                    .satisfies(observation -> assertThat(observation.status()).isEqualTo(RawReactObservation.Status.FAILED));
+                    .satisfies(observation -> {
+                        assertThat(observation.status()).isEqualTo(RawReactObservation.Status.FAILED);
+                        assertThat(observation.errorCode()).isEqualTo("MODELSCOPE_SOURCE_UNAVAILABLE");
+                        assertThat(observation.retryable()).isTrue();
+                        assertThat(observation.summary()).contains("MODELSCOPE_SOURCE_UNAVAILABLE");
+                    });
+            assertThat(failed.getProviderRequest().promptBlocks().toString()).contains("MODELSCOPE_SOURCE_UNAVAILABLE");
 
             fixture.failTransport.set(false);
             fixture.plans.clear();
@@ -181,6 +187,59 @@ class ModelScopeCapabilityTurnIntegrationTest {
             assertThatThrownBy(() -> capabilities.networkAllowed(forged)).isInstanceOf(RuntimeException.class);
             capabilities.release(allowed);
             assertThatThrownBy(() -> capabilities.networkAllowed(allowed)).isInstanceOf(RuntimeException.class);
+        }
+    }
+
+    @Test
+    void approvedMcpStructuredResultReachesChatWhileMissingApprovalIsExplainedWithoutCallingTool() throws Exception {
+        for (boolean approve : List.of(false, true)) {
+            try (Fixture fixture = new Fixture(temporary, false)) {
+                AtomicInteger calls = new AtomicInteger();
+                var descriptor = new com.meguri.core.capability.McpCapabilityNormalizer().normalize("fixture",
+                        Map.of("name", "lookup", "annotations", Map.of("readOnlyHint", true),
+                                "inputSchema", Map.of("type", "object", "properties", Map.of())), 4);
+                fixture.capabilities.register(descriptor, (input, execution) -> {
+                    calls.incrementAndGet();
+                    return Map.of("answer", "STRUCTURED_MCP_CHAT_EVIDENCE", "source", "https://docs.example/public");
+                });
+                fixture.runtime.configureLimitedReactPlanner(context -> {
+                    fixture.plans.add(context);
+                    ReactAction action = null;
+                    if (context.roundIndex() == 1) {
+                        String approvalId = null;
+                        if (approve) {
+                            var scope = context.scope();
+                            var frozen = fixture.runtime.getTurn(scope.turnId()).getRuntimeCapabilities();
+                            var proposal = new com.meguri.core.capability.ToolProposal(scope.turnId(), scope.traceId(),
+                                    scope.tenantId(), scope.userId(), scope.clientId(), descriptor.id(), Map.of(),
+                                    scope.scopes(), "synthetic-operation", null, null, scope.networkAllowed(), 100);
+                            approvalId = fixture.capabilities.requestApproval(frozen, proposal).approvalId();
+                            fixture.capabilities.resolveApproval(approvalId, com.meguri.core.capability.ApprovalService.Decision.ACCEPT,
+                                    "synthetic-test-user");
+                        }
+                        action = new ReactAction(descriptor.id(), Map.of(), "synthetic-operation", null, approvalId);
+                    }
+                    return Mono.just(new ReactPlannerDecision(action == null ? ReactDecision.FINALIZE : ReactDecision.CONTINUE,
+                            context.goal(), "TEST_MCP", action, null));
+                });
+                var turn = fixture.run("mcp-chat-" + approve, "请联网查询公开文档", Set.of("mcp:fixture"));
+                String chatContext = turn.getProviderRequest().promptBlocks().toString();
+                if (approve) {
+                    assertThat(calls).hasValue(1);
+                    assertThat(chatContext).contains("STRUCTURED_MCP_CHAT_EVIDENCE", "https://docs.example/public");
+                    assertThat(turn.getProviderRequest().promptBlocks())
+                            .filteredOn(block -> block.content().contains("STRUCTURED_MCP_CHAT_EVIDENCE"))
+                            .singleElement().satisfies(block -> {
+                                assertThat(block.role()).isEqualTo(com.meguri.core.persona.prompt.PromptPolicyComposer.Role.USER_DATA);
+                                assertThat(block.trust()).isEqualTo(com.meguri.core.persona.prompt.PromptPolicyComposer.Trust.UNTRUSTED);
+                            });
+                    assertThat(turn.getResult().response().reply()).isEqualTo("STRUCTURED_MCP_CHAT_EVIDENCE");
+                } else {
+                    assertThat(calls).hasValue(0);
+                    assertThat(chatContext).contains("MCP_READ_APPROVAL_REQUIRED").doesNotContain("STRUCTURED_MCP_CHAT_EVIDENCE");
+                }
+                assertThat(fixture.httpCalls).hasValue(0);
+            }
         }
     }
 
@@ -234,12 +293,21 @@ class ModelScopeCapabilityTurnIntegrationTest {
             management = new SkillManagementService(new SkillSourceRegistry(List.of(source)), repository,
                     new SkillPackageValidator(Set.of(), name -> false), new SkillPackageStore(temporary));
             journal = new InMemoryTurnJournal(mapper);
-            LlmProvider provider = (request, state, canon, memories, recent) -> Mono.just(new LlmResponse("fixture reply"));
+            LlmProvider provider = new LlmProvider() {
+                @Override public Mono<LlmResponse> respond(com.meguri.core.llm.ProviderRequest request) {
+                    return Mono.just(new LlmResponse(request.promptBlocks().toString().contains("STRUCTURED_MCP_CHAT_EVIDENCE")
+                            ? "STRUCTURED_MCP_CHAT_EVIDENCE" : "fixture reply"));
+                }
+                @Override public Mono<LlmResponse> respond(TurnRequest request, com.meguri.core.dto.RuntimeState state,
+                        List<String> canon, List<String> memories, List<String> recent) {
+                    throw new AssertionError("canonical provider boundary required");
+                }
+            };
             runtime = new TurnOrchestrator(provider, (query, state, limit) -> List.of(), new RuntimeStateMachine(),
                     new ExpressionResolver(), Duration.ofMillis(1), mapper, new NoopMemoryGateway(),
                     new NoopWebSearchGateway(), TrainingFeedbackService.disabled(mapper),
                     WeatherConversationService.disabled(), journal, new NoopSessionContextPersistence(), capabilities);
-            runtime.configureExternalSkills(new SkillSelectionService(repository), new SkillDisclosureService(management));
+            runtime.configureExternalSkills(new SkillSelectionService(management), new SkillDisclosureService(management));
             runtime.configurePerformanceFeatures(true, true, true);
             runtime.configureLimitedReactPlanner(context -> {
                 plans.add(context);

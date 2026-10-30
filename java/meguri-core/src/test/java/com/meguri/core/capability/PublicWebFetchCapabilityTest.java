@@ -12,6 +12,33 @@ import static org.assertj.core.api.Assertions.*;
 
 class PublicWebFetchCapabilityTest {
     @TempDir Path temporary;
+    @Test void unknownErrorTextNeverBecomesASafeFailureCodeOrResult() {
+        try (var runtime = new CapabilityRuntimeFacade(8)) {
+            runtime.register(PublicWebFetchCapability.descriptor(), (input, context) -> {
+                throw new com.meguri.core.skill.SkillSourcePlugin.SourceException("PRIVATE_CODE_VALUE", "PRIVATE_ERROR_VALUE", false);
+            });
+            var frozen = runtime.freeze(exposure("safe-error", Set.of("capability:read"), true));
+            var result = runtime.execute(frozen, proposal("safe-error", Map.of("url", "https://docs.example/"), true));
+            assertThat(result.errorCode()).isEqualTo("SKILL_SOURCE_FAILED");
+            assertThat(result.retryable()).isFalse();
+            assertThat(result.toString()).doesNotContain("PRIVATE_");
+        }
+    }
+    @Test void policyRejectionKeepsSafeReasonAndDoesNotEnterTransport() {
+        AtomicInteger calls = new AtomicInteger();
+        try (var runtime = new CapabilityRuntimeFacade(8)) {
+            runtime.register(PublicWebFetchCapability.descriptor(), new PublicWebFetchCapability(
+                    new PublicWebFetcher(new PublicWebFetchPolicy(host -> List.of(java.net.InetAddress.getByAddress(new byte[]{127, 0, 0, 1}))),
+                            t -> { calls.incrementAndGet(); return Mono.just(PublicWebFetcherTest.page("unexpected")); }, java.time.Duration.ofSeconds(3))));
+            var frozen = runtime.freeze(exposure("rejected", Set.of("capability:read"), true));
+            var result = runtime.execute(frozen, proposal("rejected", Map.of("url", "http://127.0.0.1/"), true));
+            assertThat(result.status()).isEqualTo(CapabilityResult.Status.FAILED);
+            assertThat(result.errorCode()).isEqualTo("WEB_FETCH_ADDRESS_REJECTED");
+            assertThat(result.retryable()).isFalse();
+            assertThat(result.data()).isEmpty();
+            assertThat(calls).hasValue(0);
+        }
+    }
     @Test void configurationRequiresExplicitOptInAndDoesNotPerformNetwork() {
         var runner=new ApplicationContextRunner().withBean(CapabilityRuntimeFacade.class,()->new CapabilityRuntimeFacade(8))
                 .withUserConfiguration(PublicWebFetchConfiguration.class);
