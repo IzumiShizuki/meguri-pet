@@ -371,6 +371,9 @@ public final class HttpMcpAdapter implements McpAdapter {
             throw new McpTransportException("unsupported MCP response content type");
         } catch (McpTransportException failure) {
             throw failure;
+        } catch (com.fasterxml.jackson.core.JsonProcessingException malformed) {
+            // Invalid protocol data is a definitive failure, not a retryable I/O outage.
+            throw new McpTransportException("MCP response JSON is invalid", "MCP_RESPONSE_INVALID", false);
         } catch (Exception failure) {
             throw new McpTransportException("MCP transport failed closed", failure);
         }

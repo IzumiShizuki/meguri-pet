@@ -28,3 +28,6 @@ Tests exercise real Turn/ReAct/frozen-capability/approval/observation/provider-c
 No third-party Skill was installed or activated, no live model requests or public probes were sent, and the earlier denied public-address probe was not retried. Automatic approval request/wait/resume UI is not implemented. Approved MCP reads without an idempotency key retain at most two attempts; this is not single-use approval. Existing tracked external-effect/UNKNOWN_OUTCOME behavior remains authoritative.
 
 Primary review and integration verification remain separate. Incremental bundle requires a2db597; the combined web-fetch/Skills bundle requires full prerequisite d1365765754ed6ae3f0cb6f84f8addfd7b948387 and does not contain its history. Bundle/reverse-patch checks apply only to the independent copy.
+
+## Main integration review
+Cherry-picked as 93e90eb. Added malformed JSON/SSE real-executor regressions: red 2 failures / 4 passes, then 6 passes with protocol-invalid non-retryable classification and IO recovery control. Main combined full Java: 1011 passed, 5 skipped; prior 988 statuses unchanged, 28 added pass (includes recurring tests). No real activation/deployment.
