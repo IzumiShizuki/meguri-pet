@@ -390,6 +390,8 @@ export interface ShizukiRecurringRuleInput {
   time?: string
   cronExpr?: string
   timeZoneId: string
+  startAt?: string
+  endAt?: string
   enabled: boolean
   reminderEnabled: boolean
   deadlineRemindValue: number

@@ -8,6 +8,7 @@ const bridge = window.meguriDesktop?.shizuki
 const rules = ref<ShizukiRecurringRule[]>([])
 const selected = ref<number>()
 const title = ref(''), time = ref('20:00'), zone = ref('Asia/Shanghai'), cron = ref('')
+const startAt = ref(''), endAt = ref('')
 const weekdays = ref<number[]>([1, 2, 3, 4, 5])
 const custom = ref(false), enabled = ref(true), reminder = ref(true)
 const amount = ref(10), unit = ref('MINUTE'), busy = ref(false), error = ref(''), feedback = ref('')
@@ -25,6 +26,7 @@ async function load() {
 function edit(rule?: ShizukiRecurringRule) {
   if (busy.value || pending.value) return
   selected.value = rule?.ruleId; title.value = rule?.title || ''; zone.value = rule?.timeZoneId || 'Asia/Shanghai'
+  startAt.value = rule?.startAt || ''; endAt.value = rule?.endAt || ''
   const preset = rule ? weeklyPreset(rule.cronExpr) : { weekdays: [1, 2, 3, 4, 5], time: '20:00' }
   custom.value = !preset; cron.value = rule?.cronExpr || ''; weekdays.value = preset?.weekdays || []; time.value = preset?.time || '20:00'
   enabled.value = rule?.enabled ?? true; reminder.value = rule?.reminderEnabled ?? true
@@ -37,6 +39,7 @@ async function save() {
     if (!pending.value) {
       if (!custom.value) weeklyCron(weekdays.value, time.value)
       pending.value = { ruleId: selected.value, title: title.value, timeZoneId: zone.value, enabled: enabled.value,
+        startAt: startAt.value, endAt: endAt.value,
         reminderEnabled: reminder.value, deadlineRemindValue: Number(amount.value), deadlineRemindUnit: unit.value,
         ...(custom.value ? { cronExpr: cron.value } : { weekdays: [...weekdays.value], time: time.value }),
         requestId: crypto.randomUUID(), expectedAccount: props.account }
@@ -78,6 +81,8 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
         </template>
         <label v-else>原 Cron 表达式<input v-model="cron" maxlength="64" required /><small>高级规则保留原样，不转换成星期快捷项。</small></label>
         <label>时区<input v-model="zone" required placeholder="Asia/Shanghai" /></label>
+        <label>开始时间<input v-model="startAt" type="datetime-local" step="1" /><small>按上方时区；留空保留原值，新建时从当天零点生效。</small></label>
+        <label>结束时间<input v-model="endAt" type="datetime-local" step="1" /><small>按上方时区；留空表示不设结束限制。</small></label>
         <label><input v-model="enabled" type="checkbox" />启用规则</label>
         <label><input v-model="reminder" type="checkbox" />提前提醒</label>
         <label v-if="reminder">提前<input v-model.number="amount" type="number" min="0" step="1" /><select v-model="unit"><option value="MINUTE">分钟（0 为到点）</option><option value="DAY">天</option></select></label>

@@ -28,6 +28,8 @@ export function dueTodoReminders(todos, userId, now = Date.now()) {
   for (const todo of Array.isArray(todos) ? todos : []) {
     if (todo?.done || todo?.reminderEnabled !== true || !Number.isSafeInteger(todo.todoId) || todo.todoId <= 0)
       continue
+    if (todo.recurringRuleId && (todo.recurringRule?.enabled === false || todo.recurringRuleUnavailable))
+      continue
     for (const candidate of [
       { kind: 'deadline', anchor: todo.dueAt, value: todo.deadlineRemindValue, unit: todo.deadlineRemindUnit },
       ...(todo.timingMode === 'RANGE'
@@ -174,9 +176,11 @@ export function createShizukiReminderRuntime({ client, filePath, onReminder, onE
 
   function useSnapshot(todos) {
     if (!active || !client.status().connected) return
+    // A list read updates the cache only. Delivery belongs to an explicit scan;
+    // invalidate older background reads before accepting this newer snapshot.
+    generation += 1
     snapshot = Array.isArray(todos) ? todos : []
     snapshotTimes = new Map(snapshot.map(todo => [todo.todoId, clock()]))
-    scan()
   }
 
   function applyTodo(todo) {

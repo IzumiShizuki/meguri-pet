@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { parseShanghaiTime, REMINDER_TIMEZONE } from '../shared/reminder-intent.mjs'
 import { createWriteJournal, requestMarker } from './shizuki-write-journal.mjs'
-import { recurringStartOfDay, weeklyCron } from '../shared/recurring-todos.mjs'
+import { recurringStartOfDay, recurringTime, weeklyCron } from '../shared/recurring-todos.mjs'
 
 const DEFAULT_ORIGIN = 'https://site.shizuki.online'
 const AUTH_PATH = '/api/v1/auth/tokens'
@@ -92,6 +92,14 @@ export function normalizeRecurringRule(raw) {
 function rulePayload(rule) {
   return Object.fromEntries(Object.entries(rule).filter(([key]) => key !== 'ruleId')
     .map(([key, value]) => [key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`), value === '' && ['startAt', 'endAt'].includes(key) ? null : value]))
+}
+
+function recurringBoundary(value, zone) {
+  if (value === '') return ''
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?$/.test(value)
+    || !Number.isFinite(recurringTime(value, zone)))
+    throw new ShizukiTimePrismError('invalid_schedule', '起止时间需要为规则时区中有效的日期时间。')
+  return value.length === 16 ? `${value}:00` : value
 }
 
 export function todoToShizukiPayload(todo, done = todo.done) {
@@ -428,6 +436,8 @@ export function createShizukiTimePrismClient({
     if (input.reminderEnabled === true && (!Number.isSafeInteger(amount) || amount < 0 || !['MINUTE', 'DAY'].includes(unit) || (amount === 0 && unit === 'DAY')))
       throw new ShizukiTimePrismError('invalid_reminder', '提前量需要为非负分钟或正整数天。')
     const rule = normalizeRecurringRule({ ...current, title, cronExpr: cron, timeZoneId: zone,
+      startAt: recurringBoundary(input.startAt === undefined || input.startAt === '' ? current?.startAt || '' : input.startAt, zone),
+      endAt: recurringBoundary(input.endAt === undefined ? current?.endAt || '' : input.endAt, zone),
       enabled: input.enabled ?? current?.enabled ?? true, reminderEnabled: input.reminderEnabled === true,
       deadlineRemindValue: input.reminderEnabled === true ? amount : null,
       deadlineRemindUnit: input.reminderEnabled === true ? unit : null })
@@ -443,6 +453,8 @@ export function createShizukiTimePrismClient({
     // Match the site's default explicitly, and retain it across midnight retries.
     // The logical signature above excludes this generated default.
     if (!rule.startAt) rule.startAt = previous?.startAt || recurringStartOfDay(clock(), zone)
+    if (rule.endAt && rule.endAt < rule.startAt)
+      throw new ShizukiTimePrismError('invalid_schedule', '结束时间不能早于开始时间。')
     if (!id) rule.detail = requestMarker(requestId)
     const verify = saved => {
       if (!saved?.ruleId || Object.entries(rule).some(([key, value]) => key !== 'ruleId' && saved[key] !== value))

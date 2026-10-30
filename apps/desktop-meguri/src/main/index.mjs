@@ -1071,6 +1071,7 @@ function installIpc() {
     if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
     try {
       const todos = await shizukiTimePrism().listTodos()
+      // Cache ingestion does not dispatch; the enabled reminder scheduler owns delivery.
       shizukiReminders().useSnapshot(todos)
       return { ok: true, todos }
     }
