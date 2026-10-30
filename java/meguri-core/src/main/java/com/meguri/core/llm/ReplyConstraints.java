@@ -107,7 +107,7 @@ record ReplyConstraints(String exact, int minHan, int maxHan, boolean oneSentenc
         String safe = protectCode(text);
         safe = protect(safe, Pattern.compile("(?:https?://|www\\.)[^\\s<>“”‘’\"「」『』。！？，；、]+"), true);
         safe = protect(safe, Pattern.compile("(?i)\\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|e\\.g|i\\.e)\\."), false);
-        safe = protect(safe, Pattern.compile("[\\p{L}_$][\\p{L}\\p{N}_$]*(?:\\.[\\p{L}_$][\\p{L}\\p{N}_$]*)+"), false);
+        safe = protect(safe, Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)+"), false);
         safe = protect(safe, Pattern.compile("\\b[vV]?\\d+(?:\\.\\d+)+\\b|(?<![\\p{L}\\p{N}])\\.\\d+"), false);
         int[] points = safe.codePoints().toArray();
         int sentences = 0;
@@ -234,7 +234,10 @@ record ReplyConstraints(String exact, int minHan, int maxHan, boolean oneSentenc
                     } else mask(out, i, i + 1);
                     continue;
                 }
-                if (!quotes.isEmpty() && c == quotes.peek() && !escaped(input, i)) {
+                boolean apostrophe = (c == '\'' || c == '’') && i > 0 && i + 1 < input.length()
+                        && Character.UnicodeScript.of(input.charAt(i - 1)) == Character.UnicodeScript.LATIN
+                        && Character.UnicodeScript.of(input.charAt(i + 1)) == Character.UnicodeScript.LATIN;
+                if (!quotes.isEmpty() && c == quotes.peek() && !apostrophe && !escaped(input, i)) {
                     quotes.pop();
                     mask(out, i, i + 1);
                     continue;
@@ -246,9 +249,6 @@ record ReplyConstraints(String exact, int minHan, int maxHan, boolean oneSentenc
                     continue;
                 }
                 Character close = quoteClose(c);
-                boolean apostrophe = (c == '\'' || c == '’') && i > 0 && i + 1 < input.length()
-                        && Character.UnicodeScript.of(input.charAt(i - 1)) == Character.UnicodeScript.LATIN
-                        && Character.UnicodeScript.of(input.charAt(i + 1)) == Character.UnicodeScript.LATIN;
                 if (close != null && !apostrophe && !escaped(input, i)) quotes.push(close);
                 if (!quotes.isEmpty() || close != null && !apostrophe) mask(out, i, i + 1);
             }
