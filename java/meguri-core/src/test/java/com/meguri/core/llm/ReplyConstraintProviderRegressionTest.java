@@ -177,6 +177,106 @@ class ReplyConstraintProviderRegressionTest {
         assertEquals(1, model.requests.size());
     }
 
+    static class CountingMetrics implements PromptCacheMetricsRecorder {
+        int success, failure;
+        public void registerPrompt(String provider, String model, String prompt) { }
+        public void recordSuccess(String operation, String model, com.meguri.core.metrics.PromptCacheUsage usage) { success++; }
+        public void recordFailure(String operation, String model) { failure++; }
+    }
+
+    @Test void twoValidButNoncompliantResponsesCountAsTwoCallsNotThree() {
+        var metrics = new CountingMetrics();
+        var model = new ScriptedModel("不符合");
+        var p = new LangChain4jLlmProvider(model, JSON, "Resolved persona", "json_schema", 1,
+                Map.of(), metrics, new DeterministicProviderTokenizer(), 12000);
+        assertThrows(LlmProviderException.class, () -> answer(p, "只回复：OK", List.of()));
+        assertEquals(2, model.requests.size());
+        assertEquals(2, metrics.success);
+        assertEquals(0, metrics.failure);
+    }
+
+    @Test void aFailedRepairTransportIsCountedOnceAndNextReplyRecovers() {
+        var metrics = new CountingMetrics();
+        var model = new ScriptedModel("错误", "unused", "OK") {
+            @Override public ChatResponse doChat(ChatRequest request) {
+                if (requests.size() == 1) {
+                    requests.add(request);
+                    throw new IllegalStateException("synthetic transport");
+                }
+                return super.doChat(request);
+            }
+        };
+        var p = new LangChain4jLlmProvider(model, JSON, "Resolved persona", "json_schema", 1,
+                Map.of(), metrics, new DeterministicProviderTokenizer(), 12000);
+        assertThrows(LlmProviderException.class, () -> answer(p, "只回复：OK", List.of()));
+        assertEquals("OK", answer(p, "只回复：OK", List.of()));
+        assertEquals(3, model.requests.size());
+        assertEquals(2, metrics.success);
+        assertEquals(1, metrics.failure);
+    }
+
+    @ParameterizedTest @ValueSource(strings={"Aoi, a calm librarian", "Sora, an energetic engineer"})
+    void constraintsPreserveTheCurrentlyResolvedPersonaWithoutNamingAnother(String persona) {
+        var model = new ScriptedModel("OK");
+        var p = new LangChain4jLlmProvider(model, JSON, "Core policy", "json_schema", 1, Map.of());
+        var req=typedRequest("只回复：OK", "", "", "", "persona", Instant.now().plusSeconds(60));
+        req=req.withPromptBlocks(List.of(
+                new PromptPolicyComposer.PromptBlock(PromptPolicyComposer.Role.SYSTEM,
+                        PromptPolicyComposer.Source.PERSONA, PromptPolicyComposer.Trust.TRUSTED,
+                        "persona:resolved", "v1", "Current resolved persona: " + persona)));
+        assertEquals("OK", p.respond(req).block().getReply());
+        String system=model.requests.getFirst().messages().getFirst().toString();
+        assertTrue(system.contains(persona));
+        assertFalse(system.contains("Meguri"));
+    }
+
+    @Test void explicitCandidateComparisonMayUseTwoCallsPerAnswerFourInTotal() {
+        var model = new ScriptedModel("额外前缀OK", "OK", "另一前缀OK", "OK");
+        var p = provider(model);
+        var req=typedRequest("只回复：OK", "", "", "", "compare", Instant.now().plusSeconds(60));
+        assertEquals("OK", p.respond(req).block().getReply());
+        assertEquals("OK", p.respondAlternative(req).block().getReply());
+        assertEquals(4, model.requests.size());
+    }
+
+    @Test void lateRepairIsRejectedAtTheOriginalDeadlineEvenWithoutRuntimeTimeout() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var calls = new AtomicInteger();
+        ChatModel model = new ChatModel() {
+            public ChatResponse doChat(ChatRequest request) {
+                int call = calls.incrementAndGet();
+                if (call == 2) {
+                    entered.countDown();
+                    try {
+                        if (!release.await(4, java.util.concurrent.TimeUnit.SECONDS)) throw new AssertionError("release missing");
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("interrupted", e);
+                    }
+                }
+                return ChatResponse.builder().aiMessage(AiMessage.from(
+                        "{\"reply\":\"" + (call == 1 ? "前缀OK" : "OK")
+                        + "\",\"expression_tag\":\"neutral\",\"expression_intensity\":\"low\",\"voice_style\":\"neutral\",\"memory_candidates\":[]}")).build();
+            }
+        };
+        var p = new LangChain4jLlmProvider(model, JSON, "Current persona");
+        Instant deadline = Instant.now().plusMillis(400);
+        var result = p.respond(typedRequest("只回复：OK", "", "", "", "late", deadline)).toFuture();
+        try {
+            assertTrue(entered.await(2, java.util.concurrent.TimeUnit.SECONDS));
+            org.awaitility.Awaitility.await().atMost(Duration.ofSeconds(2))
+                    .until(() -> Instant.now().isAfter(deadline));
+            release.countDown();
+            var error = assertThrows(java.util.concurrent.ExecutionException.class,
+                    () -> result.get(2, java.util.concurrent.TimeUnit.SECONDS));
+            assertInstanceOf(ReplyConstraintException.class, error.getCause());
+            assertEquals("TURN_DEADLINE_EXCEEDED", ((ReplyConstraintException) error.getCause()).failureCode());
+            assertEquals("OK", answer(p, "只回复：OK", List.of()));
+            assertEquals(3, calls.get());
+        } finally { release.countDown(); }
+    }
+
     private static ProviderRequest typedRequest(
             String userMessage,
             String contextContent,

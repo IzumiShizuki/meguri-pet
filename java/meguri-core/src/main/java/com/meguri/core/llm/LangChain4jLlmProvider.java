@@ -271,31 +271,53 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             java.time.Instant deadline, String operation) {
         String payload = contextJson;
         for (int attempt = 0; attempt < 2; attempt++) {
-            if (attempt > 0 && (Thread.currentThread().isInterrupted()
-                    || deadline != null && !java.time.Instant.now().isBefore(deadline))) {
-                throw new LlmProviderException("reply constraint repair deadline exceeded");
+            if (Thread.currentThread().isInterrupted()) {
+                throw new java.util.concurrent.CancellationException("reply generation cancelled");
+            }
+            if (attempt > 0 && deadline != null && !java.time.Instant.now().isBefore(deadline)) {
+                throw new ReplyConstraintException(ReplyConstraintException.Reason.DEADLINE,
+                        "reply constraint repair deadline exceeded");
             }
             ChatRequest chatRequest = ChatRequest.builder()
                     .messages(dev.langchain4j.data.message.SystemMessage.from(prompt),
                             userMessage(payload, attachments))
                     .responseFormat(responseFormatRequest()).build();
-            var result = route.model().chat(chatRequest);
-            if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
-                throw new LlmProviderException("LLM provider returned an empty response");
+            dev.langchain4j.model.chat.response.ChatResponse result;
+            try {
+                result = route.model().chat(chatRequest);
+                if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
+                    throw new LlmProviderException("LLM provider returned an empty response");
+                }
+                validateResponseReleaseMetadata(result);
+            } catch (RuntimeException error) {
+                // Exactly one outcome per actual model call; preflight/local validation is not another call.
+                promptCacheMetrics.recordFailure(operation, "");
+                throw error;
             }
-            validateResponseReleaseMetadata(result);
             recordSuccessfulResponse(operation, result);
+            if (Thread.currentThread().isInterrupted()) {
+                throw new java.util.concurrent.CancellationException("reply generation cancelled");
+            }
+            if (constraints.active() && deadline != null && !java.time.Instant.now().isBefore(deadline)) {
+                throw new ReplyConstraintException(ReplyConstraintException.Reason.DEADLINE,
+                        "reply constraint repair deadline exceeded");
+            }
             LlmResponse answer = parseStrict(result.aiMessage().text());
             String violation = constraints.violation(answer.getReply());
             if (violation.isEmpty()) return answer;
-            if (attempt == 1) throw new LlmProviderException("LLM reply constraints not satisfied after one repair");
+            if (attempt == 1) throw new ReplyConstraintException(ReplyConstraintException.Reason.VIOLATION,
+                    "LLM reply constraints not satisfied after one repair");
             try {
                 Map<String, Object> context = mapper.readValue(contextJson,
                         new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() { });
                 context.put("reply_constraint_repair", Map.of("attempt", 1, "validation", violation));
                 payload = promptBudget.fit(prompt, context, List.of()).json();
             } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
-                throw new LlmProviderException("failed to encode reply constraint repair", error);
+                throw new ReplyConstraintException(ReplyConstraintException.Reason.VALIDATION_FAILED,
+                        "failed to encode reply constraint repair");
+            } catch (LlmProviderException error) {
+                throw new ReplyConstraintException(ReplyConstraintException.Reason.VALIDATION_FAILED,
+                        "reply constraint repair exceeds the configured prompt budget");
             }
         }
         throw new IllegalStateException("unreachable");
@@ -489,7 +511,6 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                                   List<String> recentContext, List<String> webResults,
                                   boolean alternative) {
         boolean acquired = false;
-        boolean responseRecorded = false;
         String operation = alternative ? "turn_alternative" : "turn";
         try {
             concurrency.acquire();
@@ -499,17 +520,15 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             LlmResponse answer = validatedReply(route, replyPrompt(request, systemPrompt),
                     contextJson(request, state, canon, memories, recentContext, webResults, alternative),
                     attachmentContent, replyConstraints(request), null, operation);
-            responseRecorded = true;
             return answer;
+        } catch (java.util.concurrent.CancellationException ex) {
+            throw ex;
         } catch (LlmProviderException ex) {
-            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw ex;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw new LlmProviderException("LLM provider request was interrupted", ex);
         } catch (RuntimeException ex) {
-            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             // Do not leak provider request bodies, credentials, or stack details to turn clients.
             if (isTimeout(ex)) throw new LlmProviderException("LLM provider timed out", ex);
             throw new LlmProviderException("LLM provider request failed", ex);
@@ -520,7 +539,6 @@ public final class LangChain4jLlmProvider implements LlmProvider {
 
     private LlmResponse callModel(ProviderRequest request, boolean alternative) {
         boolean acquired = false;
-        boolean responseRecorded = false;
         String operation = alternative ? "turn_alternative" : "turn";
         try {
             concurrency.acquire();
@@ -530,17 +548,15 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             LlmResponse answer = validatedReply(route, effectiveSystemPrompt(request, false),
                     contextJson(request, alternative), attachmentContent,
                     replyConstraints(request.turn()), request.deadline(), operation);
-            responseRecorded = true;
             return answer;
+        } catch (java.util.concurrent.CancellationException ex) {
+            throw ex;
         } catch (LlmProviderException ex) {
-            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw ex;
         } catch (InterruptedException ex) {
             Thread.currentThread().interrupt();
-            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw new LlmProviderException("LLM provider request was interrupted", ex);
         } catch (RuntimeException ex) {
-            if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             if (isTimeout(ex)) throw new LlmProviderException("LLM provider timed out", ex);
             throw new LlmProviderException("LLM provider request failed", ex);
         } finally {

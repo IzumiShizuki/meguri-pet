@@ -2135,8 +2135,10 @@ public class TurnOrchestrator implements TurnRuntime, HarnessControlPlane {
     private Mono<Void> fail(TurnRecord record, Throwable error) {
         if (record.isCancelRequested()) return cancelRecord(record, "client_requested");
         String message = error == null || error.getMessage() == null ? "turn failed" : error.getMessage();
-        String failureCode = record.getStage() == TurnStage.GENERATING
-                ? "PROVIDER_STREAM_INTERRUPTED" : "TURN_EXECUTION_FAILED";
+        String failureCode = error instanceof com.meguri.core.llm.ReplyConstraintException validation
+                ? validation.failureCode()
+                : record.getStage() == TurnStage.GENERATING
+                        ? "PROVIDER_STREAM_INTERRUPTED" : "TURN_EXECUTION_FAILED";
         return fail(record, failureCode, message);
     }
 
