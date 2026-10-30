@@ -2,6 +2,8 @@ package com.meguri.core.reminder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -46,6 +48,8 @@ public final class TimePrismTodoWriter {
     private static final String DEFAULT_ORIGIN = "https://site.shizuki.online";
     private static final String AUTH_PATH = "/api/v1/auth/tokens";
     private static final String TODOS_PATH = "/api/v1/light-apps/todos";
+    private static final String RULES_PATH = "/api/v1/light-apps/todo-recurring-rules";
+    private static final DateTimeFormatter LOCAL_SECOND = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss").withResolverStyle(ResolverStyle.STRICT);
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter LOCAL_MINUTE = DateTimeFormatter
             .ofPattern("uuuu-MM-dd'T'HH:mm").withResolverStyle(ResolverStyle.STRICT);
@@ -63,6 +67,7 @@ public final class TimePrismTodoWriter {
     private final String configuredOrigin;
     private final long ownerUserId;
     private final long httpTimeoutMs;
+    private final java.time.Clock clock;
 
     public TimePrismTodoWriter(
             ObjectMapper mapper,
@@ -83,7 +88,13 @@ public final class TimePrismTodoWriter {
             @Value("${MEGURI_TIMEPRISM_OWNER_PASSWORD_FILE:}") String ownerPasswordFile,
             @Value("${MEGURI_TIMEPRISM_ORIGIN:}") String configuredOrigin,
             @Value("${MEGURI_TIMEPRISM_HTTP_TIMEOUT_MS:15000}") long httpTimeoutMs) {
+        this(mapper, directory, ownerUserId, ownerEmailFile, ownerPasswordFile, configuredOrigin, httpTimeoutMs, java.time.Clock.systemUTC());
+    }
+
+    TimePrismTodoWriter(ObjectMapper mapper, String directory, long ownerUserId, String ownerEmailFile,
+                        String ownerPasswordFile, String configuredOrigin, long httpTimeoutMs, java.time.Clock clock) {
         if (httpTimeoutMs <= 0) throw new IllegalArgumentException("TimePrism HTTP timeout must be positive");
+        this.clock = java.util.Objects.requireNonNull(clock);
         this.mapper = mapper;
         this.journalFile = Path.of(directory).toAbsolutePath().normalize()
                 .resolve("timeprism-todo-writes.json");
@@ -167,6 +178,127 @@ public final class TimePrismTodoWriter {
         }
     }
 
+    public synchronized TimePrismRecurringRuleWriteReceipt createRecurring(TimePrismRecurringRuleCreateRequest request) {
+        if (ownerUserId <= 0) throw new WriterNotConfiguredException();
+        String requestId = validateRequestId(request.requestId());
+        ObjectNode expected = recurringPayload(request);
+        String fingerprint = fingerprint(ownerUserId, request.title(), "recurring\n" + expected);
+        expected.put("detail", requestMarker(requestId));
+        WriteJournal journal = readJournal();
+        WriteEntry existing = journal.entries().get(requestId);
+        if (existing != null && (!fingerprint.equals(existing.fingerprint()) || existing.ownerUserId() != ownerUserId))
+            throw new RequestConflictException();
+        if (existing != null && "confirmed".equals(existing.state()))
+            return recurringReceipt(requestId, "confirmed", existing.recurringRule());
+        if (existing == null && journal.entries().values().stream().anyMatch(entry ->
+                "uncertain".equals(entry.state()) && entry.ownerUserId() == ownerUserId && fingerprint.equals(entry.fingerprint())))
+            throw new PendingDuplicateException();
+        // A submitted request must remain reconcilable even after its date range has ended.
+        if (existing == null || !"uncertain".equals(existing.state())) {
+            ZoneId zone = ZoneId.of(request.timeZoneId());
+            var now = java.time.ZonedDateTime.now(clock.withZone(zone));
+            var start = LocalDateTime.parse(expected.path("start_at").asText()).atZone(zone);
+            var next = CronExpression.parse(expected.path("cron_expr").asText()).next(start.isAfter(now) ? start.minusSeconds(1) : now);
+            String end = expected.path("end_at").asText("");
+            if (next == null || (!end.isBlank() && next.toLocalDateTime().isAfter(LocalDateTime.parse(end))))
+                throw new IllegalArgumentException("no future occurrence within rule bounds");
+        }
+        String origin = normalizeOrigin(configuredOrigin);
+        String token = login(origin, readCredentials());
+        if (existing != null && "uncertain".equals(existing.state())) {
+            try {
+                JsonNode listed = exchange(origin, "GET", RULES_PATH, token, null);
+                if (!listed.isArray()) return recurringReceipt(requestId, "uncertain", null);
+                List<JsonNode> matches = new ArrayList<>();
+                listed.forEach(row -> { if (requestMarker(requestId).equals(text(row, "detail"))) matches.add(row); });
+                if (matches.size() != 1) return recurringReceipt(requestId, "uncertain", null);
+                ObjectNode saved = verifyRecurring(matches.getFirst(), expected);
+                journal.entries().put(requestId, new WriteEntry(requestId,fingerprint,ownerUserId,"confirmed",System.currentTimeMillis(),null,saved));
+                writeJournal(journal);
+                return recurringReceipt(requestId,"confirmed",saved);
+            } catch (RemoteFailure | IllegalArgumentException failure) { return recurringReceipt(requestId,"uncertain",null); }
+        }
+        journal.entries().put(requestId,new WriteEntry(requestId,fingerprint,ownerUserId,"uncertain",System.currentTimeMillis(),null,null));
+        writeJournal(journal);
+        try {
+            ObjectNode saved = verifyRecurring(exchange(origin,"POST",RULES_PATH,token,expected), expected);
+            journal.entries().put(requestId,new WriteEntry(requestId,fingerprint,ownerUserId,"confirmed",System.currentTimeMillis(),null,saved));
+            writeJournal(journal);
+            return recurringReceipt(requestId,"confirmed",saved);
+        } catch (RemoteFailure failure) {
+            if (failure.definiteRejection()) {
+                journal.entries().put(requestId,new WriteEntry(requestId,fingerprint,ownerUserId,"rejected",System.currentTimeMillis(),null,null));
+                writeJournal(journal);throw new SiteRejectedException(failure.statusCode());
+            }
+            return recurringReceipt(requestId,"uncertain",null);
+        } catch (IllegalArgumentException failure) { return recurringReceipt(requestId,"uncertain",null); }
+    }
+
+    private ObjectNode recurringPayload(TimePrismRecurringRuleCreateRequest request) {
+        String title = validateTitle(request.title());
+        if (request.weekdays() == null || request.weekdays().isEmpty() || request.weekdays().size() > 7
+                || request.weekdays().stream().anyMatch(day -> day == null || day < 0 || day > 6))
+            throw new IllegalArgumentException("invalid weekdays");
+        if (request.time() == null || !request.time().matches("(?:[01]\\d|2[0-3]):[0-5]\\d"))
+            throw new IllegalArgumentException("invalid clock");
+        if (request.timeZoneId() == null || !ZoneId.getAvailableZoneIds().contains(request.timeZoneId())) throw new IllegalArgumentException("invalid timezone");
+        ZoneId zone = ZoneId.of(request.timeZoneId());
+        String start = recurringBoundary(request.startAt(), zone);
+        String end = request.endAt() == null || request.endAt().isEmpty() ? "" : recurringBoundary(request.endAt(), zone);
+        if (!end.isEmpty() && end.compareTo(start) < 0) throw new IllegalArgumentException("inverted rule bounds");
+        int amount = request.deadlineRemindValue() == null ? -1 : request.deadlineRemindValue();
+        String unit = request.deadlineRemindUnit();
+        if (!("MINUTE".equals(unit) && amount >= 0 && amount <= 43200)
+                && !("DAY".equals(unit) && amount >= 1 && amount <= 365)) throw new IllegalArgumentException("invalid reminder advance");
+        var clock = java.time.LocalTime.parse(request.time());
+        String days = request.weekdays().stream().distinct().sorted().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        ObjectNode payload = mapper.createObjectNode().put("title",title).put("priority","MEDIUM")
+                .put("cron_expr","0 " + clock.getMinute() + " " + clock.getHour() + " * * " + days)
+                .put("time_zone_id",zone.getId()).put("start_at",start).put("enabled",true).put("sort_num",0)
+                .put("overdue_policy","KEEP").put("reminder_enabled",true)
+                .put("deadline_remind_value",amount).put("deadline_remind_unit",unit);
+        if (end.isEmpty()) payload.putNull("end_at"); else payload.put("end_at",end);
+        return payload;
+    }
+
+    private static String recurringBoundary(String value, ZoneId zone) {
+        if (value == null || !value.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2})?")) throw new IllegalArgumentException("invalid rule boundary");
+        try {
+            LocalDateTime local = LocalDateTime.parse(value.length() == 16 ? value + ":00" : value, LOCAL_SECOND);
+            if (zone.getRules().getValidOffsets(local).isEmpty()) throw new IllegalArgumentException("nonexistent rule boundary");
+            return local.format(LOCAL_SECOND);
+        } catch (java.time.DateTimeException invalid) {
+            throw new IllegalArgumentException("invalid rule boundary");
+        }
+    }
+
+    private ObjectNode verifyRecurring(JsonNode raw, ObjectNode expected) {
+        JsonNode idNode = field(raw,"ruleId","rule_id");
+        long id = idNode != null && idNode.isIntegralNumber() && idNode.canConvertToLong() ? idNode.longValue() : 0;
+        if (id <= 0) throw new IllegalArgumentException("missing rule ID");
+        ObjectNode saved = expected.deepCopy();
+        for (var entry : expected.properties()) {
+            String snake = entry.getKey();
+            String[] words = snake.split("_");StringBuilder camel = new StringBuilder(words[0]);
+            for (int i=1;i<words.length;i++) camel.append(Character.toUpperCase(words[i].charAt(0))).append(words[i].substring(1));
+            JsonNode actual = field(raw, snake, camel.toString());
+            JsonNode wanted = entry.getValue();
+            if (wanted.isNull()) {
+                if (actual != null && !actual.isNull() && !actual.asText().isEmpty()) throw new IllegalArgumentException("different rule bounds");
+            } else if (snake.equals("start_at") || snake.equals("end_at")) {
+                if (!wanted.asText().equals(recurringBoundary(actual == null ? null : actual.asText(),ZoneId.of(expected.path("time_zone_id").asText())))) throw new IllegalArgumentException("different rule bounds");
+            } else if (actual == null || !wanted.equals(actual)) throw new IllegalArgumentException("different recurring field: " + snake);
+        }
+        saved.put("rule_id",id);return saved;
+    }
+
+    private static TimePrismRecurringRuleWriteReceipt recurringReceipt(String id,String state,JsonNode rule) {
+        return new TimePrismRecurringRuleWriteReceipt(id,state,rule==null?null:number(rule,"rule_id"),
+                rule==null?null:text(rule,"title"),rule==null?null:text(rule,"cron_expr"),rule==null?null:text(rule,"time_zone_id"),
+                rule==null?null:text(rule,"start_at"),rule==null?null:text(rule,"end_at"),
+                rule==null?null:integer(rule,"deadline_remind_value"),rule==null?null:text(rule,"deadline_remind_unit"));
+    }
+
     private TimePrismTodoWriteReceipt reconcile(
             String origin, String token, String requestId, String title, String dueAt,
             WriteEntry existing, WriteJournal journal) {
@@ -213,7 +345,8 @@ public final class TimePrismTodoWriter {
     }
 
     private List<Todo> listTodos(String origin, String token) {
-        JsonNode data = exchange(origin, "GET", TODOS_PATH, token, null);
+        // Reconciliation is a read; do not materialize unrelated recurring instances.
+        JsonNode data = exchange(origin, "GET", TODOS_PATH + "/snapshot", token, null);
         if (data == null || !data.isArray()) throw new RemoteFailure(0, false);
         List<Todo> todos = new ArrayList<>();
         for (JsonNode raw : data) {
@@ -470,7 +603,11 @@ public final class TimePrismTodoWriter {
     }
     private record TodoSummary(long todoId, String title, String dueAt) { }
     private record WriteEntry(String requestId, String fingerprint, long ownerUserId,
-            String state, long updatedAt, TodoSummary todo) { }
+            String state, long updatedAt, TodoSummary todo, JsonNode recurringRule) {
+        private WriteEntry(String requestId,String fingerprint,long ownerUserId,String state,long updatedAt,TodoSummary todo) {
+            this(requestId,fingerprint,ownerUserId,state,updatedAt,todo,null);
+        }
+    }
     private record WriteJournal(int version, Map<String, WriteEntry> entries) { }
 
     private static final class BoundedBodySubscriber implements HttpResponse.BodySubscriber<byte[]> {

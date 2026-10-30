@@ -49,7 +49,7 @@ async function fixture() {
       }
       return json(record)
     }
-    if (path.endsWith('/todos') && options.method === 'GET') {
+    if (path.endsWith('/todos/snapshot') && options.method === 'GET') {
       if (state.mode === 'list_offline') throw new Error('offline')
       return json(state.records)
     }

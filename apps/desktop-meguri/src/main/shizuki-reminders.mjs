@@ -128,7 +128,7 @@ export function createShizukiReminderRuntime({ client, filePath, onReminder, onE
     const startedUserId = client.status().userId
     syncingGeneration = generation
     try {
-      const todos = await client.listTodos()
+      const todos = await (typeof client.syncTodos === 'function' ? client.syncTodos() : client.listTodos())
       if (!active || generation !== startedGeneration || client.status().userId !== startedUserId) return
       snapshot = todos
       snapshotTimes = new Map(todos.map(todo => [todo.todoId, clock()]))

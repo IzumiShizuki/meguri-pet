@@ -36,7 +36,18 @@ public final class TimePrismReminderController {
     public Mono<TimePrismTodoWriteReceipt> createTodo(ServerWebExchange exchange,
             @Valid @RequestBody TimePrismTodoCreateRequest request) {
         requireTodoWriter(exchange);
-        return Mono.fromCallable(() -> todoWriter.create(request))
+        return writeResult(() -> todoWriter.create(request));
+    }
+
+    @PostMapping("/recurring-rules")
+    public Mono<TimePrismRecurringRuleWriteReceipt> createRecurringRule(ServerWebExchange exchange,
+            @Valid @RequestBody TimePrismRecurringRuleCreateRequest request) {
+        requireTodoWriter(exchange);
+        return writeResult(() -> todoWriter.createRecurring(request));
+    }
+
+    private <T> Mono<T> writeResult(java.util.concurrent.Callable<T> action) {
+        return Mono.fromCallable(action)
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorMap(TimePrismTodoWriter.WriterNotConfiguredException.class,
                         error -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,

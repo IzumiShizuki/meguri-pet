@@ -48,7 +48,7 @@ describe('current site recurring Todo contract', () => {
     const writes: string[] = []
     const client = await clientWith(async (url, options) => {
       if (url.endsWith('/todo-recurring-rules')) return json([rule])
-      if (url.endsWith('/todos')) return json(todos)
+      if (url.endsWith('/todos/snapshot')) return json(todos)
       if (url.endsWith('/todos/101') && options.method === 'PUT') { writes.push(url); todos[0].done = true; return json(todos[0]) }
       throw new Error('unexpected fixture request')
     })
@@ -59,7 +59,7 @@ describe('current site recurring Todo contract', () => {
     await expect(client.updateTodo(102, { title: '变更', dueAt: '2030-01-01T12:00', expectedAccount: input.expectedAccount })).rejects.toMatchObject({ code: 'recurring_rule_required' })
   })
   it('fails closed if recurring timezone cannot be fetched', async () => {
-    const client = await clientWith(async url => url.endsWith('/todos') ? json([instance(101, '2026-10-29')]) : json({}, 503))
+    const client = await clientWith(async url => url.endsWith('/todos/snapshot') ? json([instance(101, '2026-10-29')]) : json({}, 503))
     await expect(client.listTodos()).rejects.toThrow()
     const missingZone = normalizeShizukiTodo(instance(101, '2026-10-29'))
     expect(dueTodoReminders([missingZone], 42, Date.parse('2026-10-29T09:00:00Z'))).toEqual([])

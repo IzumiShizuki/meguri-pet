@@ -134,6 +134,7 @@ class MeguriCoreClient(Protocol):
     async def create_timeprism_todo(
         self, *, owner_user_id: int, request_id: str, title: str, due_at: str
     ) -> dict[str, Any]: ...
+    async def create_timeprism_recurring_rule(self, *, owner_user_id: int, request_id: str, **schedule: Any) -> dict[str, Any]: ...
     async def close(self) -> None: ...
 
 
@@ -613,6 +614,26 @@ class HttpMeguriCoreClient:
                 raise CoreProtocolError("meguri-core returned an unverified Todo receipt")
             if result.get("title") != title or result.get("dueAt") != due_at:
                 raise CoreProtocolError("meguri-core returned a Todo receipt for different content")
+        return result
+
+    async def create_timeprism_recurring_rule(self, *, owner_user_id: int, request_id: str, **schedule: Any) -> dict[str, Any]:
+        fields = {'title','weekdays','time','timeZoneId','startAt','endAt','deadlineRemindValue','deadlineRemindUnit'}
+        if owner_user_id <= 0 or set(schedule) != fields:
+            raise ValueError('invalid recurring rule fields or owner')
+        result = await self._request('POST', '/v1/reminders/timeprism/recurring-rules',
+            json={'requestId':request_id, **schedule},
+            headers=self._identity_headers(f'shizuki-{owner_user_id}', 'timeprism-todo-writer'))
+        if result.get('requestId') != request_id or result.get('state') not in {'confirmed','uncertain'}:
+            raise CoreProtocolError('meguri-core returned an invalid recurring rule receipt')
+        if result['state'] == 'confirmed':
+            rule_id = result.get('ruleId')
+            hour, minute = map(int, schedule['time'].split(':'))
+            cron = f"0 {minute} {hour} * * {','.join(str(day) for day in sorted(set(schedule['weekdays'])))}"
+            expected = {key:value for key,value in schedule.items() if key not in {'weekdays','time'}}
+            expected['cronExpr'] = cron
+            if (not isinstance(rule_id, int) or isinstance(rule_id, bool) or rule_id <= 0
+                or any(result.get(key) != value for key,value in expected.items())):
+                raise CoreProtocolError('meguri-core returned a recurring receipt for different content')
         return result
 
     async def close(self) -> None:

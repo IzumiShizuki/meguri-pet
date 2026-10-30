@@ -95,7 +95,7 @@ describe('Shizuki TimePrism client', () => {
         createBody = body
         return jsonResponse(savedTodo)
       }
-      if (href.endsWith('/todos') && options.method === 'GET') return jsonResponse([savedTodo])
+      if (href.endsWith('/todos/snapshot') && options.method === 'GET') return jsonResponse([savedTodo])
       if (href.endsWith('/todos/17') && options.method === 'PUT') {
         completeBody = body
         return jsonResponse({ ...savedTodo, done: true })

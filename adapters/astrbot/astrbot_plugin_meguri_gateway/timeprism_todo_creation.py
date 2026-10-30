@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 
 from .client import CoreProtocolError, CoreUnavailableError
 from .models import PlatformMessage
+from .timeprism_recurring import parse_recurring_reminder
 
 
 TIMEZONE = ZoneInfo("Asia/Shanghai")
@@ -78,6 +79,11 @@ def parse_timeprism_reminder(
         return _parse_result("none")
     if len(value) > 1000 or value.count("提醒") > 1:
         return _parse_result("clarify", "请一次只安排一项提醒，并提供一个日期和时间。")
+    if re.search(r"(?:并|然后|同时).*(?:关机|发送|发邮件|发消息|运行|执行|购买|删除|重启)", value):
+        return _parse_result("unsupported", "当前只支持提醒，不会安排其他操作；请单独描述提醒内容。")
+    recurring = parse_recurring_reminder(value, now, _chinese_number)
+    if recurring is not None:
+        return recurring
     if re.search(r"每天|每日|每周|每月|每隔|工作日|重复", value):
         return _parse_result("unsupported", "当前只支持一次提醒，无法安排重复定时任务。")
     if re.search(r"纽约|东京|伦敦|美国|日本|美东|美西|夏令|冬令|UTC|GMT|时区|[A-Za-z_]+/[A-Za-z_]+", value.replace("Asia/Shanghai", ""), re.I):
@@ -226,7 +232,7 @@ class TimePrismTodoDraftStore:
         self.file_path = Path(file_path).expanduser().resolve()
         self._lock = threading.RLock()
 
-    def create(self, actor_id: str, title: str, due_at: str) -> dict[str, Any]:
+    def create(self, actor_id: str, title: str, due_at: str = "", *, schedule: dict | None = None) -> dict[str, Any]:
         with self._lock:
             now = time.time()
             drafts = self._load()
@@ -242,6 +248,8 @@ class TimePrismTodoDraftStore:
                 "actor_id": actor_id,
                 "title": title,
                 "due_at": due_at,
+                "kind": "recurring" if schedule is not None else "once",
+                "schedule": schedule,
                 "state": "draft",
                 "created_at": now,
                 "expires_at": now + _DRAFT_TTL_SECONDS,
@@ -261,7 +269,7 @@ class TimePrismTodoDraftStore:
             self._save(drafts)
             return dict(draft)
 
-    def edit(self, actor_id: str, draft_id: str, title: str, due_at: str) -> dict[str, Any] | None:
+    def edit(self, actor_id: str, draft_id: str, title: str, due_at: str = "", *, schedule: dict | None = None) -> dict[str, Any] | None:
         with self._lock:
             drafts = self._load()
             self._prune(drafts, time.time())
@@ -270,6 +278,7 @@ class TimePrismTodoDraftStore:
                 self._save(drafts)
                 return None
             draft.update({"request_id": str(uuid.uuid4()), "title": title, "due_at": due_at, "state": "draft"})
+            draft.update({"kind": "recurring" if schedule is not None else "once", "schedule": schedule})
             self._save(drafts)
             return dict(draft)
 
@@ -318,7 +327,7 @@ class TimePrismTodoDraftStore:
             self._save(drafts)
             return "ready", dict(draft)
 
-    def finish(self, draft_id: str, state: str, todo_id: int | None = None) -> None:
+    def finish(self, draft_id: str, state: str, todo_id: int | None = None, *, rule_id: int | None = None) -> None:
         with self._lock:
             drafts = self._load()
             draft = drafts.get(str(draft_id).lower())
@@ -327,6 +336,8 @@ class TimePrismTodoDraftStore:
             draft["state"] = state
             if todo_id is not None:
                 draft["todo_id"] = int(todo_id)
+            if rule_id is not None:
+                draft["rule_id"] = int(rule_id)
             draft["updated_at"] = time.time()
             self._save(drafts)
 
@@ -411,7 +422,7 @@ class TimePrismTodoCreation:
         if parsed["status"] != "ready":
             return str(parsed.get("message") or "请补充提醒时间和内容。")
         try:
-            draft = self.store.create(actor_id, parsed["title"], parsed["due_at"])
+            draft = self.store.create(actor_id, parsed["title"], parsed.get("due_at", ""), schedule=parsed.get("schedule"))
         except TodoDraftStoreError as error:
             return str(error)
         return self._preview(draft)
@@ -436,7 +447,7 @@ class TimePrismTodoCreation:
             if parsed["status"] != "ready":
                 return str(parsed.get("message") or "请在修改内容中写完整的提醒，例如：提醒我1点睡觉。")
             try:
-                draft = self.store.edit(actor_id, parts[1], parsed["title"], parsed["due_at"])
+                draft = self.store.edit(actor_id, parts[1], parsed["title"], parsed.get("due_at", ""), schedule=parsed.get("schedule"))
             except TodoDraftStoreError as error:
                 return str(error)
             return self._preview(draft) if draft else "找不到可修改的草稿；草稿可能已过期或正在核对写入结果。"
@@ -450,6 +461,8 @@ class TimePrismTodoCreation:
         if state == "missing" or draft is None:
             return "找不到这个草稿；它可能已过期，或属于另一个私聊账号。"
         if state == "confirmed":
+            if draft.get("kind") == "recurring":
+                return f"这个草稿已创建为 TimePrism 周期规则 #{draft.get('rule_id', '未知')}，不会重复创建。"
             return f"这个草稿已创建为 TimePrism 待办 #{draft.get('todo_id', '未知')}，不会重复创建。"
         if state == "submitting":
             return "这个草稿正在提交，请稍后查看结果。"
@@ -457,12 +470,13 @@ class TimePrismTodoCreation:
             return "这个草稿当前不能确认；请重新创建一个提醒草稿。"
 
         try:
-            result = await self.core.create_timeprism_todo(
-                owner_user_id=self.owner_user_id,
-                request_id=str(draft["request_id"]),
-                title=str(draft["title"]),
-                due_at=str(draft["due_at"]),
-            )
+            if draft.get("kind") == "recurring":
+                result = await self.core.create_timeprism_recurring_rule(
+                    owner_user_id=self.owner_user_id, request_id=str(draft["request_id"]), **draft["schedule"])
+            else:
+                result = await self.core.create_timeprism_todo(
+                    owner_user_id=self.owner_user_id, request_id=str(draft["request_id"]),
+                    title=str(draft["title"]), due_at=str(draft["due_at"]))
         except CoreProtocolError as error:
             if error.status_code == 409:
                 self.store.finish(draft_id, "uncertain")
@@ -480,6 +494,10 @@ class TimePrismTodoCreation:
             return "Core 暂时不可用，写入结果可能尚未返回；已保留原请求编号，请稍后用同一草稿再次确认。"
 
         if result.get("state") == "confirmed":
+            if draft.get("kind") == "recurring":
+                rule_id = result.get("ruleId")
+                self.store.finish(draft_id, "confirmed", rule_id=int(rule_id) if rule_id else None)
+                return f"已创建 TimePrism 周期规则 #{rule_id}：{draft['title']}。\n{self._schedule_preview(draft['schedule'])}"
             todo_id = result.get("todoId")
             self.store.finish(draft_id, "confirmed", int(todo_id) if todo_id else None)
             return (
@@ -494,19 +512,30 @@ class TimePrismTodoCreation:
         if draft is None:
             return "找不到可修改的草稿。"
         draft_id = draft["draft_id"]
+        timing = (TimePrismTodoCreation._schedule_preview(draft['schedule']) if draft.get('kind') == 'recurring'
+                  else f"时间：{str(draft['due_at']).replace('T', ' ')}（{TIMEZONE_LABEL}）")
         return (
             "TimePrism 待办草稿（尚未写入）\n"
             f"标题：{draft['title']}\n"
-            f"时间：{str(draft['due_at']).replace('T', ' ')}（{TIMEZONE_LABEL}）\n"
+            f"{timing}\n"
             f"确认：/meguri todo confirm {draft_id}\n"
             f"修改：/meguri todo edit {draft_id} 提醒我1点睡觉\n"
             f"取消：/meguri todo cancel {draft_id}"
         )
 
     @staticmethod
+    def _schedule_preview(schedule: dict) -> str:
+        days = '、'.join('日一二三四五六'[day] for day in schedule['weekdays'])
+        unit = '天' if schedule['deadlineRemindUnit'] == 'DAY' else '分钟'
+        return (f"周期：每周{days} {schedule['time']}（{schedule['timeZoneId']}）\n"
+                f"范围：{schedule['startAt']} 至 {schedule['endAt'] or '不设结束'}\n"
+                f"提醒：提前{schedule['deadlineRemindValue']}{unit}")
+
+    @staticmethod
     def _help() -> str:
         return (
             "请先直接描述提醒，例如“提醒我1点睡觉”；我会先给你预览。\n"
+            "周期示例：每周一、三、五18:30提前10分钟提醒我检查；可加“时区 Asia/Shanghai 从2030-01-01到2030-01-31”。\n"
             "确认：/meguri todo confirm <草稿编号>\n"
             "修改：/meguri todo edit <草稿编号> <新的提醒描述>\n"
             "取消：/meguri todo cancel <草稿编号>"

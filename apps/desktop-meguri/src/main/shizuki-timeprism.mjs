@@ -393,7 +393,28 @@ export function createShizukiTimePrismClient({
   }
 
   async function listTodos() {
-    const data = await authorized(TODOS_PATH)
+    let data
+    try { data = await authorized(`${TODOS_PATH}/snapshot`) }
+    catch (error) {
+      if ([404, 405].includes(error.status))
+        throw new ShizukiTimePrismError('snapshot_unsupported', '站点尚不支持无副作用待办快照，请更新站点后重试。', error.status)
+      throw error
+    }
+    return hydrateTodos(data)
+  }
+
+  async function syncTodos() {
+    let data
+    try { data = await authorized(`${TODOS_PATH}/sync`, { method: 'POST' }) }
+    catch (error) {
+      // Explicit synchronization retains compatibility with the legacy mutating GET.
+      if (![404, 405].includes(error.status)) throw error
+      data = await authorized(TODOS_PATH)
+    }
+    return hydrateTodos(data)
+  }
+
+  async function hydrateTodos(data) {
     if (!Array.isArray(data))
       throw new ShizukiTimePrismError('invalid_response', 'Shizuki 待办列表格式无效。')
     const todos = data.map(normalizeShizukiTodo).filter(todo => todo.todoId > 0)
@@ -433,7 +454,7 @@ export function createShizukiTimePrismClient({
       throw new ShizukiTimePrismError('invalid_schedule', '需要六段 Cron 表达式；已有高级规则可以保留原样。')
     const amount = Number(input.deadlineRemindValue ?? current?.deadlineRemindValue ?? 0)
     const unit = String(input.deadlineRemindUnit || current?.deadlineRemindUnit || 'MINUTE').toUpperCase()
-    if (input.reminderEnabled === true && (!Number.isSafeInteger(amount) || amount < 0 || !['MINUTE', 'DAY'].includes(unit) || (amount === 0 && unit === 'DAY')))
+    if (input.reminderEnabled === true && (!Number.isSafeInteger(amount) || amount < 0 || !['MINUTE', 'DAY'].includes(unit) || (amount === 0 && unit === 'DAY') || amount > (unit === 'DAY' ? 365 : 43200)))
       throw new ShizukiTimePrismError('invalid_reminder', '提前量需要为非负分钟或正整数天。')
     const rule = normalizeRecurringRule({ ...current, title, cronExpr: cron, timeZoneId: zone,
       startAt: recurringBoundary(input.startAt === undefined || input.startAt === '' ? current?.startAt || '' : input.startAt, zone),
@@ -630,5 +651,5 @@ export function createShizukiTimePrismClient({
 
   return { initialize, status, pendingCreates, connect: serialized(connect), disconnect: serialized(disconnect),
     listRecurringRules: serialized(listRecurringRules), saveRecurringRule: serialized(saveRecurringRule),
-    listTodos: serialized(listTodos), createTodo: serialized(createTodo), completeTodo: serialized(completeTodo), updateTodo: serialized(updateTodo) }
+    listTodos: serialized(listTodos), syncTodos: serialized(syncTodos), createTodo: serialized(createTodo), completeTodo: serialized(completeTodo), updateTodo: serialized(updateTodo) }
 }
