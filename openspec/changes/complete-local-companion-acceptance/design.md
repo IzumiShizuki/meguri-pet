@@ -8,6 +8,7 @@ Goals: repair narrow wiring/contract defects and create reproducible acceptance 
 - Reuse capability policy, approval, quarantine and dispatch. Test actual controlled execution rather than accepting registry presence.
 - Serialize Java test/build runs and all deployment actions under the coordinator. Use isolated identities and a scratch/read-only memory backend; never real memory data.
 ## Risks / Trade-offs
+- Query fidelity follow-up changes only WebSearchPolicy and its regression tests: remove recognized output requests outside quotes, retain subject words/comparisons, and require English word boundaries. This is independent of the pending RFC/domain/LORE candidate integration; no candidate code is copied around its approval rejection.
 - External credentials or Windows consent unavailable → report exact blocked action and continue independent checks.
 - Current health lacks code SHA → record process start/classpath and class/artifact hashes at launch, without calling dataset ID a code version.
 - Live site/UI writes risk user tasks → use isolated contract fixtures; report production and UI gaps separately.

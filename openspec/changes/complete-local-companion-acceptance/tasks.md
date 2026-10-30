@@ -29,3 +29,17 @@
 - [ ] 5.5 Validate concise-answer adherence and sustained streaming performance with a comparable bounded workload; the recovered-session marker included unwanted explanation.
 
 Completed item evidence and explicit limits are recorded in `docs/local-companion-acceptance-2026-10-29.md` and the ignored local acceptance report. Items 2.2/2.3 validate implementation and controlled execution, not the unapproved production MCP or real-account Todo operations in section 5. The change remains open.
+
+## 6. Overnight continuation and reviewed retrieval integration
+- [x] 6.1 Safely load the current desktop after the user's confirmed normal exit; verify unchanged Core/Harness processes.
+- [x] 6.2 Exercise a clearly labelled, today-only site rule: weekdays, advance reminder readback, dated completion, pause and reload persistence. Keep desktop two-end acceptance separate and pending while native UI access is blocked.
+- [x] 6.3 Run bounded fictional current-Core context/cancellation checks and existing agent bridge receipt checks; report Harness failure rather than treating submission as completion.
+- [ ] 6.4 Review and integrate the independently tested RFC/domain/diagnostic and bounded canonical-focus candidates without touching unrelated user edits.
+- [ ] 6.5 Validate the integrated code in an isolated build tree, preserving live target/classes and production configuration; record any environmental test failures separately.
+- [x] 6.6 Record unchanged HEAD versus actual running revision, remaining UI/approval blockers, and temporary-rule cleanup state. Integration was rejected before execution and remains pending specific approval; no push or Core redeploy occurred.
+
+## 7. Targeted query fidelity follow-up
+- [x] 7.1 Reproduce subject truncation, identifier-prefix loss and English wrapper pollution independently of the unapproved retrieval candidates.
+- [x] 7.2 Preserve literal search subjects and meaningful comparison clauses while removing only bounded presentation requests outside quoted text.
+- [x] 7.3 Run before/after and full isolated Java regressions using the verified JDK test-process TCP fallback; keep live classes and model configuration untouched.
+- [x] 7.4 Update the main acceptance report with exact approval rejection, local-only changes, test results and remaining online limitations.

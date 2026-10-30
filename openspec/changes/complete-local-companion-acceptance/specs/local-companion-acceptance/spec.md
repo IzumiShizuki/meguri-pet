@@ -2,6 +2,17 @@
 Provide auditable companion behavior across persona prompts, controlled capability execution and the current site Todo contract, without contaminating real user memory or bypassing extension approval.
 
 ## ADDED Requirements
+### Requirement: Preserve literal web search subjects
+Query normalization SHALL preserve quoted topics, complete technical identifiers and comparison clauses that change the search subject. It SHALL remove only recognized conversational wrappers and trailing presentation requests outside quotations, and retain a bounded upstream query. Normalization SHALL NOT grant network authority or substitute invented search evidence.
+
+#### Scenario: Topic contains presentation words
+- **WHEN** a quoted title or ordinary subject includes words such as summary, or a technical identifier begins with a freshness keyword
+- **THEN** normalization preserves the subject and the complete identifier
+
+#### Scenario: English wrapper and meaningful comparison
+- **WHEN** an explicit search request follows an explanatory sentence or asks for links after the topic
+- **THEN** normalization extracts the requested topic while retaining comparison terms that affect what must be found
+
 ### Requirement: Preserve persona style and evidence purpose
 The system SHALL include configured speech style in trusted persona instructions and identify retrieved canonical dialogue as style evidence while retaining its untrusted data boundary.
 #### Scenario: Canonical dialogue and configured style

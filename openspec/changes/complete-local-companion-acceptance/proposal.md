@@ -6,6 +6,7 @@ Current live acceptance does not establish persona style injection, executable S
 - Repair verified Todo contract gaps for weekday recurrence, advance reminders, dated completion and duplicate prevention.
 - Exercise existing Skills/MCP dispatch, approval, execution receipts and recovery with controlled fixtures; preserve review before unfamiliar extension installation.
 - Deploy the verified local Core with rollback evidence and record runtime identity and live acceptance separately from offline tests.
+- Preserve literal web search subjects when removing conversation and presentation wrappers; validate query fidelity independently of unapproved retrieval candidates.
 
 ## Capabilities
 ### New Capabilities

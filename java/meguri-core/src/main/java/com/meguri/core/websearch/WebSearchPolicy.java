@@ -42,18 +42,30 @@ public final class WebSearchPolicy {
                     + "latest news|current news|official website|official docs)",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern CONVERSATIONAL_PREFIX = Pattern.compile(
-            "^(?:(?:请|麻烦|可以|能否|能不能|please|could you|can you)\\s*)?"
+            "^(?:(?:请|麻烦|可以|能否|能不能|(?:please|could you|can you)\\b)\\s*)?"
                     + "(?:(?:帮我|帮忙|为我|替我)\\s*)*",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern LOOKUP_WRAPPER = Pattern.compile(
             "^(?:查官方|查看|查阅|查询|查找|检索|搜索|搜寻|搜一下|查一下|看看|"
                     + "联网(?:搜索|查询|查找|检索|查)|网上(?:搜索|查询|查找|检索|查)|"
-                    + "search(?: the web| online)?|web search|look up)(?:一下|下)?\\s*",
+                    + "(?:search(?: the web| online)?|web search|look up)(?![\\p{L}\\p{N}_])(?:\\s+for\\b)?)(?:一下|下)?\\s*",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern LEADING_FRESHNESS = Pattern.compile(
             "^(今天|今日|现在|当前|目前|刚刚|刚才|最新|最近|近期|本周|本月|截至|实时|"
-                    + "today|currently|current|latest|newest|recently?|this\\s+(?:week|month)|as\\s+of)\\s*",
+                    + "(?:today|currently|current|latest|newest|recently?|this\\s+(?:week|month)|as\\s+of)\\b)\\s*",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern PRESENTATION_SUFFIX = Pattern.compile(
+            "(?:[，,；;。]\\s*(?:(?:并且|然后|并|再)\\s*)?|\\s+(?:并且|然后|并|再)\\s*)"
+                    + "(?:说明|给出|提供|列出|附上)\\s*(?:[一二三四五六七八九十两\\d]+[条个份]?\\s*)?"
+                    + "(?:官方|参考|可靠|原始)?(?:来源|链接|出处|引用)[。.!?？]*\\s*$"
+                    + "|(?:[，,；;。]\\s*|\\s+)(?:并且|然后|并|再)(?:总结|概括)(?:一下|要点|结果|搜索结果|检索结果)?[。.!?？]*\\s*$"
+                    + "|[,;.]?\\s+(?:and|then)\\s+(?:(?:give|provide|list|include|cite)\\s+"
+                    + "(?:(?:one|two|three|four|five|\\d+)\\s+)?(?:(?:official|reliable|original|reference)\\s+)?"
+                    + "(?:sources?|links?|citations?)|summari[sz]e(?:\\s+(?:the\\s+)?(?:results|findings))?)[.!?]*\\s*$",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern SCRIPT_BOUNDARY = Pattern.compile(
+            "(?<=[A-Za-z0-9])(?=\\p{IsHan})|(?<=\\p{IsHan})(?=[A-Za-z0-9])");
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
 
     private WebSearchPolicy() {}
 
@@ -81,20 +93,21 @@ public final class WebSearchPolicy {
         String original = message.trim();
         String query = original;
         // Explanatory setup is not the search subject. Keep the clause containing the request.
-        java.util.regex.Matcher action = EXPLICIT_SEARCH.matcher(query);
+        String visible = outsideQuotedText(query);
+        java.util.regex.Matcher action = EXPLICIT_SEARCH.matcher(visible);
         if (action.find() && action.start() > 0) {
-            int clauseStart = Math.max(Math.max(query.lastIndexOf('。', action.start()),
-                    query.lastIndexOf('；', action.start())), query.lastIndexOf('\n', action.start()));
+            int clauseStart = Math.max(Math.max(visible.lastIndexOf('。', action.start()),
+                    visible.lastIndexOf('；', action.start())), visible.lastIndexOf('\n', action.start()));
+            clauseStart = Math.max(clauseStart, visible.lastIndexOf(". ", action.start()));
             if (clauseStart >= 0) query = query.substring(clauseStart + 1).trim();
         }
-        query = query.replaceFirst("(?:[，,；;。]\\s*(?:并|然后|再)?(?:说明|给出|提供|列出|附上|总结|比较).*)$", "");
+        var presentation = PRESENTATION_SUFFIX.matcher(outsideQuotedText(query));
+        if (presentation.find()) query = query.substring(0, presentation.start()).trim();
         java.util.LinkedHashSet<String> freshnessQualifiers = new java.util.LinkedHashSet<>();
         for (int pass = 0; pass < 4; pass++) {
             String before = query;
             query = CONVERSATIONAL_PREFIX.matcher(query).replaceFirst("").trim();
             query = LOOKUP_WRAPPER.matcher(query).replaceFirst("").trim();
-            query = query.replaceFirst("(?i)(?:并)?(?:总结|概括|告诉我|解释一下|分析一下).*$", "")
-                    .trim();
             java.util.regex.Matcher freshness = LEADING_FRESHNESS.matcher(query);
             if (freshness.find()) {
                 freshnessQualifiers.add(freshness.group(1).trim());
@@ -103,14 +116,46 @@ public final class WebSearchPolicy {
             if (query.equals(before)) break;
         }
         query = query.replaceFirst("(?:是否|有没有|有无|有)\\s*更新(?:了)?(?:吗|么)?[？?！!。]*$", " 更新")
-                .replaceFirst("[？?]+$", "")
-                .replaceAll("(?<=[A-Za-z0-9])(?=\\p{IsHan})", " ")
-                .replaceAll("(?<=\\p{IsHan})(?=[A-Za-z0-9])", " ")
-                .replaceAll("\\s+", " ").trim();
+                .replaceFirst("[？?]+$", "");
+        query = replaceOutsideQuotes(query, SCRIPT_BOUNDARY, " ");
+        query = replaceOutsideQuotes(query, WHITESPACE, " ").trim();
         if (!freshnessQualifiers.isEmpty() && !query.isBlank()) {
             query = query + " " + String.join(" ", freshnessQualifiers);
         }
         if (query.isBlank()) query = original;
-        return query.length() <= 256 ? query : query.substring(0, 256);
+        if (query.length() <= 256) return query;
+        int end = Character.isHighSurrogate(query.charAt(255)) ? 255 : 256;
+        return query.substring(0, end);
+    }
+
+    private static String replaceOutsideQuotes(String value, Pattern pattern, String replacement) {
+        var matcher = pattern.matcher(outsideQuotedText(value));
+        StringBuilder result = new StringBuilder();
+        int start = 0;
+        while (matcher.find()) {
+            result.append(value, start, matcher.start()).append(replacement);
+            start = matcher.end();
+        }
+        return result.append(value, start, value.length()).toString();
+    }
+
+    /** Preserve positions while keeping quoted topic words out of instruction matching. */
+    private static String outsideQuotedText(String value) {
+        char[] visible = value.toCharArray();
+        char closing = 0;
+        for (int i = 0; i < visible.length; i++) {
+            char c = visible[i];
+            if (closing != 0) {
+                visible[i] = '\uFFFC';
+                if (c == closing) closing = 0;
+            } else if (c == '"' || c == '`' || c == '“' || c == '‘' || c == '「' || c == '『'
+                    || (c == '\'' && (i == 0 || !Character.isLetterOrDigit(value.charAt(i - 1))))) {
+                closing = switch (c) {
+                    case '“' -> '”'; case '‘' -> '’'; case '「' -> '」'; case '『' -> '』'; default -> c;
+                };
+                visible[i] = '\uFFFC';
+            }
+        }
+        return new String(visible);
     }
 }
