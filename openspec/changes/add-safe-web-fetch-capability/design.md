@@ -13,6 +13,7 @@ Goals: one bounded public HTTP(S) GET, up to three validated redirects, readable
 - Bound total operation to 12 seconds, connect/response waits, three redirects, 2 MB response, 12,000 output code points, 32 links. Reject compressed/unsupported response content; never download subresources. Output includes actual URL, title, text, links and truncation flags.
 - Use the JDK HTML parser rather than a new package or regular-expression HTML parsing. Drop scripts/styles/non-document regions; preserve safe HTTP(S) anchor targets as data. Visible page instructions remain untrusted text, not executable/system instructions. Use the capability normalizer and ReAct observation trust boundary.
 - Register exact ID web_fetch only when meguri.web-fetch.enabled=true; default is disabled. Require existing capability:read scope plus network permission. No alias to keyword search, no credential settings or automatic Skill binding.
+- ReAct reserves independent source/link/body budgets (768/1024/2048 UTF-16 characters plus fixed headings within 4096). Read fields by key; do not let source or links consume the body allocation. Include source/link URLs whole or with explicit omission notices, remove duplicate parenthesized anchor URLs from prose with a notice, and keep body clipping outside URL spans and surrogate pairs. The body is a bounded prefix, not an assertion that the entire fetched document is visible.
 
 ## Risks / Trade-offs
 

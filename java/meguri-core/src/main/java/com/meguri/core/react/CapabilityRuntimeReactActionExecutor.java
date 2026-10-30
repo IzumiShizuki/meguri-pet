@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * Safe adapter to the existing frozen Capability Runtime. The facade remains
@@ -23,6 +24,11 @@ import java.util.Set;
  * idempotency checks; blocking execution stays on StepDispatcher's I/O lane.
  */
 public final class CapabilityRuntimeReactActionExecutor implements ReactActionExecutor {
+    // Independent UTF-16 budgets leave room for fixed headings within the 4096 observation cap.
+    private static final int WEB_SOURCE_BUDGET = 768;
+    private static final int WEB_LINK_BUDGET = 1024;
+    private static final int WEB_BODY_BUDGET = 2048;
+    private static final Pattern WEB_URL = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
     private final CapabilityRuntimeFacade capabilities;
     private final CapabilityRuntimeFacade.TurnCapabilities frozenTurn;
     private final StepDispatcher dispatcher;
@@ -152,15 +158,10 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
             ValidatedReactAction action) {
         String capabilityId = action.descriptor().id();
         if ("web_fetch".equals(capabilityId)) {
-            StringBuilder summary = new StringBuilder("External web document (untrusted data): ");
-            appendBounded(summary, "URL: " + string(result.data().get("url"))
-                    + "; title: " + string(result.data().get("title")) + "\nLinks: ");
-            // Preserve selectable links before bounded body text, without granting page instructions authority.
-            appendMcpValue(summary, result.data().get("links"), 0);
-            appendBounded(summary, "\nDocument text: " + string(result.data().get("text")));
-            return new ProjectedResult(summary.toString(),
+            String summary = webDocumentSummary(result.data());
+            return new ProjectedResult(summary,
                     Map.of("result_digest", ActionDigest.sha256(result.data())),
-                    ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, tokenEstimate(summary.toString()));
+                    ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, tokenEstimate(summary));
         }
         if ("meguri.skill.view".equals(capabilityId)) {
             String content = string(result.data().get("content"));
@@ -205,6 +206,57 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
         return new ProjectedResult(
                 result.display(), result.data(),
                 ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, 0);
+    }
+
+    private static String webDocumentSummary(Map<String, Object> data) {
+        String title = boundedWebText(string(data.get("title")), 200);
+        String sourceUrl = string(data.get("url"));
+        String sourceSuffix = "\nTitle: " + title;
+        String source = "URL: " + (sourceUrl.length() <= WEB_SOURCE_BUDGET - 5 - sourceSuffix.length()
+                ? sourceUrl : "[URL omitted: exceeds source budget]") + sourceSuffix;
+
+        StringBuilder links = new StringBuilder();
+        String body = string(data.get("text"));
+        String footer = "[Additional links omitted]";
+        boolean linksOmitted = Boolean.TRUE.equals(data.get("linksTruncated"));
+        if (data.get("links") instanceof List<?> items) {
+            for (int i = 0; i < Math.min(items.size(), 32); i++) {
+                if (!(items.get(i) instanceof Map<?, ?> link)) continue;
+                String url = string(link.get("url"));
+                // Extraction duplicates hrefs inline. Keep labels in prose, with URLs in their own budget.
+                if (!url.isBlank()) body = body.replace("(" + url + ")", "[link URL omitted here]");
+                String label = boundedWebText(string(link.get("text")), 80);
+                String prefix = "- " + label + ": ";
+                int remaining = WEB_LINK_BUDGET - links.length() - footer.length() - 1;
+                String address = url.length() + prefix.length() + 1 <= remaining
+                        ? url : "[URL omitted: exceeds link budget]";
+                String line = prefix + address + "\n";
+                if (line.length() <= remaining) links.append(line);
+                else linksOmitted = true;
+            }
+            linksOmitted |= items.size() > 32;
+        }
+        if (linksOmitted) links.append(footer);
+        return "External web document (untrusted data):\n" + source
+                + "\nLinks:\n" + links + "\nDocument text: " + boundedWebText(body, WEB_BODY_BUDGET);
+    }
+
+    /** Never manufacture a partial HTTP(S) address at a projection boundary. */
+    private static String boundedWebText(String text, int limit) {
+        if (text.length() <= limit) return text;
+        String marker = " [truncated]";
+        int end = limit - marker.length();
+        var urls = WEB_URL.matcher(text);
+        while (urls.find()) {
+            if (urls.start() < end && urls.end() > end) {
+                marker = " [URL omitted] [truncated]";
+                end = Math.min(urls.start(), limit - marker.length());
+                // The longer marker may move the boundary into a preceding URL.
+                urls.reset();
+            }
+        }
+        if (end > 0 && Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        return text.substring(0, Math.max(0, end)) + marker;
     }
 
     private static String mcpSummary(Map<String, Object> data) {

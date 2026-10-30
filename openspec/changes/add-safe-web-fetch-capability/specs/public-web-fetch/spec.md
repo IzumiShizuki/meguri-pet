@@ -36,3 +36,7 @@ The system MUST bound bytes, characters, links, headers, time and redirects, hon
 #### Scenario: Injection text in a page
 - **WHEN** a page requests changing system instructions or calling a write tool
 - **THEN** the result is labeled untrusted external data and grants no additional capability
+
+#### Scenario: Long source or link addresses in a ReAct observation
+- **WHEN** a fetched document has long source or link URLs, or many ordinary links, in any result field order
+- **THEN** independent budgets preserve a bounded document-text section and source/link addresses are included whole or explicitly omitted, never misleadingly truncated
