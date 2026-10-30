@@ -42,7 +42,10 @@ class WebSearchQueryFidelityTest {
                 Arguments.of("comparison inside quotes", "搜索 \"并总结\" 运算符文档", "\"并总结\" 运算符文档"),
                 Arguments.of("quoted mixed-script literal", "请搜索 \"RFC9110标准\" 的说明", "\"RFC9110标准\" 的说明"),
                 Arguments.of("quoted spacing is literal", "Please search for \"currentColor  RFC9110标准\" and provide links.", "\"currentColor  RFC9110标准\""),
-                Arguments.of("freshness qualifier retained", "请搜索最新 Rust 版本，并给出官方链接。", "Rust 版本 最新"));
+                Arguments.of("freshness qualifier retained", "请搜索最新 Rust 版本，并给出官方链接。", "Rust 版本 最新"),
+                Arguments.of("single sentence output is not a search subject", "请搜索 RFC 9110。只用一句话说明。", "RFC 9110"),
+                Arguments.of("exact output is not a search subject", "请搜索 currentColor CSS，并提供来源。只回复：已核对", "currentColor CSS"),
+                Arguments.of("quoted reply request remains literal", "请搜索 \"说明。只回复：已核对\" 的出处", "\"说明。只回复：已核对\" 的出处"));
     }
 
     @Test

@@ -13,6 +13,11 @@ Query normalization SHALL preserve quoted topics, complete technical identifiers
 - **WHEN** an explicit search request follows an explanatory sentence or asks for links after the topic
 - **THEN** normalization extracts the requested topic while retaining comparison terms that affect what must be found
 
+#### Scenario: Domain operator accompanies a presentation request
+- **WHEN** a requested site operator is appended to a source-link request followed by a recognized direct reply-format instruction
+- **THEN** the domain remains an independent host constraint through retry and extraction, while the presentation text is excluded from relevance anchors
+- **AND** quoted subject text and complete technical identifiers remain unchanged
+
 ### Requirement: Preserve persona style and evidence purpose
 The system SHALL include configured speech style in trusted persona instructions and identify retrieved canonical dialogue as style evidence while retaining its untrusted data boundary.
 #### Scenario: Canonical dialogue and configured style

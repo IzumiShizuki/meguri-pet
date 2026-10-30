@@ -3,6 +3,7 @@ See proposal.md. The current Core predates dialogue repairs; dirty timestamp UI 
 ## Goals / Non-Goals
 Goals: repair narrow wiring/contract defects and create reproducible acceptance evidence. Non-goals: new credentials, unknown installers, model downloads, unrestricted self-modification, production task mutations or unrelated UI changes.
 ## Decisions
+- The specific 2026-10-30 approval permits local cherry-pick of the two reviewed retrieval commits and three reply-constraint implementation commits. Keep query fidelity intact, skip obsolete delivery-only commits, resolve documentation conflicts from verified evidence, and run combination tests in an isolated build tree. Integration does not authorize deployment, push, credentials or production Todo mutations.
 - Persona speechStyle joins trusted persona policy; canonical LORE gains purpose labeling inside untrusted context. Do not use general RAG as a persona command source.
 - Inspect site source as the API authority, preserve recurrence/instance fields through existing authenticated Todo boundaries and test with fixtures. Do not infer site rules from display text.
 - Reuse capability policy, approval, quarantine and dispatch. Test actual controlled execution rather than accepting registry presence.

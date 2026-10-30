@@ -59,8 +59,10 @@ public final class WebRetrievalProvider implements RetrievalProvider {
             String querySource = query == null || query.isBlank()
                     ? context.turnRequest() == null ? "" : context.turnRequest().getMessage()
                     : query;
-            String searchQuery = WebSearchPolicy.queryFor(querySource);
             WebSearchScope originalScope = WebSearchScope.parse(querySource);
+            // Extract operators before presentation cleanup, so a domain appended to
+            // an output request cannot keep that request in the relevance subject.
+            String searchQuery = WebSearchPolicy.queryFor(originalScope.subject());
             WebSearchScope normalizedScope = WebSearchScope.parse(searchQuery);
             if (!originalScope.valid() || !normalizedScope.valid()) {
                 return failure(degradations, "web_query_scope_invalid");

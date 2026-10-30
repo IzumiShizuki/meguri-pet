@@ -57,12 +57,14 @@ public final class WebSearchPolicy {
     private static final Pattern PRESENTATION_SUFFIX = Pattern.compile(
             "(?:[，,；;。]\\s*(?:(?:并且|然后|并|再)\\s*)?|\\s+(?:并且|然后|并|再)\\s*)"
                     + "(?:说明|给出|提供|列出|附上)\\s*(?:[一二三四五六七八九十两\\d]+[条个份]?\\s*)?"
-                    + "(?:官方|参考|可靠|原始)?(?:来源|链接|出处|引用)[。.!?？]*\\s*$"
+                    + "(?:官方|参考|可靠|原始)?(?:来源|链接|出处|引用)\\s*[。.!?？]*\\s*$"
                     + "|(?:[，,；;。]\\s*|\\s+)(?:并且|然后|并|再)(?:总结|概括)(?:一下|要点|结果|搜索结果|检索结果)?[。.!?？]*\\s*$"
                     + "|[,;.]?\\s+(?:and|then)\\s+(?:(?:give|provide|list|include|cite)\\s+"
                     + "(?:(?:one|two|three|four|five|\\d+)\\s+)?(?:(?:official|reliable|original|reference)\\s+)?"
-                    + "(?:sources?|links?|citations?)|summari[sz]e(?:\\s+(?:the\\s+)?(?:results|findings))?)[.!?]*\\s*$",
+                    + "(?:sources?|links?|citations?)|summari[sz]e(?:\\s+(?:the\\s+)?(?:results|findings))?)\\s*[。.!?？]*\\s*$",
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+    private static final Pattern REPLY_PRESENTATION_SUFFIX = Pattern.compile(
+            "[。；;!?！？，,]\\s*(?:只用一句话(?:说明|回答|回复)[。.!?？]*|只回复\\s*[:：].*)\\s*$");
     private static final Pattern SCRIPT_BOUNDARY = Pattern.compile(
             "(?<=[A-Za-z0-9])(?=\\p{IsHan})|(?<=\\p{IsHan})(?=[A-Za-z0-9])");
     private static final Pattern WHITESPACE = Pattern.compile("\\s+");
@@ -101,6 +103,8 @@ public final class WebSearchPolicy {
             clauseStart = Math.max(clauseStart, visible.lastIndexOf(". ", action.start()));
             if (clauseStart >= 0) query = query.substring(clauseStart + 1).trim();
         }
+        var replyPresentation = REPLY_PRESENTATION_SUFFIX.matcher(outsideQuotedText(query));
+        if (replyPresentation.find()) query = query.substring(0, replyPresentation.start()).trim();
         var presentation = PRESENTATION_SUFFIX.matcher(outsideQuotedText(query));
         if (presentation.find()) query = query.substring(0, presentation.start()).trim();
         java.util.LinkedHashSet<String> freshnessQualifiers = new java.util.LinkedHashSet<>();

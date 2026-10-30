@@ -12,4 +12,9 @@
 - [x] 3.1 Reproduce revocation, fence/quote, literal boundary and technical sentence counterexamples before implementation.
 - [x] 3.2 Separate provider-call metrics from local validation; preserve resolved persona and classify validation failures.
 - [x] 3.3 Verify repair cancellation/deadline recovery and the two-calls-per-candidate/four-per-comparison bound.
-- [ ] 3.4 Run targeted and full Java verification, update reports and deliver revised patches for another review without integration.
+- [x] 3.4 Run targeted and full Java verification, update reports and deliver revised patches for another review without integration.
+
+## 4. Approved integration
+- [x] 4.1 Complete final review of quoted contractions and Han sentence boundaries; retain the 121 targeted and 816-passed/5-skipped independent evidence.
+- [x] 4.2 Integrate the three approved implementation commits with retrieval and query-fidelity repairs, then run combined regressions: 187 targeted; 882 passed, zero failed, five skipped in full Java.
+- [ ] 4.3 After separate deployment approval, validate real-model constraints, cancellation recovery and SSE/snapshot consistency on the loaded build. No live-model or deployment result is inferred from offline tests.
