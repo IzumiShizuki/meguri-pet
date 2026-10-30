@@ -251,9 +251,64 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                 .subscribeOn(Schedulers.boundedElastic());
     }
 
+    private static ReplyConstraints replyConstraints(TurnRequest request) {
+        return "zh_ja_pairs".equals(request.getReplyFormat())
+                ? ReplyConstraints.from(null) : ReplyConstraints.from(request.getMessage());
+    }
+
+    private String replyPrompt(TurnRequest request, String prompt) {
+        return replyConstraints(request).active() ? prompt + ReplyConstraints.POLICY : prompt;
+    }
+
+    private void addReplyConstraints(Map<String, Object> context, TurnRequest request) {
+        ReplyConstraints constraints = replyConstraints(request);
+        if (constraints.active()) context.put("current_reply_constraints", constraints.data());
+    }
+
+    /** The invalid draft stays private; retries carry only content-free validation data. */
+    private LlmResponse validatedReply(MultimodalModelRoute.Selection route, String prompt,
+            String contextJson, List<Content> attachments, ReplyConstraints constraints,
+            java.time.Instant deadline, String operation) {
+        String payload = contextJson;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            if (attempt > 0 && (Thread.currentThread().isInterrupted()
+                    || deadline != null && !java.time.Instant.now().isBefore(deadline))) {
+                throw new LlmProviderException("reply constraint repair deadline exceeded");
+            }
+            ChatRequest chatRequest = ChatRequest.builder()
+                    .messages(dev.langchain4j.data.message.SystemMessage.from(prompt),
+                            userMessage(payload, attachments))
+                    .responseFormat(responseFormatRequest()).build();
+            var result = route.model().chat(chatRequest);
+            if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
+                throw new LlmProviderException("LLM provider returned an empty response");
+            }
+            validateResponseReleaseMetadata(result);
+            recordSuccessfulResponse(operation, result);
+            LlmResponse answer = parseStrict(result.aiMessage().text());
+            String violation = constraints.violation(answer.getReply());
+            if (violation.isEmpty()) return answer;
+            if (attempt == 1) throw new LlmProviderException("LLM reply constraints not satisfied after one repair");
+            try {
+                Map<String, Object> context = mapper.readValue(contextJson,
+                        new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() { });
+                context.put("reply_constraint_repair", Map.of("attempt", 1, "validation", violation));
+                payload = promptBudget.fit(prompt, context, List.of()).json();
+            } catch (com.fasterxml.jackson.core.JsonProcessingException error) {
+                throw new LlmProviderException("failed to encode reply constraint repair", error);
+            }
+        }
+        throw new IllegalStateException("unreachable");
+    }
+
     @Override
     public boolean supportsNativeStreaming() {
         return streamingModel != null;
+    }
+
+    @Override
+    public boolean supportsNativeStreaming(ProviderRequest request) {
+        return supportsNativeStreaming() && !replyConstraints(request.turn()).active();
     }
 
     @Override
@@ -262,6 +317,10 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                                List<String> recentContext, List<String> webResults) {
         if (request == null || state == null) {
             return Flux.error(new LlmProviderException("request and state are required"));
+        }
+        if (replyConstraints(request).active()) {
+            return respond(request, state, canon, memories, recentContext, webResults)
+                    .map(LlmResponse::getReply).flux();
         }
         List<Content> attachmentContent;
         MultimodalModelRoute.Selection route;
@@ -336,6 +395,9 @@ public final class LangChain4jLlmProvider implements LlmProvider {
     @Override
     public Flux<String> stream(ProviderRequest request) {
         if (request == null) return Flux.error(new LlmProviderException("provider request is required"));
+        if (replyConstraints(request.turn()).active()) {
+            return respond(request).map(LlmResponse::getReply).flux();
+        }
         List<Content> attachmentContent;
         MultimodalModelRoute.Selection route;
         try {
@@ -434,21 +496,11 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             acquired = true;
             List<Content> attachmentContent = multimodalAttachments.resolve(request.attachments());
             MultimodalModelRoute.Selection route = selectMultimodalRoute(attachmentContent);
-            ChatRequest chatRequest = ChatRequest.builder()
-                    .messages(dev.langchain4j.data.message.SystemMessage.from(systemPrompt),
-                            userMessage(contextJson(
-                            request, state, canon, memories, recentContext, webResults, alternative),
-                                    attachmentContent))
-                    .responseFormat(responseFormatRequest())
-                    .build();
-            dev.langchain4j.model.chat.response.ChatResponse result = route.model().chat(chatRequest);
-            if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
-                throw new LlmProviderException("LLM provider returned an empty response");
-            }
-            validateResponseReleaseMetadata(result);
-            recordSuccessfulResponse(operation, result);
+            LlmResponse answer = validatedReply(route, replyPrompt(request, systemPrompt),
+                    contextJson(request, state, canon, memories, recentContext, webResults, alternative),
+                    attachmentContent, replyConstraints(request), null, operation);
             responseRecorded = true;
-            return parseStrict(result.aiMessage().text());
+            return answer;
         } catch (LlmProviderException ex) {
             if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw ex;
@@ -475,21 +527,11 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             acquired = true;
             List<Content> attachmentContent = multimodalAttachments.resolve(request.turn().attachments());
             MultimodalModelRoute.Selection route = selectMultimodalRoute(attachmentContent);
-            ChatRequest chatRequest = ChatRequest.builder()
-                    .messages(
-                            dev.langchain4j.data.message.SystemMessage.from(
-                                    effectiveSystemPrompt(request, false)),
-                            userMessage(contextJson(request, alternative), attachmentContent))
-                    .responseFormat(responseFormatRequest())
-                    .build();
-            dev.langchain4j.model.chat.response.ChatResponse result = route.model().chat(chatRequest);
-            if (result == null || result.aiMessage() == null || result.aiMessage().text() == null) {
-                throw new LlmProviderException("LLM provider returned an empty response");
-            }
-            validateResponseReleaseMetadata(result);
-            recordSuccessfulResponse(operation, result);
+            LlmResponse answer = validatedReply(route, effectiveSystemPrompt(request, false),
+                    contextJson(request, alternative), attachmentContent,
+                    replyConstraints(request.turn()), request.deadline(), operation);
             responseRecorded = true;
-            return parseStrict(result.aiMessage().text());
+            return answer;
         } catch (LlmProviderException ex) {
             if (!responseRecorded) promptCacheMetrics.recordFailure(operation, "");
             throw ex;
@@ -1107,13 +1149,14 @@ public final class LangChain4jLlmProvider implements LlmProvider {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("runtime_state", state);
         context.put("user_message", request.getMessage());
+        addReplyConstraints(context, request);
         context.put("canon_examples", limitedList(canon, 3));
         context.put("long_term_memories", limitedList(memories, 5));
         context.put("recent_context", limitedList(recentContext, 20));
         context.put("web_results", limitedList(webResults, 5));
         addAiNewsContext(context);
         ConversationDynamics dynamics = conversationDynamics(request.getMessage(), recentContext);
-        if (dynamics.repeatCount() > 1) {
+        if (dynamics.repeatCount() > 1 && !replyConstraints(request).active()) {
             context.put("conversation_dynamics", Map.of(
                     "signal", "consecutive_identical_user_message_count=" + dynamics.repeatCount(),
                     "previous_assistant_reply", dynamics.previousAssistantReply(),
@@ -1141,7 +1184,7 @@ public final class LangChain4jLlmProvider implements LlmProvider {
                     "voice_style", "restrained",
                     "memory_candidates", List.of()));
         }
-        return promptBudget.fit(systemPrompt, context).json();
+        return promptBudget.fit(replyPrompt(request, systemPrompt), context).json();
     }
 
     private String contextJson(ProviderRequest request, boolean alternative) {
@@ -1154,6 +1197,7 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             boolean streaming) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("runtime_state", request.runtimeState());
+        addReplyConstraints(context, request.turn());
         if (request.checkedInputText() != null) {
             context.put("input_assistance", Map.of(
                     "raw_text", request.rawInputText(),
@@ -1175,7 +1219,7 @@ public final class LangChain4jLlmProvider implements LlmProvider {
         context.put("deadline", request.deadline().toString());
         ConversationDynamics dynamics = conversationDynamics(
                 request.turn().getMessage(), request.legacyRecentContext(), true);
-        if (dynamics.repeatCount() > 1) {
+        if (dynamics.repeatCount() > 1 && !replyConstraints(request.turn()).active()) {
             context.put("conversation_dynamics", Map.of(
                     "signal", "consecutive_identical_user_message_count=" + dynamics.repeatCount(),
                     "previous_assistant_reply", dynamics.previousAssistantReply(),
@@ -1274,7 +1318,7 @@ public final class LangChain4jLlmProvider implements LlmProvider {
             prompt.append("\n\nOutput only the user-visible natural-language reply. ")
                     .append("Do not output JSON, metadata, expression tags, or memory candidates.");
         }
-        return prompt.toString();
+        return replyPrompt(request.turn(), prompt.toString());
     }
 
     @Override

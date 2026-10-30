@@ -24,6 +24,30 @@ import static org.awaitility.Awaitility.await;
 
 class DurableNativeStreamingTest {
     @Test
+    void perRequestValidationRoutePublishesOneCompleteNonNativeDelta() {
+        var journal = new InMemoryTurnJournal(mapper());
+        LlmProvider provider = new DelayedStreamingProvider(false) {
+            @Override
+            public boolean supportsNativeStreaming(com.meguri.core.llm.ProviderRequest request) {
+                return false;
+            }
+            @Override
+            public Mono<LlmResponse> respond(com.meguri.core.llm.ProviderRequest request) {
+                return Mono.just(new LlmResponse("收到🙂"));
+            }
+        };
+        var runtime = runtime(provider, journal);
+        var record = runtime.start(syntheticRequest("validated", "只回复：收到🙂"));
+        record.getDone().join();
+        assertThat(record.getStatus()).isEqualTo(TurnStatus.COMPLETED);
+        assertThat(journal.events("validated")).filteredOn(e -> e.getType().equals("text.delta"))
+                .singleElement().satisfies(e -> assertThat(e.getData())
+                        .containsEntry("delta", "收到🙂").containsEntry("native", false));
+        assertThat(record.getResult().response().reply()).isEqualTo("收到🙂");
+        runtime.reset();
+    }
+
+    @Test
     void sameConversationWaitsForFailureAndBindsNextInputToItsOwnReply() throws Exception {
         var gate = Sinks.<LlmResponse>one();
         var inputs = new java.util.concurrent.CopyOnWriteArrayList<String>();

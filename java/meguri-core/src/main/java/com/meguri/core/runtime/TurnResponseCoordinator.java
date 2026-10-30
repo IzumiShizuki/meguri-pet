@@ -58,7 +58,7 @@ final class TurnResponseCoordinator {
     }
 
     private Mono<GeneratedResponse> generatePrimary(TurnRecord record, ProviderRequest request) {
-        if (!llm.supportsNativeStreaming()) {
+        if (!llm.supportsNativeStreaming(request)) {
             latency.mark(record, TurnLatencyPoint.PROVIDER_REQUEST_SENT);
             return llm.respond(request)
                     .doOnNext(ignored -> {

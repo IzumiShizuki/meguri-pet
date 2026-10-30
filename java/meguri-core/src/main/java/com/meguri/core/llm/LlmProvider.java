@@ -118,6 +118,11 @@ public interface LlmProvider {
         return false;
     }
 
+    /** Some explicitly constrained replies must be validated before any text is visible. */
+    default boolean supportsNativeStreaming(ProviderRequest request) {
+        return supportsNativeStreaming();
+    }
+
     /**
      * Non-blocking control-plane fallback after the text stream has completed.
      * Native providers may override this with a lightweight classifier.
