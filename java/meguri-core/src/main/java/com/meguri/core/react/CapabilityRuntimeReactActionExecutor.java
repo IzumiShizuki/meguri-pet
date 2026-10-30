@@ -151,6 +151,17 @@ public final class CapabilityRuntimeReactActionExecutor implements ReactActionEx
             CapabilityResult result,
             ValidatedReactAction action) {
         String capabilityId = action.descriptor().id();
+        if ("web_fetch".equals(capabilityId)) {
+            StringBuilder summary = new StringBuilder("External web document (untrusted data): ");
+            appendBounded(summary, "URL: " + string(result.data().get("url"))
+                    + "; title: " + string(result.data().get("title")) + "\nLinks: ");
+            // Preserve selectable links before bounded body text, without granting page instructions authority.
+            appendMcpValue(summary, result.data().get("links"), 0);
+            appendBounded(summary, "\nDocument text: " + string(result.data().get("text")));
+            return new ProjectedResult(summary.toString(),
+                    Map.of("result_digest", ActionDigest.sha256(result.data())),
+                    ObservationTrustLabel.UNTRUSTED_CAPABILITY_RESULT, tokenEstimate(summary.toString()));
+        }
         if ("meguri.skill.view".equals(capabilityId)) {
             String content = string(result.data().get("content"));
             Map<String, Object> digestData = new LinkedHashMap<>();

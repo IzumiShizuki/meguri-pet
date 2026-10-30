@@ -61,7 +61,7 @@ final class McpEndpointPolicy {
         }
     }
 
-    private static boolean isPublic(InetAddress address) {
+    static boolean isPublic(InetAddress address) {
         byte[] bytes = address.getAddress();
         if (address.isAnyLocalAddress()
                 || address.isLoopbackAddress()
