@@ -10,13 +10,24 @@ import java.util.Set;
 public final class McpCapabilityNormalizer {
     private static final Set<String> METADATA_KEYS = Set.of(
             "name", "title", "description", "inputSchema", "outputSchema",
-            "annotations", "timeout_ms", "concurrency_limit");
+            "annotations", "execution", "timeout_ms", "concurrency_limit");
 
     public CapabilityDescriptor normalize(String server, Map<String, Object> tool, int protocolVersion) {
         String serverId = identifier(server, "server");
         rejectSecretMetadata(tool);
         for (String key : tool.keySet()) {
             if (!METADATA_KEYS.contains(key)) throw new IllegalArgumentException("unsupported MCP metadata: " + key);
+        }
+        if (tool.containsKey("execution")) {
+            Map<String, Object> execution = object(tool.get("execution"), "execution", false);
+            for (String key : execution.keySet()) {
+                if (!key.equals("taskSupport")) throw new IllegalArgumentException("unsupported MCP execution metadata: " + key);
+            }
+            Object taskSupport = execution.getOrDefault("taskSupport", "forbidden");
+            // This client only makes normal calls; task-required tools cannot be exposed.
+            if (!"forbidden".equals(taskSupport) && !"optional".equals(taskSupport)) {
+                throw new IllegalArgumentException("MCP task execution is unsupported: " + taskSupport);
+            }
         }
         String name = identifier(String.valueOf(tool.get("name")), "tool.name");
         Map<String, Object> annotations = object(tool.get("annotations"), "annotations", true);
