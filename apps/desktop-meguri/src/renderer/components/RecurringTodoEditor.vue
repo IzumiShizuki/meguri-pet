@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { ShizukiRecurringRule, ShizukiRecurringRuleInput } from '../../shared/desktop-contract'
-import { recurringDescription, weeklyCron, weeklyPreset } from '../../shared/recurring-todos.mjs'
-const props = defineProps<{ account: string }>()
+import { recurringDescription, weeklyCron, weeklyPreset, recurringStartOfDay } from '../../shared/recurring-todos.mjs'
+const props = defineProps<{ account: string, protectedWrite?: boolean }>()
 const emit = defineEmits<{ changed: [], rules: [rules: ShizukiRecurringRule[]] }>()
 const bridge = window.meguriDesktop?.shizuki
 const rules = ref<ShizukiRecurringRule[]>([])
 const selected = ref<number>()
+const selectedVersion = ref<number>()
 const title = ref(''), time = ref('20:00'), zone = ref('Asia/Shanghai'), cron = ref('')
 const startAt = ref(''), endAt = ref('')
 const weekdays = ref<number[]>([1, 2, 3, 4, 5])
@@ -25,6 +26,7 @@ async function load() {
 }
 function edit(rule?: ShizukiRecurringRule) {
   if (busy.value || pending.value) return
+  selectedVersion.value = rule?.version
   selected.value = rule?.ruleId; title.value = rule?.title || ''; zone.value = rule?.timeZoneId || 'Asia/Shanghai'
   startAt.value = rule?.startAt || ''; endAt.value = rule?.endAt || ''
   const preset = rule ? weeklyPreset(rule.cronExpr) : { weekdays: [1, 2, 3, 4, 5], time: '20:00' }
@@ -39,7 +41,8 @@ async function save() {
     if (!pending.value) {
       if (!custom.value) weeklyCron(weekdays.value, time.value)
       pending.value = { ruleId: selected.value, title: title.value, timeZoneId: zone.value, enabled: enabled.value,
-        startAt: startAt.value, endAt: endAt.value,
+        startAt: startAt.value || (!selected.value && props.protectedWrite ? recurringStartOfDay(Date.now(), zone.value) : ''), endAt: endAt.value,
+        ...(props.protectedWrite ? { protectedWrite: true, expectedVersion: selectedVersion.value } : {}),
         reminderEnabled: reminder.value, deadlineRemindValue: Number(amount.value), deadlineRemindUnit: unit.value,
         ...(custom.value ? { cronExpr: cron.value } : { weekdays: [...weekdays.value], time: time.value }),
         requestId: crypto.randomUUID(), expectedAccount: props.account }
@@ -55,7 +58,7 @@ async function save() {
       if (['request_rejected', 'invalid_title', 'invalid_schedule', 'invalid_timezone', 'invalid_reminder', 'invalid_id', 'account_changed', 'not_found'].includes(result.code || '')) pending.value = undefined
       return
     }
-    pending.value = undefined; selected.value = result.rule.ruleId
+    pending.value = undefined; selected.value = result.rule.ruleId; selectedVersion.value = result.rule.version
     feedback.value = `服务器已保存并回读：${recurringDescription(result.rule)}`
     emit('changed')
   } catch (e) { error.value = e instanceof Error ? e.message : '保存失败，请核对原请求。' }
@@ -88,6 +91,7 @@ onBeforeUnmount(() => { disposed = true; clearInterval(timer) })
         <label v-if="reminder">提前<input v-model.number="amount" type="number" min="0" step="1" /><select v-model="unit"><option value="MINUTE">分钟（0 为到点）</option><option value="DAY">天</option></select></label>
       </fieldset>
       <p v-if="pending">正在保留原请求；结果不确定时仅核对，避免重复创建。</p>
+      <button v-if="pending && error" type="button" :disabled="busy" @click="pending = undefined">保留当前文本并重新核对</button>
       <button type="submit" :disabled="busy || !title.trim()">{{ busy ? '正在核对…' : pending ? '重试 / 核对原请求' : '确认保存周期规则' }}</button>
     </form>
     <p v-if="error" role="alert">{{ error }}</p><p v-if="feedback" role="status">{{ feedback }}</p>

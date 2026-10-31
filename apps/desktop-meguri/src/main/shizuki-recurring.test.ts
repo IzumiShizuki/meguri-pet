@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createShizukiTimePrismClient, normalizeRecurringRule, normalizeShizukiTodo } from './shizuki-timeprism.mjs'
 import { recurringTime, weeklyCron, weeklyPreset } from '../shared/recurring-todos.mjs'
 import { dueTodoReminders } from './shizuki-reminders.mjs'
+import { todoDeadline } from '../shared/todo-center-order.mjs'
 import { projectRecurringCalendar, todoCalendarEntries } from '../renderer/utils/todo-calendar'
 const roots: string[] = []
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
@@ -29,6 +30,20 @@ async function clientWith(handler: (url: string, options: RequestInit) => Promis
   return client
 }
 describe('current site recurring Todo contract', () => {
+  it.each(['Asia/Shanghai', null])('preserves authoritative instance timezone %s over current rule metadata', async zone => {
+    const client = await clientWith(async url => url.endsWith('/todos/snapshot')
+      ? json([{ ...instance(101, '2026-10-29'), time_zone_id: zone }]) : json([rule]))
+    const [todo] = await client.listTodos()
+    expect(todo.timeZoneId).toBe(zone || '')
+    expect(todoDeadline(todo)).toBe(zone ? Date.parse('2026-10-29T10:00:00Z') : Infinity)
+  })
+  it('preserves authoritative reminder fields on a retained instance whose rule was removed', async () => {
+    const client = await clientWith(async url => url.endsWith('/todos/snapshot')
+      ? json([{ ...instance(101, '2026-10-29'), time_zone_id: 'Asia/Tokyo' }]) : json([]))
+    const [todo] = await client.listTodos()
+    expect(todo).toMatchObject({ reminderEnabled: true, recurringRuleUnavailable: true, timeZoneId: 'Asia/Tokyo' })
+    expect(dueTodoReminders([todo], 42, Date.parse('2026-10-29T09:00:00Z'))).toEqual([])
+  })
   it('round trips weekday lists and named ranges without turning advanced Cron into a different schedule', () => {
     expect(weeklyPreset('0 0 18 * * MON-FRI')).toEqual({ weekdays: [1, 2, 3, 4, 5], time: '18:00' })
     expect(weeklyPreset('0 15 8 * * 1,3,5')).toEqual({ weekdays: [1, 3, 5], time: '08:15' })

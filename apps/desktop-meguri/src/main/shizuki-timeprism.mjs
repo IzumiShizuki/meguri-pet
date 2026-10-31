@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { parseShanghaiTime, REMINDER_TIMEZONE } from '../shared/reminder-intent.mjs'
 import { createWriteJournal, requestMarker } from './shizuki-write-journal.mjs'
+import { createShizukiCenter } from './shizuki-center.mjs'
 import { recurringStartOfDay, recurringTime, weeklyCron } from '../shared/recurring-todos.mjs'
 
 const DEFAULT_ORIGIN = 'https://site.shizuki.online'
@@ -51,6 +52,7 @@ export function normalizeShizukiTodo(raw) {
   const value = raw && typeof raw === 'object' ? raw : {}
   return {
     todoId: positiveId(valueOf(value, 'todoId', 'todo_id')),
+    ...(Number.isSafeInteger(value.version) && value.version >= 0 ? { version: value.version } : {}),
     projectId: positiveId(valueOf(value, 'projectId', 'project_id')) || null,
     title: String(value.title || ''),
     detail: String(value.detail || ''),
@@ -68,6 +70,8 @@ export function normalizeShizukiTodo(raw) {
     deadlineRemindUnit: String(valueOf(value, 'deadlineRemindUnit', 'deadline_remind_unit') || ''),
     sortNum: Number(valueOf(value, 'sortNum', 'sort_num') || 0),
     updatedAt: String(valueOf(value, 'updatedAt', 'updated_at') || ''),
+    ...(Object.hasOwn(value, 'timeZoneId') || Object.hasOwn(value, 'time_zone_id')
+      ? { timeZoneId: typeof valueOf(value, 'timeZoneId', 'time_zone_id') === 'string' ? valueOf(value, 'timeZoneId', 'time_zone_id') : '' } : {}),
     recurringRuleId: positiveId(valueOf(value, 'recurringRuleId', 'recurring_rule_id')) || null,
     recurringInstanceAt: String(valueOf(value, 'recurringInstanceAt', 'recurring_instance_at') || ''),
   }
@@ -76,6 +80,7 @@ export function normalizeShizukiTodo(raw) {
 export function normalizeRecurringRule(raw) {
   const v = raw || {}
   return {
+    ...(Number.isSafeInteger(v.version) && v.version >= 0 ? { version: v.version } : {}),
     ruleId: positiveId(valueOf(v, 'ruleId', 'rule_id')), projectId: positiveId(valueOf(v, 'projectId', 'project_id')) || null,
     title: String(v.title || ''), detail: String(v.detail || ''), priority: String(v.priority || 'MEDIUM'),
     cronExpr: String(valueOf(v, 'cronExpr', 'cron_expr') || ''), timeZoneId: String(valueOf(v, 'timeZoneId', 'time_zone_id') || 'Asia/Shanghai'),
@@ -90,7 +95,7 @@ export function normalizeRecurringRule(raw) {
 }
 
 function rulePayload(rule) {
-  return Object.fromEntries(Object.entries(rule).filter(([key]) => key !== 'ruleId')
+  return Object.fromEntries(Object.entries(rule).filter(([key]) => !['ruleId', 'version'].includes(key))
     .map(([key, value]) => [key.replace(/[A-Z]/g, letter => `_${letter.toLowerCase()}`), value === '' && ['startAt', 'endAt'].includes(key) ? null : value]))
 }
 
@@ -424,8 +429,8 @@ export function createShizukiTimePrismClient({
     const rules = await listRecurringRules()
     return todos.map(todo => {
       const rule = rules.find(item => item.ruleId === todo.recurringRuleId)
-      return rule ? { ...todo, recurringRule: rule, timeZoneId: rule.timeZoneId }
-        : todo.recurringRuleId ? { ...todo, reminderEnabled: false, recurringRuleUnavailable: true } : todo
+      return rule ? { ...todo, recurringRule: rule, timeZoneId: Object.hasOwn(todo, 'timeZoneId') ? todo.timeZoneId : rule.timeZoneId }
+        : todo.recurringRuleId ? { ...todo, recurringRuleUnavailable: true } : todo
     })
   }
 
@@ -476,9 +481,17 @@ export function createShizukiTimePrismClient({
     if (!rule.startAt) rule.startAt = previous?.startAt || recurringStartOfDay(clock(), zone)
     if (rule.endAt && rule.endAt < rule.startAt)
       throw new ShizukiTimePrismError('invalid_schedule', '结束时间不能早于开始时间。')
+    if (input.protectedWrite === true) {
+      if (id && (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0))
+        throw new ShizukiTimePrismError('invalid_input', '周期规则缺少原版本，请刷新后重新选择。')
+      const result = await center.saveRule({ requestId: input.requestId, expectedAccount: input.expectedAccount,
+        item: { ...rule, ruleId: id || undefined, ...(id ? { version: input.expectedVersion } : {}) } })
+      if (result.state !== 'confirmed') throw new ShizukiTimePrismError('write_uncertain', '周期规则待同步，已保留原请求。')
+      return result.item
+    }
     if (!id) rule.detail = requestMarker(requestId)
     const verify = saved => {
-      if (!saved?.ruleId || Object.entries(rule).some(([key, value]) => key !== 'ruleId' && saved[key] !== value))
+      if (!saved?.ruleId || Object.entries(rule).some(([key, value]) => !['ruleId', 'version'].includes(key) && saved[key] !== value))
         throw new ShizukiTimePrismError('unconfirmed_rule', '服务器尚未确认完整周期规则，请刷新核对。')
       return saved
     }
@@ -649,7 +662,12 @@ export function createShizukiTimePrismClient({
     return status()
   }
 
+  const center = createShizukiCenter({ filePath: `${filePath}.center.json`, request: authorized, account: status,
+    listTodos, normalizeTodo: normalizeShizukiTodo, todoPayload: todoToShizukiPayload, normalizeRule: normalizeRecurringRule, rulePayload,
+    failure: (code, message, status) => new ShizukiTimePrismError(code, message, status), clock })
   return { initialize, status, pendingCreates, connect: serialized(connect), disconnect: serialized(disconnect),
+    centerSnapshot: serialized(center.snapshot), centerSaveTask: serialized(center.saveTask), centerSaveNote: serialized(center.saveNote),
+    centerDeleteNote: serialized(center.deleteNote), centerRetry: serialized(center.retry),
     listRecurringRules: serialized(listRecurringRules), saveRecurringRule: serialized(saveRecurringRule),
     listTodos: serialized(listTodos), syncTodos: serialized(syncTodos), createTodo: serialized(createTodo), completeTodo: serialized(completeTodo), updateTodo: serialized(updateTodo) }
 }

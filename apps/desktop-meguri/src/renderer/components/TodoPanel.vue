@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import type { ShizukiConnectionStatus, ShizukiTodo, ShizukiRecurringRule } from '../../shared/desktop-contract'
 import { REMINDER_ZONE_LABEL } from '../../shared/reminder-intent.mjs'
+import TodoCenter from './TodoCenter.vue'
 import TodoCalendar from './TodoCalendar.vue'
 import RecurringTodoEditor from './RecurringTodoEditor.vue'
 
@@ -211,6 +212,7 @@ async function complete(todo: ShizukiTodo) {
 function refreshOnFocus() { void refresh() }
 function refreshWhenVisible() { if (document.visibilityState === 'visible' && !loading.value) void refresh() }
 onMounted(() => {
+  if (bridge?.center) return
   window.addEventListener('focus', refreshOnFocus)
   document.addEventListener('visibilitychange', refreshWhenVisible)
   refreshTimer = setInterval(refreshWhenVisible, 60000)
@@ -226,7 +228,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="shizuki-todo-panel no-drag" aria-label="Shizuki 待办">
+  <TodoCenter v-if="bridge?.center" :suggested-title="props.suggestedTitle" @close="emit('close')" />
+  <section v-else class="shizuki-todo-panel no-drag" aria-label="Shizuki 待办">
     <header>
       <div><strong>Shizuki 待办</strong><small>与 TimePrism 同步</small></div>
       <div class="shizuki-todo-head-actions">

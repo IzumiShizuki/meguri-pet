@@ -200,7 +200,7 @@ public final class HttpMcpAdapter implements McpAdapter {
                 "arguments", input == null ? Map.of() : input,
                 "_meta", metadata));
         if (result.path("isError").asBoolean(false)) {
-            throw new McpTransportException("MCP tool returned an error", "MCP_TOOL_FAILED", false);
+            throw McpToolFailureException.from(result.get("structuredContent"), input);
         }
         // MCP outputSchema describes structuredContent, not the transport envelope.
         // Keep legacy unstructured tools usable; never reinterpret text as trusted JSON.

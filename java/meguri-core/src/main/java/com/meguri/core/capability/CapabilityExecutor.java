@@ -145,10 +145,14 @@ public final class CapabilityExecutor implements AutoCloseable {
                     boolean retry = retryable && attempt < attempts;
                     if (retry) sleep(descriptor.retry().backoff());
                     else {
-                        CapabilityResult result = tracksExternalEffect(descriptor, proposal)
+                        // A remote isError reply is not a trusted receipt proving a write did not happen.
+                        boolean mcpWrite = known instanceof McpToolFailureException
+                                && descriptor.sideEffect() == CapabilityDescriptor.SideEffect.WRITE;
+                        CapabilityResult result = mcpWrite || tracksExternalEffect(descriptor, proposal)
                                 ? unknownOutcome()
                                 : CapabilityResult.failure(known == null ? "IMPLEMENTATION_FAILED" : known.safeCode(),
                                         retryable && descriptor.sideEffect() != CapabilityDescriptor.SideEffect.WRITE);
+                        result = withMcpErrorDetails(result, known, descriptor);
                         record(plan, proposal, descriptor, approval, "COMPLETED", attempt, result,
                                 elapsedMillis(started));
                         return result;
@@ -247,6 +251,18 @@ public final class CapabilityExecutor implements AutoCloseable {
             CapabilityDescriptor descriptor, ToolProposal proposal) {
         return descriptor.sideEffect() == CapabilityDescriptor.SideEffect.EXTERNAL
                 && proposal.idempotencyKey() != null;
+    }
+
+    private static CapabilityResult withMcpErrorDetails(
+            CapabilityResult result, CapabilityFailureException known, CapabilityDescriptor descriptor) {
+        if (!(known instanceof McpToolFailureException failure) || failure.safeDetails().isEmpty()) return result;
+        java.util.List<String> warnings = new java.util.ArrayList<>(result.warnings());
+        warnings.add("UNTRUSTED_EXTERNAL_CONTENT");
+        return new CapabilityResult(result.status(), result.errorCode(),
+                Map.of("mcp_error", failure.safeDetails()), result.display(),
+                new CapabilityResult.Source(descriptor.implementationRef(),
+                        CapabilityDescriptor.ResultTrust.UNTRUSTED_EXTERNAL),
+                warnings, result.retryable());
     }
 
     private static CapabilityResult unknownOutcome() {

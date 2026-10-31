@@ -1067,6 +1067,23 @@ function installIpc() {
       return shizukiFailure(error)
     }
   })
+  ipcMain.handle(channels.shizukiCenterSnapshot, async event => {
+    if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+    try { return { ok: true, snapshot: await shizukiTimePrism().centerSnapshot() } }
+    catch (error) { return shizukiFailure(error) }
+  })
+  for (const [channel, method] of [[channels.shizukiCenterSaveTask, 'centerSaveTask'],
+    [channels.shizukiCenterSaveNote, 'centerSaveNote'], [channels.shizukiCenterDeleteNote, 'centerDeleteNote'],
+    [channels.shizukiCenterRetry, 'centerRetry']]) {
+    ipcMain.handle(channel, async (event, ...args) => {
+      if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
+      try {
+        const result = await shizukiTimePrism()[method](...args)
+        if (result.state === 'confirmed' && result.resource === 'task' && result.item) shizukiReminders().applyTodo(result.item)
+        return { ok: true, ...result }
+      } catch (error) { return shizukiFailure(error) }
+    })
+  }
   ipcMain.handle(channels.shizukiListTodos, async event => {
     if (!trustedStageRenderer(event)) return { ok: false, error: '请求来源不受信任。' }
     try {

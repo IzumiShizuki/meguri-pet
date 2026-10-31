@@ -367,6 +367,7 @@ export interface ShizukiConnectionStatus {
 }
 
 export interface ShizukiRecurringRule {
+  version?: number
   ruleId: number
   projectId: number | null
   title: string
@@ -384,6 +385,8 @@ export interface ShizukiRecurringRule {
   deadlineRemindUnit: string | null
 }
 export interface ShizukiRecurringRuleInput {
+  protectedWrite?: boolean
+  expectedVersion?: number
   ruleId?: number
   title: string
   weekdays?: number[]
@@ -400,6 +403,7 @@ export interface ShizukiRecurringRuleInput {
   expectedAccount: string
 }
 export interface ShizukiTodo {
+  version?: number
   forecast?: boolean
   recurringRuleId?: number | null
   recurringInstanceAt?: string
@@ -425,6 +429,12 @@ export interface ShizukiTodo {
   sortNum: number
   updatedAt: string
 }
+
+export interface ShizukiNote { noteId: number, title: string, content: string, pinned: boolean, sortNum: number, updatedAt: string, version: number }
+export interface ShizukiCenterMutation { requestId: string, expectedAccount: string, item: Record<string, unknown> }
+export interface ShizukiCenterPending { requestId: string, resource: 'task' | 'note' | 'rule', method: string, state: string, error: string, draft: Record<string, unknown>, targetId?: number }
+export interface ShizukiCenterSnapshot { todos: ShizukiTodo[], notes: ShizukiNote[], ready: boolean, stale: boolean, savedAt?: number, pending: ShizukiCenterPending[], error: string }
+export type ShizukiCenterResult = DesktopResult & { state?: 'confirmed' | 'pending', resource?: string, item?: ShizukiTodo | ShizukiNote | null }
 
 export interface ShizukiReminderEvent {
   todoId: number
@@ -508,6 +518,13 @@ export interface MeguriDesktopBridge {
     onChanged(listener: (snapshot: WorkSnapshot) => void): () => void
   }
   shizuki?: {
+    center?: {
+      snapshot(): Promise<DesktopResult & { snapshot?: ShizukiCenterSnapshot }>
+      saveTask(input: ShizukiCenterMutation): Promise<ShizukiCenterResult>
+      saveNote(input: ShizukiCenterMutation): Promise<ShizukiCenterResult>
+      deleteNote(input: ShizukiCenterMutation): Promise<ShizukiCenterResult>
+      retry(requestId: string, expectedAccount: string): Promise<ShizukiCenterResult>
+    }
     status(): Promise<ShizukiConnectionStatus>
     setMainAccount(): Promise<DesktopResult & { status?: ShizukiConnectionStatus }>
     clearMainAccount(): Promise<DesktopResult & { status?: ShizukiConnectionStatus }>
