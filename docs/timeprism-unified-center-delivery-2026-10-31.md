@@ -1,6 +1,6 @@
 # 统一 Todo 中心开发与主站发布交付（2026-10-31）
 
-统一 Todo 主站已完成生产部署，V1028 已事务提交，新后端与前端均健康运行，公网制品核验通过。桌宠、独立客户端与 MCP 的统一合同实现及隔离回归已完成；**真实账号跨端同步、实际桌面/手机界面和 MCP 激活仍未验收，Windows 聊天附件也尚未交付成功。** 本轮没有创建生产测试事项、新长期凭据或修改系统权限，未重发本机 Core UAC。
+统一 Todo 主站已完成生产部署，V1028 已事务提交，新后端与前端均健康运行，公网制品核验通过。桌宠、独立客户端与 MCP 的统一合同实现及隔离回归已完成；**真实账号跨端同步、实际桌面/手机界面和 MCP 激活仍未验收，Windows 8MiB 首卷已实际发送，剩余分卷已保存、待发送确认。** 本轮没有创建生产测试事项、新长期凭据或修改系统权限，未重发本机 Core UAC。
 
 ## 实现与本地版本
 
@@ -58,23 +58,41 @@ MCP 错误只透传有匹配 UUID、受限代码和正确类型的结构化摘�
 - `dist/TimePrism-Todo-0.2.1-source.zip`：SHA256 `0cbaee964cbcca6762bee46ab5281604780befda474d42b92ab7f4f06ac06b64`。
 - 该目录 `reports/v1-review-20261031/artifact-manifest.json` 记录逐文件哈希、构建时间和 APK/Windows 同源资源校验。
 
-### Windows 分卷补交付
+### Windows 8MiB 分卷补交付
 
-每份为标准 ZIP，前三份39846082字节，第四份24762214字节，均小于40MiB；恢复包3367字节。四个ZIP分别封装原完整ZIP的连续字节块，不是删减程序。恢复脚本先检查顺序、单卷SHA256和长度，按序拼接，核对最终SHA256后才生成完整文件；不同内容的既有输出不会被覆盖。脚本不联网、不启动EXE、不改执行策略。若系统禁止脚本执行，应停止并联系管理员。
+当前交付版本为 **18 个带 `8MiB` 的分卷和一个 `8MiB-Restore-Kit`**。首卷已由父会话实际发送 accepted（消息 `Sentinel_568756a3ef08819180e535e982b2252d`），本次沿用其原始字节和 Library ID，没有重复上传。part02–18 和专用恢复包本次逐项保存成功；其聊天附件发送结果尚待父会话确认，不能等同 Library 保存成功。
 
-| 文件 | Library ID |
-|---|---|
-| TimePrism-Todo-0.2.1-part01.zip | `libfile_ef720d94b2388191a4ffa88cc8e779c8` |
-| TimePrism-Todo-0.2.1-part02.zip | `libfile_511eebd282388191add9cc354bdb1de1` |
-| TimePrism-Todo-0.2.1-part03.zip | `libfile_425242e55fc881918d02f45eb3f17030` |
-| TimePrism-Todo-0.2.1-part04.zip | `libfile_281bf8ec85488191aa9a68ebd4048f78` |
-| TimePrism-Todo-0.2.1-Restore-Kit.zip | `libfile_2734ec1fd9e0819183ca9837fe398a61` |
+| 文件名（顺序） | 字节数 | Library ID |
+|---|---:|---|
+| TimePrism-Todo-0.2.1-8MiB-part01.zip | 8388608 | `libfile_f3b2f852ae2c81918bd1e2e6b711c008` |
+| TimePrism-Todo-0.2.1-8MiB-part02.zip | 8388608 | `libfile_da84ddde2d408191bb8dbf2886a4a499` |
+| TimePrism-Todo-0.2.1-8MiB-part03.zip | 8388608 | `libfile_a5fa4196965481918651c6b1b62a0fc3` |
+| TimePrism-Todo-0.2.1-8MiB-part04.zip | 8388608 | `libfile_5b9059aac38c81919e406bac5d3362bb` |
+| TimePrism-Todo-0.2.1-8MiB-part05.zip | 8388608 | `libfile_3bdeb17f2c808191a1a0ecf9ec9f3010` |
+| TimePrism-Todo-0.2.1-8MiB-part06.zip | 8388608 | `libfile_7e1948631f3481919a0bec44d67a9d31` |
+| TimePrism-Todo-0.2.1-8MiB-part07.zip | 8388608 | `libfile_4b86bf9013108191975bb664784f67f2` |
+| TimePrism-Todo-0.2.1-8MiB-part08.zip | 8388608 | `libfile_25fc77e305bc819185c139fc5de7abff` |
+| TimePrism-Todo-0.2.1-8MiB-part09.zip | 8388608 | `libfile_5f55c6d2561c8191a4645495d5bc9e12` |
+| TimePrism-Todo-0.2.1-8MiB-part10.zip | 8388608 | `libfile_ed69e9a154708191bb26aa97e351d3c8` |
+| TimePrism-Todo-0.2.1-8MiB-part11.zip | 8388608 | `libfile_64e4f458a358819180fe7fc8710a26a1` |
+| TimePrism-Todo-0.2.1-8MiB-part12.zip | 8388608 | `libfile_3a1d8042918c8191a4c0d0e54685cabc` |
+| TimePrism-Todo-0.2.1-8MiB-part13.zip | 8388608 | `libfile_acd3b43bcc348191b77221eac7662b90` |
+| TimePrism-Todo-0.2.1-8MiB-part14.zip | 8388608 | `libfile_a4f0cdc8380c81918f5aa871ee8b6ca7` |
+| TimePrism-Todo-0.2.1-8MiB-part15.zip | 8388608 | `libfile_c79add5336e88191a18fc78c74d12b21` |
+| TimePrism-Todo-0.2.1-8MiB-part16.zip | 8388608 | `libfile_58da4a342d3c8191b7748ae46a9a6593` |
+| TimePrism-Todo-0.2.1-8MiB-part17.zip | 8388608 | `libfile_e2eb394ca4d08191a4cdf33c69f49a42` |
+| TimePrism-Todo-0.2.1-8MiB-part18.zip | 1696840 | `libfile_010f5b111c1881919ace311323fcc3c7` |
+| TimePrism-Todo-0.2.1-8MiB-Restore-Kit.zip | 5216 | `libfile_192bf014767881919c52f683027bbefa` |
 
-下载五份后，解压恢复包，把其中脚本与manifest放到四份分卷同目录，在PowerShell运行 `./Restore-TimePrism.ps1`；验证成功后再解压生成的完整ZIP，保留全部依赖并运行 `TimePrism Todo.exe`。分卷本身不用解压。恢复脚本已真实运行两次：首次重组及ZIP CRC/89文件校验通过，第二次识别相同输出安全返回，最终SHA256与原包完全一致。
+下载全部18卷及恢复包。只解压恢复包，将其中 `Restore-TimePrism-8MiB.ps1`、`parts-8MiB-manifest.json` 和说明放到18卷同一目录；分卷自身不用解压。在该目录 PowerShell 运行 `./Restore-TimePrism-8MiB.ps1`。若系统拒绝脚本，应停止并走正常审批，不改执行策略、不绕过安全限制。成功生成完整ZIP后再解压，保留全部依赖后使用 `TimePrism Todo.exe`。
 
-Library五项保存均成功；父会话随后发送四个小于40MiB的分卷加恢复包，仍明确失败：`A Library file exceeds the ChatGPT upload limit`。**Windows聊天附件尚未交付成功**，不能用Library保存结果代替发送结果。已按协调要求停止继续拆分或上传，等待父会话核对实际附件限制；现有完整ZIP、分卷和恢复包全部保留。Windows不支持当前身份helper使用的xattrs写入，云端保存不受影响，完整身份保存在本地sidecar，没有重复上传。证据在 `reports/unified-center-20261030/portable-parts/` 的 `verification.json`、`library-identities.json` 与 `parts-manifest.json`。APK未重复上传。
+完整重组验证已通过：独立Python按顺序读取18卷、核验每卷及内部字节块SHA256，重组原ZIP为 **144299684字节**，SHA256 **`7ba9391f279ab1ad8b03c22862fead81dc490a2ea8d869b27e7bbdb6b940c226`**，ZIP CRC完整性及89个文件检查通过。首卷SHA未变，全部分卷不大于8388608字节。
 
-后续经明确授权，只生成一个精确8MiB（8388608字节）的首卷做附件限制诊断：`TimePrism-Todo-0.2.1-8MiB-part01.zip`，Library ID `libfile_f3b2f852ae2c81918bd1e2e6b711c008`，SHA256 `bedac43c05c828aa4f928ba98252b01b5a41f53b09d0dc62070f20ed1c9a7793`。Library保存成功，实际附件发送待父会话测试；该首卷不是完整程序，也不能与旧38MiB分卷混用。其余8MiB分卷没有生成或上传。
+**恢复脚本运行尚未通过本机验收。** 静态解析0错误；执行前PowerShell返回 `AuthorizationManager 检查失败 / UnauthorizedAccess`。只读检查得到LocalMachine RemoteSigned、其他作用域Undefined、脚本NotSigned且无Zone.Identifier；精确拒绝根因未确认。没有修改策略或绕过拒绝，也未把独立Python数据重组算作PowerShell脚本运行成功。脚本仅重组已知本地文件，检查固定manifest/分卷/输出哈希，不联网、不运行EXE、不覆盖不同输出。
+
+此前完整ZIP、旧38MiB分卷及单独约24MiB卷的附件发送均失败，原文件保留作为历史证据；**旧4卷/旧恢复脚本不属于本次交付，不能混用**。Windows不支持Library辅助程序的xattrs，18次本地属性写入失败均为`os.setxattr`不存在；云端保存成功，身份已分别保存在JSON侧录，无重复上传。APK继续沿用已确认ID。
+
+证据目录：`reports/unified-center-20261030/portable-8MiB-delivery-probe/`，包括 `delivery-index-8MiB.json`、`restore-verification.json`、`parts-8MiB-manifest.json`、`remaining-library-identities.json`、`browser-resume-check.json`。其中保存记录不是实际附件发送回执。
 
 Meguri 本地证据：`reports/unified-center-20261030/`（全量 JSON、XML ZIP、类型检查、构建、隔离渲染截图、源文件清单）。Java运行日志另在 `reports/capability-integration-20261030/center-*.log`。站点报告：`reports/recurring-drafts-20261030/site-center-verification-20261031.md`。原始日志/构建产物不纳入源码提交。
 
@@ -132,10 +150,10 @@ pnpm exec electron scripts/todo-center-smoke.mjs
 
 ## 剩余验收与交付阻塞
 
-1. **真实账号/UI验收未测。** Edge存在站点标签页，但唯一绑定尝试报 `Timed out after 10000ms waiting for CDP command Emulation.setFocusEmulationEnabled.`。登录状态未知，没有复制token、读取密码或输入/刷新页面。需要恢复该浏览器通道或提供可操作的既有会话后，再验证网站→桌宠→独立客户端→MCP的真实账号往返、离线/重连、重复/冲突和暂停；生产原事项保留，临时规则须当天结束并在测试后暂停。
+1. **真实账号/UI验收未测。** Edge存在站点标签页，但2026-10-31 14:23 UTC后的恢复检查中，一次页面绑定仍报 `Timed out after 10000ms waiting for CDP command Emulation.setFocusEmulationEnabled.`。受支持的浏览器故障文档已读，未提供可直接修复该CDP命令超时的路径；只确认标签枚举正常，不能把连接超时归为站点或账号失败。登录状态未知，没有复制token、读取密码或输入/刷新页面。需要恢复该浏览器通道或提供可操作的既有会话后，再验证网站→桌宠→独立客户端→MCP的真实账号往返、离线/重连、重复/冲突和暂停；生产原事项保留，临时规则须当天结束并在测试后暂停。
 2. **本机Core启动与新版桌面实际运行仍未验收。** 2026-10-31 12:46:36 UTC两种只读检查均未见18080 TCP监听；13:47:58 UTC再次netstat复核仍无该端口记录。此前UAC取消未重发，本轮没有启动/停止本机Core、Harness或无关应用；桌面mock IPC渲染通过不等于真实UI通过。
 3. **MCP实际接入未激活。** 新长期凭据或敏感管理权限的具体批准仍待完成；57项Node合同与85项Core专项都不等于真实账号端到端成功。没有为验收开放无认证服务。
-4. **Windows附件仍受交付通道限制。** 完整ZIP、38MiB分卷及单独约24MiB分卷的聊天附件发送均明确失败。唯一8MiB首卷已保存，等待父会话实际发送测试；其余8MiB分卷未生成/上传。原完整包与全部依赖保留。APK沿用已确认Library ID，未重复上传；debug APK仍未安装真机验收。
+4. **Windows附件补交付待收齐。** 8MiB首卷已实际发送accepted，part02–18及专用恢复包已保存，完整重组验证通过；其实际聊天发送尚待确认。恢复脚本被本机PowerShell在执行前拒绝，不能宣称该脚本运行通过。旧40MiB方案不可混用。APK未重传，debug APK仍未安装真机验收。
 
 网站MVP仍不承诺关闭应用后的系统推送或跨设备恰好一次提醒；网站sessionStorage不保证关页草稿恢复。桌宠本地日志有界，达到上限保留已有记录并阻止新写。真实界面需要加载新版本，未自动接管/刷新现有标签页。
 
