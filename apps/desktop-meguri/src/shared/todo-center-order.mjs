@@ -30,7 +30,10 @@ export function compareCenterNotes(a, b) {
 // authority's within-priority order instead of sorting a guessed instant.
 export function sortCenterTodos(todos) {
   const copy = [...todos]
-  if (!copy.some(todo => todo.recurringRuleId && !(Object.hasOwn(todo, 'timeZoneId') ? todo.timeZoneId : todo.recurringRule?.timeZoneId))) return copy.sort(compareCenterTodos)
+  const group = todo => `${Boolean(todo.done)}:${todo.priority}`
+  const unknownGroups = new Set(copy.filter(todo => todo.dueAt && todo.recurringRuleId
+    && !(Object.hasOwn(todo, 'timeZoneId') ? todo.timeZoneId : todo.recurringRule?.timeZoneId)).map(group))
   const priority = { HIGH: 0, MEDIUM: 1, LOW: 2 }
-  return copy.sort((a, b) => Number(a.done) - Number(b.done) || (priority[a.priority] ?? 1) - (priority[b.priority] ?? 1))
+  return copy.sort((a, b) => Number(a.done) - Number(b.done) || (priority[a.priority] ?? 1) - (priority[b.priority] ?? 1)
+    || (unknownGroups.has(group(a)) ? 0 : compareCenterTodos(a, b)))
 }

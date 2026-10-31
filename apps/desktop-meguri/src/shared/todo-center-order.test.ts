@@ -27,3 +27,12 @@ it('preserves authoritative ordering when a historic recurring timezone is unkno
   expect(sortCenterTodos([unknown,known]).map(t=>t.todoId)).toEqual([1,2])
   expect(centerTodoStatus(unknown,Date.parse('2040-01-01'))).toBe('时间待核对')
 })
+
+it('limits unknown timezone ordering fallback to the affected completion and priority group', () => {
+  const task={priority:'HIGH',done:false,timeZoneId:'Asia/Shanghai'}
+  const items=[{...task,todoId:2,dueAt:'2030-01-01T10:00'},
+    {...task,todoId:3,priority:'MEDIUM',dueAt:'2030-01-01T09:00',recurringRuleId:7,timeZoneId:''},
+    {...task,todoId:1,dueAt:'2030-01-01T08:00'},
+    {...task,todoId:4,priority:'MEDIUM',dueAt:'2030-01-01T07:00'}]
+  expect(sortCenterTodos(items).map(t=>t.todoId)).toEqual([1,2,3,4])
+})
