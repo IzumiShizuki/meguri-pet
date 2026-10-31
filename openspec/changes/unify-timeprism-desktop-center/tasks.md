@@ -11,7 +11,8 @@
 - [ ] 3.3 Prepare backup/rollback and deploy only through approved supported paths; record exact untested gates.
 - [x] 3.4 Preserve user changes, commit scoped files and update report.
 
-- [ ] 3.5 Validate physical PostgreSQL migration/concurrency and real multi-client account synchronization after approved deployment.
+- [x] 3.5 Validate physical PostgreSQL migration/concurrency in isolated full schema-only replica (15 checks); verify remote scope (50 files) and fresh complete backup.
+- [ ] 3.6 Complete old-image Flyway rollback preflight, controlled production rollout, and real multi-client account synchronization.
 
 ## 4. MCP error receipts
 - [x] 4.1 Preserve bounded UUID-bound error details as untrusted data without weakening approval, write outcome or retry policy.
