@@ -9,7 +9,7 @@
 - [x] 3.1 Run meaningful fake-server and renderer regression, typecheck/build and security boundary checks.
 - [x] 3.2 Coordinate authoritative backend, MCP and independent client contract acceptance.
 - [ ] 3.3 Prepare backup/rollback and deploy only through approved supported paths; record exact untested gates.
-- [ ] 3.4 Preserve user changes, commit scoped files and update report.
+- [x] 3.4 Preserve user changes, commit scoped files and update report.
 
 - [ ] 3.5 Validate physical PostgreSQL migration/concurrency and real multi-client account synchronization after approved deployment.
 
