@@ -148,10 +148,15 @@ export interface DesktopPreferencesPatch {
 export interface DesktopStartupStatus {
   ok: boolean
   message: string
+  pending?: boolean
+  code?: string
 }
 
 export interface DesktopStartupSaveResult {
+  /** True only when the preference was saved and Windows applied the task. */
   ok: boolean
+  /** False means the current user's preference file could not be written. */
+  saved?: boolean
   preferences?: DesktopPreferences
   status?: DesktopStartupStatus
   error?: string

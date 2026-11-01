@@ -395,24 +395,23 @@ async function saveStartupSettings() {
     return
   }
   startupSaving.value = true
-  startupFeedback.value = { kind: 'neutral', message: '正在应用 Windows 启动任务；管理员权限变更可能会显示 UAC 提示…' }
+  startupFeedback.value = { kind: 'neutral', message: '正在保存本机偏好并应用 Windows 启动任务；权限变更可能会显示 UAC 提示…' }
   try {
     const result = await bridge.save(startupDraft.value)
-    if (!result.ok || !result.preferences) {
-      if (result.preferences) {
-        preferences.apply(result.preferences)
+    const saved = result.saved ?? result.ok
+    if (result.preferences) {
+      preferences.apply(result.preferences)
+      if (saved) {
         startupDraft.value = { ...result.preferences.startup }
         startupDirty.value = false
       }
-      startupStatus.value = result.status ?? { ok: false, message: result.error ?? 'Windows 启动设置没有应用。' }
-      startupFeedback.value = { kind: 'error', message: result.error ?? startupStatus.value.message }
-      return
     }
-    preferences.apply(result.preferences)
-    startupDraft.value = { ...result.preferences.startup }
-    startupDirty.value = false
     startupStatus.value = result.status ?? { ok: true, message: 'Windows 启动设置已应用。' }
-    startupFeedback.value = { kind: 'success', message: startupStatus.value.message }
+    const applied = result.ok && saved && Boolean(result.preferences) && startupStatus.value.ok
+    startupFeedback.value = {
+      kind: applied ? 'success' : 'error',
+      message: result.error ?? startupStatus.value.message,
+    }
   }
   catch (error) {
     const detail = startupBridgeErrorMessage(error)
@@ -546,7 +545,7 @@ async function testRelay() {
             </label>
 
             <label class="setting-row">
-              <span><strong>以管理员身份启动 Meguri</strong><small>使用 Windows 任务计划程序的最高权限启动。首次应用时，Windows 会询问一次 UAC 授权；以后登录启动不会每次询问。</small></span>
+              <span><strong>以管理员身份启动 Meguri</strong><small>使用 Windows 任务计划程序的最高权限启动。首次应用时会询问 UAC；若已有最高权限任务，关闭此项也需要授权来降级任务。取消后本机选择会保存，但旧任务保持原权限并显示待应用。</small></span>
               <input v-model="startupDraft.runAsAdministrator" type="checkbox" :disabled="startupLoading || startupSaving" @change="markStartupDirty">
             </label>
 

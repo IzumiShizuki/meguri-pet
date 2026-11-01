@@ -39,6 +39,7 @@ import { createShizukiQqDelivery } from './shizuki-qq-delivery.mjs'
 import { createWindowsVoiceRecognizer } from './voice-recognition.mjs'
 import { showWindowAndFocus, toggleWindowVisibility } from './window-visibility.mjs'
 import { createPixPinCaptureCoordinator } from './pixpin-capture.mjs'
+import { saveStartupPreferences } from './startup-preferences-save.mjs'
 import {
   createWindowsClipboardWatcher,
   discoverPixPinExecutable,
@@ -514,7 +515,7 @@ function startupFailureMessage(error) {
   const detail = typeof error?.stderr === 'string' ? error.stderr.trim() : ''
   const message = detail || (error instanceof Error ? error.message : String(error))
   if (/1223|操作已被用户取消|the operation was canceled by the user|the operation was cancelled by the user/iu.test(message)) {
-    return '管理员授权已取消，Windows 没有应用启动设置。请重试并在 UAC 提示中选择“是”。'
+    return '管理员授权已取消，Windows 启动任务没有更新。若正在关闭管理员启动，当前任务仍保持此前权限；重试时请在 UAC 提示中确认。'
   }
   return message.slice(0, 1200)
 }
@@ -1194,27 +1195,18 @@ function installIpc() {
     }
 
     const previous = readPreferences()
-    const next = mergeDesktopPreferences(previous, { startup: { ...previous.startup, ...patch } })
-    const status = await configureWindowsStartup(next.startup)
-    startupConfigurationStatus = status
-    if (!status.ok)
-      return { ok: false, preferences: previous, status, error: status.message }
-
-    try {
-      writeDesktopState({ desktopPreferences: next })
-      broadcastPreferences(next)
-      return {
-        ok: true,
-        preferences: next,
-        status: { ok: true, message: '设置已保存；登录启动和管理员权限将在下次启动时应用。' },
-      }
-    }
-    catch (error) {
-      const message = startupFailureMessage(error)
-      startupConfigurationStatus = { ok: false, message }
-      console.error('Failed to save Meguri Windows startup preferences:', message)
-      return { ok: false, preferences: previous, status: startupConfigurationStatus, error: message }
-    }
+    const result = await saveStartupPreferences({
+      currentPreferences: previous,
+      patch,
+      persist: next => writeDesktopState({ desktopPreferences: next }),
+      apply: configureWindowsStartup,
+    })
+    startupConfigurationStatus = result.status
+    if (result.saved && result.preferences)
+      broadcastPreferences(result.preferences)
+    if (result.saved && !result.status.ok)
+      console.error('Meguri Windows startup task is pending:', result.status.message)
+    return result
   })
   ipcMain.handle(channels.multimodalRelayGet, event => trustedSettingsRenderer(event)
     ? readMultimodalRelayConfig()
