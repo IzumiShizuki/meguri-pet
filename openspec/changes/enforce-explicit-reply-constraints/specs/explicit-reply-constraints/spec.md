@@ -18,6 +18,14 @@ The provider SHALL validate exact literals, supported Han bounds and one-sentenc
 - **WHEN** no supported direct constraint is present
 - **THEN** natural streaming, persona and existing context behavior remain unchanged
 
+#### Scenario: Direct natural one-sentence wording
+- **WHEN** the current user directly asks `用一句话说明`, `用一个句子解释`, or `自然地接一句话就好`
+- **THEN** the same one-sentence validation and bounded repair apply even without `只`
+
+#### Scenario: Per-item or multiple sentence requests
+- **WHEN** the instruction asks one sentence per item or contains multiple sentence requests
+- **THEN** it does not impose an inferred one-sentence limit on the entire reply
+
 #### Scenario: Withdrawn or quoted requirement
 - **WHEN** the current user withdraws a preceding constraint, or the apparent constraint occurs in a quote or fenced source
 - **THEN** the old or quoted constraint is not enforced; quoted withdrawals do not cancel a direct outer request

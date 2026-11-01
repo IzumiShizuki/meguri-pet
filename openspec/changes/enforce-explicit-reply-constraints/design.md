@@ -18,6 +18,20 @@ Provider telemetry records exactly one success/failure for each attempted model 
 The repair bound is per answer candidate: primary answer at most two calls, and an explicitly sampled alternative at most two more, so an A/B comparison can use four answer-model calls. Input/planner/other model routes are outside this count. No claim of two (or four) calls for every entire turn is made. Gate-controlled tests cover cancel/timeout during the second call, late completion, one terminal event, no rejected text, slot release and the next turn's recovery.
 
 ## Risks / Trade-offs
+Live acceptance on 2026-11-01 exposed direct one-sentence wording without the
+word "only": `用一句话说明` and `自然地接一句话就好`. Extend the same clause-start
+parser to these explicit forms and `一个句子`; keep quoted/negative/withdrawn
+requests excluded. Multiple one-sentence clauses or per-item instructions are
+ambiguous for a whole-reply limit and must not enable it. Reuse the existing
+one-repair delivery path; do not add another model call budget or truncate text.
+
+The same acceptance captured an incorrect extra numeric claim about a previous
+topic. Its persisted pre-generation context contains the corrected inputs and
+783 exactly, with no truncation and no retrieval hits. This is not evidence of
+a context rounding/loading defect. Preserve a characterization of the provider
+projection and the failing live example; do not manufacture a universal fact
+checker or claim that a wording fix solves numerical generation errors.
+
 Constrained turns wait for a full answer and may incur one extra provider request. Live-model success and latency remain unverified offline. Unsupported/ambiguous wording passes to the normal model without deterministic enforcement. Bilingual mode conflicts are left to existing handling. This is scoped syntax, not universal prompt-injection resistance.
 
 This change applies to model-generated replies. Deterministic skill/weather responses and later specialized presentation augmentation are outside this validator; their output constraints need separate acceptance. Sentence counting recognizes common Chinese/ASCII sentence terminators and decimal points, not all abbreviations or linguistic sentence structure. A persistent mismatch becomes a failed turn, not a silently altered answer.

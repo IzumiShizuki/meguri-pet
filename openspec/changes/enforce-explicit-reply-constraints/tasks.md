@@ -18,3 +18,8 @@
 - [x] 4.1 Complete final review of quoted contractions and Han sentence boundaries; retain the 121 targeted and 816-passed/5-skipped independent evidence.
 - [x] 4.2 Integrate the three approved implementation commits with retrieval and query-fidelity repairs, then run combined regressions: 187 targeted; 882 passed, zero failed, five skipped in full Java.
 - [ ] 4.3 After separate deployment approval, validate real-model constraints, cancellation recovery and SSE/snapshot consistency on the loaded build. No live-model or deployment result is inferred from offline tests.
+
+## 5. Live acceptance follow-up (2026-11-01)
+- [x] 5.1 Reproduce natural one-sentence wording misses and add quoted, negative, withdrawn and per-item controls before the fix (27 new cases: 13 failures on the old parser).
+- [x] 5.2 Extend only the supported direct syntax and verify bounded repair/streaming behavior; characterize preserved corrected facts without claiming model factual correctness.
+- [x] 5.3 Run targeted/full isolated Java regression (135 targeted; 1108 passed, zero failed, five skipped full), preserve user changes, and report Skills/MCP configuration evidence and the two desktop environment failures separately.

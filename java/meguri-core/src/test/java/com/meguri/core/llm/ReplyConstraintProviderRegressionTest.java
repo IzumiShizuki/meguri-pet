@@ -277,6 +277,37 @@ class ReplyConstraintProviderRegressionTest {
         } finally { release.countDown(); }
     }
 
+    @Test void recentCorrectedQuantitiesReachTheModelWithoutRoundingOrPromotion() {
+        String current = "另一个虚构项目乙：预算530元，材料费62元。只计算乙余额。";
+        var base = typedRequest(current, "", "", "", "fact-projection", Instant.now().plusSeconds(60));
+        List<String> history = List.of(
+                "user: 虚构项目甲：预算846元，材料费137元。",
+                "assistant: 846−137=709元。",
+                "user: 只将甲预算改为920元，材料费仍是137元。",
+                "assistant: 920−137=783元。",
+                "user: " + current);
+        var blocks = java.util.stream.IntStream.range(0, history.size()).mapToObj(i ->
+                new ContextBundle.Block(ContextBundle.BlockType.RECENT_RAW,
+                        List.of("m" + i), ContextBundle.Trust.USER, 30, history.get(i))).toList();
+        var context = new ContextBundle("s", "m4", "topic-b", blocks,
+                new ContextBundle.Budget(1000, 700, 900, 150, "test", Map.of()), List.of(), "facts-v1");
+        var request = new ProviderRequest(base.turn(), base.runtimeState(), base.persona(), context,
+                new PromptPolicyComposer().compose(base.persona(), context),
+                "knowledge", "retrieval", "context", "capabilities", List.of(),
+                Instant.now().plusSeconds(60), "fact-projection");
+        var model = new ScriptedModel("乙剩余468元。");
+        provider(model).respond(request).block();
+        String wire = ((UserMessage) model.requests.getFirst().messages().get(1)).singleText();
+        history.forEach(line -> assertTrue(wire.contains(line), line));
+        assertFalse(wire.contains("780"));
+        assertTrue(wire.contains("current-user-input"));
+        String policy = model.requests.getFirst().messages().getFirst().toString();
+        assertTrue(policy.contains("latest applicable correction"));
+        assertTrue(policy.contains("Assistant replies and summaries can contain mistakes"));
+        assertTrue(policy.contains("recompute dependent totals"));
+        // This verifies the input boundary, not the factual correctness of an arbitrary model reply.
+    }
+
     private static ProviderRequest typedRequest(
             String userMessage,
             String contextContent,
