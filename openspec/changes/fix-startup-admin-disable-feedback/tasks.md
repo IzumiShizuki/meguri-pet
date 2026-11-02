@@ -11,4 +11,4 @@
 ## 3. Verify and deploy
 
 - [x] 3.1 Add isolated regressions for successful apply, UAC/task cancellation, retry, and local write failure; run focused desktop tests and typecheck/build.
-- [ ] 3.2 Back up the active artifacts, load the authorized build through the supported deployment flow, and verify health and the effective startup settings without changing them silently.
+- [x] 3.2 Back up the active artifacts, load the authorized build through the supported deployment flow, and verify health and the effective startup settings without changing them silently. See `../fix-startup-settings-ipc-clone/verification.md` for the 2026-11-02 authorized restart evidence.

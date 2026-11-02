@@ -52,3 +52,11 @@ The initial verification read local Git state only; publication was authorized i
 The user subsequently requested restart and push. Both origins were fetched with prune; the counts above remained 33 and 1. Publication targets the existing task branches (`fix/dialogue-reliability-20261028` and `codex/local-master-frontend-20261011`), not main/master. Only the relevant repair files and specification updates are staged; unrelated working-tree changes remain local.
 
 The active renderer was backed up to `D:/program/meguri-pet/output/desktop-renderer-before-restart-20261102`; all 66 file hashes matched. The stored preference is openAtLogin=true and runAsAdministrator=true; the existing Meguri Desktop task reports Highest run level. Normal UI exit did not stop the old instance. One ordinary Stop-Process attempt for its known main PID 22992 returned Access denied. The user was immediately informed and asked to exit the app manually. No elevation or alternate termination method was attempted, and activation remains pending until that exit.
+
+## Completed restart
+
+The user confirmed exiting Meguri. The old PID was absent before activation. The previously verified renderer was copied into `apps/desktop-meguri/dist/renderer` and all 66 source/destination hashes matched. The existing `start-meguri-desktop.bat` launcher was invoked without changing the user's startup preferences or adding launch flags.
+
+The new Meguri window was observed and visually inspected with the character and main interface displayed (new main PID 44556). Core `/health` returned status=ok, runtime=java. The saved preferences remain openAtLogin=true/runAsAdministrator=true. Read-only checks show the existing task at Highest run level with an MSFT_TaskLogonTrigger; the two corresponding registry flags remain 1. No settings Save operation, privilege downgrade, or UAC interaction was performed. This completes the earlier deployment/health/current-startup-state acceptance task; changing startup selections and a real UAC cancellation remain covered by isolated tests rather than live user-setting mutations.
+
+The initial fix was pushed as `3260d52` on Meguri's task branch; the Shizuki account-route fix was pushed as `5529aa2c` on its task branch. This completion record is published in a follow-up documentation commit. Existing unrelated working-tree files remain uncommitted.
