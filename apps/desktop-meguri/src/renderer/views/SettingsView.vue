@@ -397,7 +397,11 @@ async function saveStartupSettings() {
   startupSaving.value = true
   startupFeedback.value = { kind: 'neutral', message: '正在保存本机偏好并应用 Windows 启动任务；权限变更可能会显示 UAC 提示…' }
   try {
-    const result = await bridge.save(startupDraft.value)
+    // Build a plain DTO before contextBridge sees the Vue reactive draft.
+    const result = await bridge.save({
+      openAtLogin: Boolean(startupDraft.value.openAtLogin),
+      runAsAdministrator: Boolean(startupDraft.value.runAsAdministrator),
+    })
     const saved = result.saved ?? result.ok
     if (result.preferences) {
       preferences.apply(result.preferences)
@@ -558,7 +562,7 @@ async function testRelay() {
             <p class="relay-feedback" :class="startupStatus.ok ? 'success' : 'error'" role="status" aria-live="polite">
               {{ startupStatus.message }}
             </p>
-            <p v-if="startupFeedback" class="relay-feedback" :class="startupFeedback.kind" role="status" aria-live="polite">
+            <p v-if="startupFeedback && startupFeedback.message !== startupStatus.message" class="relay-feedback" :class="startupFeedback.kind" role="status" aria-live="polite">
               {{ startupFeedback.message }}
             </p>
           </form>

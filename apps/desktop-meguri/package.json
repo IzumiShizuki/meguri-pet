@@ -13,6 +13,7 @@
     "test": "pnpm run test:unit && pnpm run test:preload && pnpm run test:instance && pnpm run test:tray",
     "test:unit": "vitest run",
     "test:preload": "electron scripts/preload-smoke.mjs",
+    "test:startup-settings": "electron scripts/startup-settings-smoke.mjs",
     "test:agent-settings": "pnpm run build && electron scripts/local-agent-settings-smoke.mjs",
     "test:instance": "electron scripts/reminder-instance-smoke.mjs",
     "test:tray": "electron scripts/tray-smoke.mjs",
